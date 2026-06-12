@@ -1,0 +1,25 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://main.gd" id="1_main"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="Label" type="Label" parent="UI"]
+offset_left = 40.0
+offset_top = 80.0
+offset_right = 680.0
+offset_bottom = 200.0
+theme_override_font_sizes/font_size = 40
+text = "黒猫飯店 — pipeline"
+horizontal_alignment = 1
+
+[node name="Button" type="Button" parent="UI"]
+offset_left = 220.0
+offset_top = 1000.0
+offset_right = 500.0
+offset_bottom = 1100.0
+theme_override_font_sizes/font_size = 36
+text = "タップ"
