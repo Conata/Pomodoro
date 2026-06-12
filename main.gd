@@ -44,6 +44,14 @@ var close_panel: PanelContainer
 var close_text: Label
 var night_panel: ScrollContainer
 var night_box: VBoxContainer
+var tabs: TabContainer
+var inv_box: VBoxContainer
+var renov_view: RenovView
+var renov_info: Label
+var stats_box: VBoxContainer
+var ship_label: Label
+var ui_accum := 0.0
+var offline_note := ""
 var confirm: ConfirmationDialog
 var bgm: AudioStreamPlayer
 var sfx_pool: Array[AudioStreamPlayer] = []
@@ -55,7 +63,12 @@ func _ready() -> void:
 	var saved := SaveGame.load_state()
 	sim = KuroSim.new(saved)
 	_build_ui()
-	sim.state["last_seen"] = Time.get_unix_time_from_system()
+	var now0 := Time.get_unix_time_from_system()
+	var offline := sim.apply_offline(now0)
+	if not offline.is_empty():
+		offline_note = "【安息】閉店中に +%dG・素材+%d（離席%d分）\n" % [
+			int(offline["gold"]), int(offline["mats"]), int(float(offline["away"]) / 60.0)]
+	sim.maybe_rotate_ship(now0)
 	if sim.state["run"]["active"]:
 		phase = Phase.DIVE  # 集中中に閉じても復帰できる
 	elif not sim.state["pending_night"].is_empty():
@@ -76,6 +89,17 @@ func _process(delta: float) -> void:
 			save_accum = 0.0
 			_save(now)
 	_update_clock(now)
+	ui_accum += delta
+	if ui_accum >= 1.0:
+		ui_accum = 0.0
+		header_label.text = _header_text()
+		if phase == Phase.NIGHT:
+			var before := float(sim.state["ship"]["rotated"])
+			sim.maybe_rotate_ship(now)
+			if float(sim.state["ship"]["rotated"]) != before:
+				_refresh_night()
+			elif ship_label != null and is_instance_valid(ship_label):
+				ship_label.text = _ship_head(now)
 
 
 func _notification(what: int) -> void:
@@ -133,6 +157,7 @@ func _on_run_complete() -> void:
 	var disconnected: bool = result_summary.get("disconnected", false)
 	_sfx("ui_denied" if disconnected else "teleport")
 	if not disconnected and result_summary.get("mode", "") == "pomo":
+		sim.register_completion(Time.get_date_string_from_system(), float(result_summary["minutes"]))
 		_notify("浮上。%d分の集中、おつかれさま" % int(result_summary["minutes"]))
 	# 浮上と同時に夜営業を即時精算（三行）
 	night_data = sim.close_day()
@@ -197,10 +222,16 @@ func _on_next_morning() -> void:
 
 
 func _apply_phase() -> void:
-	morning_panel.visible = phase == Phase.MORNING
 	dive_panel.visible = phase == Phase.DIVE
 	close_panel.visible = phase == Phase.CLOSE
-	night_panel.visible = phase == Phase.NIGHT
+	tabs.visible = phase == Phase.MORNING or phase == Phase.NIGHT
+	if tabs.visible:
+		tabs.set_tab_hidden(0, phase != Phase.MORNING)
+		tabs.set_tab_hidden(1, phase != Phase.NIGHT)
+		if phase == Phase.MORNING and tabs.current_tab == 1:
+			tabs.current_tab = 0
+		elif phase == Phase.NIGHT and tabs.current_tab == 0:
+			tabs.current_tab = 1
 	if phase != Phase.DIVE:
 		door_row.visible = false
 
@@ -271,9 +302,16 @@ func _build_ui() -> void:
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	main_box.add_child(status_label)
 
-	_build_morning(main_box)
 	_build_dive_panel(main_box)
-	_build_night(main_box)
+	tabs = TabContainer.new()
+	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tabs.custom_minimum_size = Vector2(0, 430)
+	main_box.add_child(tabs)
+	_build_morning(tabs)
+	_build_night(tabs)
+	_build_inventory_tab()
+	_build_renov_tab()
+	_build_stats_tab()
 	_build_close()
 
 	talk_view = TalkView.new()
@@ -325,6 +363,7 @@ func _make_theme() -> Theme:
 
 func _build_morning(parent: Control) -> void:
 	morning_panel = ScrollContainer.new()
+	morning_panel.name = "準備"
 	morning_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	morning_panel.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	morning_box = VBoxContainer.new()
@@ -417,6 +456,7 @@ func _build_dive_panel(parent: Control) -> void:
 
 func _build_night(parent: Control) -> void:
 	night_panel = ScrollContainer.new()
+	night_panel.name = "閉店後"
 	night_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	night_panel.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	night_box = VBoxContainer.new()
@@ -424,6 +464,37 @@ func _build_night(parent: Control) -> void:
 	night_box.add_theme_constant_override("separation", 8)
 	night_panel.add_child(night_box)
 	parent.add_child(night_panel)
+
+
+func _scroll_tab(title: String) -> VBoxContainer:
+	var sc := ScrollContainer.new()
+	sc.name = title
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var box := VBoxContainer.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", 8)
+	sc.add_child(box)
+	tabs.add_child(sc)
+	return box
+
+
+func _build_inventory_tab() -> void:
+	inv_box = _scroll_tab("倉庫")
+
+
+func _build_renov_tab() -> void:
+	var box := _scroll_tab("改装")
+	renov_info = _label("ノードをタップして解放（隣のノードから順に）", 17, COL_DIM)
+	box.add_child(renov_info)
+	renov_view = RenovView.new()
+	renov_view.sim = sim
+	renov_view.node_tapped.connect(_on_renov_tapped)
+	box.add_child(renov_view)
+
+
+func _build_stats_tab() -> void:
+	stats_box = _scroll_tab("統計")
 
 
 func _build_close() -> void:
@@ -494,18 +565,27 @@ func _girl_icon(id: String) -> TextureRect:
 
 
 func _refresh_all() -> void:
-	var s := sim.state
-	header_label.text = "Day%d  💰%d  素材%d  看板%d  📦%d" % [
-		int(s["day"]), int(s["gold"]), int(s["stock"]), int(s["sign"]), s["boxes"].size()]
+	header_label.text = _header_text()
 	if phase == Phase.MORNING:
 		_refresh_morning()
 	elif phase == Phase.NIGHT:
 		_refresh_night()
+	if tabs.visible:
+		_refresh_inventory()
+		_refresh_stats()
+		renov_view.queue_redraw()
+
+
+func _header_text() -> String:
+	var s := sim.state
+	return "Day%d 💰%d 素材%d ♻%d 看板%d 📦%d 🔥%d" % [
+		int(s["day"]), int(s["gold"]), int(s["stock"]), int(s["scrap"]),
+		sim.sign_total(), s["boxes"].size(), int(s["streak"])]
 
 
 func _refresh_morning() -> void:
 	var s := sim.state
-	forecast_label.text = "今夜の予報：『%s』が出る。在庫 素材%d" % [s["forecast"], int(s["stock"])]
+	forecast_label.text = "%s今夜の予報：『%s』が出る。在庫 素材%d" % [offline_note, s["forecast"], int(s["stock"])]
 	_clear(girls_box)
 	for id in KuroData.GIRL_ORDER:
 		var g: Dictionary = KuroData.GIRLS[id]
@@ -516,8 +596,23 @@ func _refresh_morning() -> void:
 		row.add_child(_girl_icon(id))
 		var col := VBoxContainer.new()
 		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		col.add_child(_label("%s（%s）♥%d" % [g["name"], g["role"], sim.aff(id)], 22, g["color"]))
+		col.add_child(_label("%s（%s）♥%d  攻%d HP%d" % [g["name"], g["role"], sim.aff(id),
+				int(sim.girl_atk(id)), int(sim.girl_maxhp(id))], 22, g["color"]))
 		col.add_child(_label("好物:%s ／ 店番:%s（%s）" % [g["fav"], g["synergy"], g["synergy_desc"]], 16, COL_DIM))
+		var skill_row := HBoxContainer.new()
+		skill_row.add_theme_constant_override("separation", 4)
+		skill_row.add_child(_label("技 %d/%d:" % [s["girls"][id]["skills_eq"].size(), sim.skill_slots()], 15, COL_DIM))
+		for sid in sim.known_skills(id):
+			var def: Dictionary = KuroData.SKILL_DB[sid]
+			var equipped: bool = sid in s["girls"][id]["skills_eq"]
+			var sk := _button(("✦" if equipped else "") + String(def["name"]), _on_skill_toggle.bind(id, String(sid)), 15)
+			if not equipped and s["girls"][id]["skills_eq"].size() >= sim.skill_slots():
+				sk.disabled = true
+			skill_row.add_child(sk)
+		var next_tier := sim.known_skills(id).size()
+		if next_tier < 3:
+			skill_row.add_child(_label("（次:♥%d）" % KuroData.SKILL_UNLOCK_AFF[next_tier], 14, Color(1, 1, 1, 0.3)))
+		col.add_child(skill_row)
 		row.add_child(col)
 		var b := _button("店番" if keeper else "潜行", _on_keeper.bind(id), 20)
 		b.disabled = keeper
@@ -585,13 +680,127 @@ func _refresh_night() -> void:
 		buy.disabled = int(s["gold"]) < int(item["price"])
 		row.add_child(buy)
 		night_box.add_child(row)
+	# 交易船（10分毎に在庫入替）
+	ship_label = _label(_ship_head(Time.get_unix_time_from_system()), 18, Color(0.55, 0.9, 1.0))
+	night_box.add_child(ship_label)
+	var stock: Array = s["ship"]["stock"]
+	if stock.is_empty():
+		night_box.add_child(_label("（船は出払っている。次の入荷を待とう）", 16, Color(1, 1, 1, 0.4)))
+	for i in stock.size():
+		var entry: Dictionary = stock[i]
+		var row2 := HBoxContainer.new()
+		var text := ""
+		if entry["type"] == "pet":
+			var pet: Dictionary = KuroData.PETS[entry["pet"]]
+			text = "🐾 %s — %s" % [pet["name"], pet["desc"]]
+		else:
+			var it: Dictionary = entry["item"]
+			text = "%s %s" % [SimItems.display_name(it), SimItems.affix_text(it)]
+		var lbl2 := _label(text, 18)
+		lbl2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row2.add_child(lbl2)
+		var buy2 := _button("%dG" % int(entry["price"]), _on_ship_buy.bind(i), 18)
+		buy2.disabled = int(s["gold"]) < int(entry["price"])
+		row2.add_child(buy2)
+		night_box.add_child(row2)
+	if not s["pets"].is_empty():
+		var pet_names: Array[String] = []
+		for pid in s["pets"]:
+			pet_names.append(KuroData.PETS[pid]["name"])
+		night_box.add_child(_label("店の住人: " + "、".join(pet_names), 16, COL_DIM))
 	night_box.add_child(_label("好感度：%s" % "  ".join(_aff_summary()), 16, COL_DIM))
 	var next := _button("☀ 翌朝へ", _on_next_morning, 26)
 	next.custom_minimum_size = Vector2(0, 56)
 	night_box.add_child(next)
-	night_box.add_child(_label(
-		"Sprites:0x72(CC0) SFX:Leohpaz Music:Abstraction(CC0) Font:DotGothic16(OFL)", 12,
-		Color(1, 1, 1, 0.25)))
+
+
+func _ship_head(now: float) -> String:
+	var rem := maxf(0.0, KuroData.SHIP_ROTATE_SEC - (now - float(sim.state["ship"]["rotated"])))
+	return "― 🚢 交易船（入替まで %s）―" % _mmss(rem)
+
+
+func _refresh_inventory() -> void:
+	_clear(inv_box)
+	var s := sim.state
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	row.add_child(_label("♻ 廃材 %d" % int(s["scrap"]), 20, Color(0.7, 1.0, 0.85)))
+	row.add_child(_button("一括分解", _on_bulk_salvage, 20))
+	row.add_child(_button("合成 3→1", _on_synthesize, 20))
+	inv_box.add_child(row)
+	# 装備中サマリ
+	for id in KuroData.GIRL_ORDER:
+		var parts: Array[String] = []
+		for slot in ["weapon", "armor", "trinket"]:
+			var it: Dictionary = s["girls"][id]["equip"][slot]
+			parts.append("—" if it.is_empty() else SimItems.display_name(it))
+		inv_box.add_child(_label("%s: %s" % [KuroData.GIRLS[id]["name"], "  ".join(parts)], 15, COL_DIM))
+	var inv: Array = s["inventory"]
+	if inv.is_empty():
+		inv_box.add_child(_label("倉庫は空。潜って拾おう（装備は自動装着される）", 17, Color(1, 1, 1, 0.4)))
+		return
+	var sorted_items := inv.duplicate()
+	sorted_items.sort_custom(func(a, b): return float(a["score"]) > float(b["score"]))
+	var shown: int = mini(sorted_items.size(), 40)
+	for k in shown:
+		var it: Dictionary = sorted_items[k]
+		var target := _equip_target(it)
+		var diff := float(it["score"]) - float(target["cur_score"])
+		var badge := ("▲+%d" % int(diff)) if diff > 0.0 else ("▼%d" % int(diff))
+		var line := HBoxContainer.new()
+		line.add_theme_constant_override("separation", 4)
+		var name_label := _label("%s %s %s" % [SimItems.display_name(it), SimItems.affix_text(it), badge],
+				16, SimItems.GRADES[int(it["grade"])]["color"])
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		line.add_child(name_label)
+		var eq := _button("装備", _on_equip.bind(int(it["id"])), 16)
+		eq.disabled = diff <= 0.0
+		line.add_child(eq)
+		line.add_child(_button("分解", _on_salvage.bind(int(it["id"])), 16))
+		var rr := _button("刻印", _on_reroll.bind(int(it["id"])), 16)
+		rr.disabled = int(s["scrap"]) < SimItems.REROLL_COST
+		line.add_child(rr)
+		inv_box.add_child(line)
+	if sorted_items.size() > shown:
+		inv_box.add_child(_label("…ほか %d 品（スコア上位のみ表示）" % (sorted_items.size() - shown), 14, Color(1, 1, 1, 0.3)))
+
+
+## このアイテムを最も活かせる子（現装備スコアが最低）。
+func _equip_target(item: Dictionary) -> Dictionary:
+	var best_id := KuroData.GIRL_ORDER[0]
+	var best_cur := INF
+	for id in KuroData.GIRL_ORDER:
+		var cur: Dictionary = sim.state["girls"][id]["equip"][item["slot"]]
+		var cur_score := 0.0 if cur.is_empty() else float(cur["score"])
+		if cur_score < best_cur:
+			best_cur = cur_score
+			best_id = id
+	return {"girl": best_id, "cur_score": best_cur}
+
+
+func _refresh_stats() -> void:
+	_clear(stats_box)
+	var s := sim.state
+	var total_min := float(s["stats"]["focus_min"])
+	stats_box.add_child(_label("累計集中: %d時間%d分   潜行: %d回" % [
+		int(total_min / 60.0), int(total_min) % 60, int(s["stats"]["dives"])], 20))
+	stats_box.add_child(_label("ストリーク: %d連続完走   最深: B%dF   営業: %d日目" % [
+		int(s["streak"]), int(s["best_floor"]) + 1, int(s["day"])], 18))
+	var today := Time.get_date_string_from_system()
+	var runs_today := int(s["daily"]["runs"]) if String(s["daily"]["date"]) == today else 0
+	stats_box.add_child(_label("デイリー: 今日 %d/3 完走（ポモドーロのみ）" % runs_today, 18))
+	if runs_today >= 3 and not s["daily"]["claimed"]:
+		stats_box.add_child(_button("🎁 デイリー報酬（+500G）", _on_claim_daily, 22))
+	stats_box.add_child(_label("― 週間集中グラフ ―", 16, COL_DIM))
+	var now := Time.get_unix_time_from_system()
+	for i in range(6, -1, -1):
+		var date := Time.get_datetime_string_from_unix_time(int(now) - i * 86400).substr(0, 10)
+		var minutes := float(s["weekly"].get(date, 0.0))
+		var bar := "▮".repeat(mini(int(minutes / 15.0) + (1 if minutes > 0.0 else 0), 20))
+		stats_box.add_child(_label("%s  %s %d分" % [date.substr(5), bar, int(minutes)], 16))
+	stats_box.add_child(_label(
+		"Sprites:0x72(CC0) FX:pimen SFX:Leohpaz Music:Abstraction(CC0) Font:DotGothic16(OFL)",
+		12, Color(1, 1, 1, 0.25)))
 
 
 func _aff_summary() -> Array[String]:
@@ -674,6 +883,88 @@ func _on_buy(idx: int) -> void:
 	_sfx("ui_buy")
 	_save(Time.get_unix_time_from_system())
 	_refresh_night()
+
+
+func _on_skill_toggle(girl_id: String, skill_id: String) -> void:
+	sim.equip_skill(girl_id, skill_id)
+	_refresh_morning()
+
+
+func _on_equip(item_id: int) -> void:
+	for it in sim.state["inventory"]:
+		if int(it["id"]) == item_id:
+			sim.equip_from_inventory(item_id, String(_equip_target(it)["girl"]))
+			_sfx("ui_equip")
+			break
+	_refresh_all()
+
+
+func _on_salvage(item_id: int) -> void:
+	sim.salvage_item(item_id)
+	_refresh_inventory()
+	header_label.text = _header_text()
+
+
+func _on_reroll(item_id: int) -> void:
+	if sim.reroll_item(item_id):
+		_sfx("ui_equip")
+	_refresh_inventory()
+	header_label.text = _header_text()
+
+
+func _on_bulk_salvage() -> void:
+	var r := sim.bulk_salvage()
+	_sfx("ui_buy")
+	_refresh_inventory()
+	header_label.text = _header_text()
+	inv_box.add_child(_label("一括分解: %d品 → 廃材+%d" % [int(r["count"]), int(r["dust"])], 16, Color(0.7, 1.0, 0.85)))
+
+
+func _on_synthesize() -> void:
+	var made := sim.synthesize_all()
+	if made > 0:
+		_sfx("ui_equip")
+	_pump_events()
+	_refresh_all()
+
+
+func _on_renov_tapped(id: String) -> void:
+	var node: Dictionary = KuroData.RENOV_NODES[id]
+	if id in sim.state["renov"]:
+		renov_info.text = "%s: %s（改装済み）" % [node["name"], node["desc"]]
+		return
+	if not sim.renov_available(id):
+		renov_info.text = "%s: 隣の区画から先に改装しよう" % node["name"]
+		return
+	renov_info.text = "%s: %s" % [node["name"], node["desc"]]
+	_ask("「%s」を %dG で改装する？\n%s" % [node["name"], int(node["cost"]), node["desc"]],
+			_on_renov_confirmed.bind(id))
+
+
+func _on_renov_confirmed(id: String) -> void:
+	if sim.unlock_renov(id):
+		_sfx("ui_confirm")
+		_pump_events()
+		_save(Time.get_unix_time_from_system())
+		_refresh_all()
+	else:
+		renov_info.text = "ゴールドが足りない…"
+
+
+func _on_ship_buy(idx: int) -> void:
+	if sim.buy_ship(idx):
+		_sfx("ui_buy")
+		_pump_events()
+		_save(Time.get_unix_time_from_system())
+		_refresh_all()
+
+
+func _on_claim_daily() -> void:
+	if sim.claim_daily():
+		_sfx("chest_open")
+		_pump_events()
+		_save(Time.get_unix_time_from_system())
+		_refresh_all()
 
 
 func _on_talk_start(girl: String, tier: int) -> void:

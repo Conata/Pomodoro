@@ -13,6 +13,9 @@ const ENC_MIN := 11.0
 const ENC_MAX := 17.0
 const RESYNC_BACK := 40.0  # 緊急再同期で戻る距離
 const BREAK_SEC := 300.0  # 夜（休憩）の目安5分
+const CHEST_INTERVAL := 480.0  # 箱はプレイ時間8分毎に蓄積（TBH準拠）
+const SHIP_ROTATE_SEC := 600.0  # 交易船は10分毎に在庫入替
+const OFFLINE_CAP_SEC := 28800.0  # 安息の上限8時間
 
 # 深度スケーリング sc=1+flAbs*0.35
 static func depth_scale(fl_abs: int) -> float:
@@ -61,6 +64,56 @@ const GIRL_ORDER := ["mil", "yuzuki", "muu", "kiriko"]
 
 # 会話解放閾値（好感度）
 const TALK_THRESHOLDS := [15, 45, 80]
+
+# スキル（TBH準拠：装備するCD制アクティブ。好感度で習得、枠1＋覚醒で2）
+# unlock: 0=最初から / 1=aff45 / 2=aff80
+const SKILL_DB := {
+	"first_aid": {"girl": "mil", "name": "応急手当", "unlock": 0, "cd": 10.0, "kind": "heal_one", "power": 0.32},
+	"cover": {"girl": "mil", "name": "庇い手", "unlock": 1, "cd": 24.0, "kind": "shield_all", "power": 0.25},
+	"sanctum": {"girl": "mil", "name": "静域", "unlock": 2, "cd": 30.0, "kind": "shield_all", "power": 0.42},
+	"wok_fist": {"girl": "yuzuki", "name": "まかない拳", "unlock": 0, "cd": 6.0, "kind": "hit", "power": 2.5},
+	"wok_storm": {"girl": "yuzuki", "name": "中華鍋旋風", "unlock": 1, "cd": 12.0, "kind": "aoe", "power": 1.6},
+	"honki": {"girl": "yuzuki", "name": "本気の一撃", "unlock": 2, "cd": 20.0, "kind": "hit", "power": 4.5},
+	"buzz": {"girl": "muu", "name": "バズワード", "unlock": 0, "cd": 9.0, "kind": "aoe", "power": 1.4},
+	"encore": {"girl": "muu", "name": "アンコール", "unlock": 1, "cd": 18.0, "kind": "heal_all", "power": 0.4},
+	"viral": {"girl": "muu", "name": "拡散", "unlock": 2, "cd": 14.0, "kind": "aoe", "power": 2.6},
+	"observe": {"girl": "kiriko", "name": "観測射撃", "unlock": 0, "cd": 7.0, "kind": "hit", "power": 2.8},
+	"hypothesis": {"girl": "kiriko", "name": "雷の仮説", "unlock": 1, "cd": 14.0, "kind": "aoe", "power": 2.4},
+	"reconnect": {"girl": "kiriko", "name": "再接続理論", "unlock": 2, "cd": 22.0, "kind": "hit", "power": 5.2},
+}
+const SKILL_UNLOCK_AFF := [0, 45, 80]
+
+# 改装ツリー（TBHのルーンツリー準拠：ゴールド消費・マップ型・隣接解放）
+# 方向別傾向: 上=宝箱系／左上=金策／左下=素材／右=戦闘／下=システム
+const RENOV_NODES := {
+	"start": {"name": "店の鍵", "cost": 0, "pos": [0, 0], "prev": [], "effect": {}, "desc": "すべての始まり"},
+	"chest1": {"name": "箱の勘Ⅰ", "cost": 200, "pos": [0, -1], "prev": ["start"], "effect": {"chest_interval": 0.10}, "desc": "箱の蓄積間隔 -10%"},
+	"chest2": {"name": "箱の勘Ⅱ", "cost": 800, "pos": [0, -2], "prev": ["chest1"], "effect": {"chest_interval": 0.15}, "desc": "箱の蓄積間隔 -15%"},
+	"chest3": {"name": "目利き", "cost": 2500, "pos": [0, -3], "prev": ["chest2"], "effect": {"chest_quality": 1.0}, "desc": "箱の中身が豪華になる"},
+	"gold1": {"name": "商いⅠ", "cost": 300, "pos": [-1, -1], "prev": ["start"], "effect": {"gold": 0.10}, "desc": "獲得ゴールド +10%"},
+	"gold2": {"name": "商いⅡ", "cost": 900, "pos": [-2, -1], "prev": ["gold1"], "effect": {"gold": 0.15}, "desc": "獲得ゴールド +15%"},
+	"gold3": {"name": "老舗の貫禄", "cost": 3000, "pos": [-3, -2], "prev": ["gold2"], "effect": {"gold": 0.25}, "desc": "獲得ゴールド +25%"},
+	"mat1": {"name": "仕入れ筋Ⅰ", "cost": 300, "pos": [-1, 1], "prev": ["start"], "effect": {"mat": 0.04}, "desc": "素材ドロップ +4pt"},
+	"mat2": {"name": "仕入れ筋Ⅱ", "cost": 900, "pos": [-2, 1], "prev": ["mat1"], "effect": {"mat": 0.06}, "desc": "素材ドロップ +6pt"},
+	"mat3": {"name": "地下の市場", "cost": 3000, "pos": [-3, 2], "prev": ["mat2"], "effect": {"mat": 0.10}, "desc": "素材ドロップ +10pt"},
+	"atk1": {"name": "包丁研ぎ", "cost": 250, "pos": [1, 0], "prev": ["start"], "effect": {"atk": 0.08}, "desc": "攻撃 +8%"},
+	"hp1": {"name": "賄いの底力", "cost": 700, "pos": [2, 0], "prev": ["atk1"], "effect": {"hp": 0.10}, "desc": "最大HP +10%"},
+	"atk2": {"name": "火力の極み", "cost": 1800, "pos": [3, 0], "prev": ["hp1"], "effect": {"atk": 0.12}, "desc": "攻撃 +12%"},
+	"crit1": {"name": "急所の図面", "cost": 1200, "pos": [2, -1], "prev": ["hp1"], "effect": {"crit": 0.10}, "desc": "会心 +10%"},
+	"spd1": {"name": "出前の健脚", "cost": 1200, "pos": [2, 1], "prev": ["hp1"], "effect": {"spd": 0.10}, "desc": "潜行速度 +10%"},
+	"sign1": {"name": "ネオン看板", "cost": 1500, "pos": [0, 1], "prev": ["start"], "effect": {"sign": 1}, "desc": "看板 +1（客が増える）"},
+	"clockwork": {"name": "ぜんまい仕掛け", "cost": 1200, "pos": [1, 2], "prev": ["sign1"], "effect": {"auto_chest": 1}, "desc": "箱を自動で開封する"},
+	"rest": {"name": "安息", "cost": 2000, "pos": [-1, 2], "prev": ["sign1"], "effect": {"offline": 1}, "desc": "閉店中も収入（上限8時間）"},
+	"awaken": {"name": "覚醒", "cost": 2500, "pos": [0, 2], "prev": ["sign1"], "effect": {"skill_slot": 1}, "desc": "全員のスキル枠 +1"},
+	"sign2": {"name": "増築", "cost": 6000, "pos": [0, 3], "prev": ["awaken"], "effect": {"sign": 2}, "desc": "看板 +2"},
+}
+
+# ペット3種（交易船で稀に売られる）
+const PETS := {
+	"owl": {"name": "雨宿りの梟", "cost": 5000, "effect": {"gold": 0.15}, "desc": "売上 +15%"},
+	"lizard": {"name": "配管の蜥蜴", "cost": 5000, "effect": {"mat": 0.05}, "desc": "素材ドロップ +5pt"},
+	"fox": {"name": "路地の狐", "cost": 5000, "effect": {"discover": 0.06}, "desc": "装備の発見 +6pt"},
+}
 
 # レシピカード：通常9種＋特注3種（住民ストーリー紐付き）。
 # 重複＝星上げ☆3まで（価格+25%/星）

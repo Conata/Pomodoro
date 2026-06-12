@@ -18,6 +18,10 @@ func _initialize() -> void:
 	_test_keeper_matters()
 	_test_recipe_star_up()
 	_test_talk()
+	_test_equipment()
+	_test_renov()
+	_test_offline()
+	_test_daily_streak()
 	_test_save_roundtrip()
 	if fails == 0:
 		print("ALL %d CHECKS PASSED" % checks)
@@ -189,13 +193,88 @@ func _test_talk() -> void:
 	check(total == 12, "会話は4人×3=12本")
 
 
+func _test_equipment() -> void:
+	print("[equipment]")
+	var sim := _fresh(37)
+	var atk0 := sim.girl_atk("yuzuki")
+	var item := SimItems.roll_graded(sim.rng, 3, 900, 4)
+	item["slot"] = "weapon"
+	item["base"] = 50.0
+	item["score"] = SimItems.score(item)
+	sim._acquire_item(item)
+	check(sim.girl_atk("yuzuki") > atk0 or sim.girl_atk("mil") > 0.0, "装備で攻撃が上がる")
+	var equipped := false
+	for id in KuroData.GIRL_ORDER:
+		if not sim.state["girls"][id]["equip"]["weapon"].is_empty():
+			equipped = true
+	check(equipped, "拾得時に自動装着される")
+	# 合成
+	sim.state["inventory"] = []
+	for i in 3:
+		sim.state["inventory"].append(SimItems.roll_graded(sim.rng, 0, 1000 + i, 1))
+	var made := sim.synthesize_all()
+	check(made == 1, "同グレード3つで合成1回")
+	# 分解
+	sim.state["inventory"] = [SimItems.roll_graded(sim.rng, 0, 2000, 2)]
+	var dust := sim.salvage_item(2000)
+	check(dust > 0 and int(sim.state["scrap"]) >= dust, "分解で廃材")
+
+
+func _test_renov() -> void:
+	print("[renov]")
+	var sim := _fresh(41)
+	sim.state["gold"] = 20000
+	check(not sim.unlock_renov("hp1"), "隣接していない改装は不可")
+	check(sim.unlock_renov("atk1"), "起点の隣は改装できる")
+	check(sim.unlock_renov("hp1"), "解放後は隣が開く")
+	check(sim.skill_slots() == 1, "初期スキル枠は1")
+	check(sim.unlock_renov("sign1"), "看板")
+	check(sim.unlock_renov("awaken"), "覚醒")
+	check(sim.skill_slots() == 2, "覚醒でスキル枠+1")
+	check(sim.sign_total() >= 1, "改装の看板が客数に乗る")
+	check(sim.equip_skill("yuzuki", "wok_storm") == false, "♥不足のスキルは装備できない")
+	sim.state["girls"]["yuzuki"]["aff"] = 50
+	check(sim.equip_skill("yuzuki", "wok_storm"), "♥45で第2スキル解放")
+
+
+func _test_offline() -> void:
+	print("[offline]")
+	var sim := _fresh(43)
+	sim.state["last_seen"] = 1000.0
+	var r := sim.apply_offline(1000.0 + 3600.0)
+	check(r.is_empty(), "安息なしではオフライン報酬なし")
+	sim.state["renov"].append("rest")
+	sim.state["last_seen"] = 1000.0
+	var r2 := sim.apply_offline(1000.0 + 3600.0)
+	check(int(r2.get("gold", 0)) > 0, "安息でオフライン報酬 (+%dG)" % int(r2.get("gold", 0)))
+	sim.state["last_seen"] = 0.0
+	sim.state["last_seen"] = 1000.0
+	var r3 := sim.apply_offline(1000.0 + 999999.0)
+	check(float(r3.get("away", 0.0)) <= KuroData.OFFLINE_CAP_SEC, "上限8時間でキャップ")
+
+
+func _test_daily_streak() -> void:
+	print("[daily]")
+	var sim := _fresh(47)
+	for i in 3:
+		sim.register_completion("2026-06-12", 25.0)
+	check(int(sim.state["daily"]["runs"]) == 3, "デイリーが数える")
+	check(int(sim.state["streak"]) == 3, "ストリーク加算")
+	check(sim.claim_daily(), "3完走で報酬")
+	check(not sim.claim_daily(), "報酬は1日1回")
+	sim.start_run("pomo", 25.0, 0.0, "t")
+	sim.abandon_run()
+	check(int(sim.state["streak"]) == 0, "撤退でストリークリセット")
+	check(float(sim.state["weekly"].get("2026-06-12", 0.0)) == 75.0, "週間グラフに分が積まれる")
+
+
 func _test_save_roundtrip() -> void:
 	print("[save]")
 	var sim := _fresh(31)
 	sim.start_run("pomo", 25.0, 0.0, "save中")
 	_run_for(sim, 120.0)
 	sim.sync_rng()
-	var text := JSON.stringify(sim.state)
+	var text := JSON.stringify(sim.state, "", false, true)
 	var loaded: Dictionary = SaveGame.normalize(JSON.parse_string(text))
 	var sim2 := KuroSim.new(loaded)
 	check(int(sim2.state["gold"]) == int(sim.state["gold"]), "ゴールド復元")

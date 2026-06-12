@@ -24,7 +24,16 @@ func _init(p_state: Dictionary = {}) -> void:
 static func new_state(seed_value: int) -> Dictionary:
 	var girls := {}
 	for id in KuroData.GIRL_ORDER:
-		girls[id] = {"aff": 10, "seen": []}
+		var first_skill := ""
+		for sid in KuroData.SKILL_DB:
+			if KuroData.SKILL_DB[sid]["girl"] == id and int(KuroData.SKILL_DB[sid]["unlock"]) == 0:
+				first_skill = sid
+				break
+		girls[id] = {
+			"aff": 10, "seen": [],
+			"equip": {"weapon": {}, "armor": {}, "trinket": {}},
+			"skills_eq": [first_skill],
+		}
 	return {
 		"v": "v3",
 		"seed": seed_value,
@@ -55,6 +64,17 @@ static func new_state(seed_value: int) -> Dictionary:
 		"mobs": [],
 		"next_enc": 0.0,
 		"pending_night": {},
+		"scrap": 0,
+		"inventory": [],
+		"next_item_id": 1,
+		"renov": ["start"],
+		"pets": [],
+		"chest_progress": 0.0,
+		"cds": {},
+		"daily": {"date": "", "runs": 0, "claimed": false},
+		"streak": 0,
+		"weekly": {},
+		"ship": {"stock": [], "rotated": 0.0},
 		"stats": {"days": 0, "focus_min": 0.0, "dives": 0},
 		"last_seen": 0.0,
 	}
@@ -95,15 +115,65 @@ func add_aff(id: String, amount: int) -> void:
 	state["girls"][id]["aff"] = clampi(aff(id) + amount, 0, 100)
 
 
+func renov_bonus(key: String) -> float:
+	var total := 0.0
+	for id in state["renov"]:
+		var eff: Dictionary = KuroData.RENOV_NODES[id]["effect"]
+		if eff.has(key):
+			total += float(eff[key])
+	return total
+
+
+func pet_bonus(key: String) -> float:
+	var total := 0.0
+	for id in state["pets"]:
+		var eff: Dictionary = KuroData.PETS[id]["effect"]
+		if eff.has(key):
+			total += float(eff[key])
+	return total
+
+
+func _affix_total(id: String, key: String) -> float:
+	var v := 0.0
+	for slot in state["girls"][id]["equip"]:
+		var it: Dictionary = state["girls"][id]["equip"][slot]
+		if it.is_empty():
+			continue
+		for a in it["affixes"]:
+			if a["t"] == key:
+				v += float(a["v"])
+	return v
+
+
+func _affix_party(key: String) -> float:
+	var v := 0.0
+	for id in KuroData.GIRL_ORDER:
+		v += _affix_total(id, key)
+	return v
+
+
 func girl_atk(id: String) -> float:
 	var base: float = float(KuroData.GIRLS[id]["atk"]) * KuroData.girl_mult(aff(id))
 	if id == "kiriko":
 		base *= 1.4  # 高クリティカルの期待値
-	return base
+	var add := 0.0
+	for slot in state["girls"][id]["equip"]:
+		var it: Dictionary = state["girls"][id]["equip"][slot]
+		if not it.is_empty():
+			add += float(it["base"]) * float(SimItems.SLOTS[it["slot"]]["atk"])
+	var pct := renov_bonus("atk") + _affix_total(id, "atk") * 0.01
+	return (base + add) * (1.0 + pct)
 
 
 func girl_maxhp(id: String) -> float:
-	return float(KuroData.GIRLS[id]["hp"]) * KuroData.girl_mult(aff(id))
+	var base: float = float(KuroData.GIRLS[id]["hp"]) * KuroData.girl_mult(aff(id))
+	var add := 0.0
+	for slot in state["girls"][id]["equip"]:
+		var it: Dictionary = state["girls"][id]["equip"][slot]
+		if not it.is_empty():
+			add += float(it["base"]) * float(SimItems.SLOTS[it["slot"]]["hp"])
+	var pct := renov_bonus("hp") + _affix_total(id, "hp") * 0.01
+	return (base + add) * (1.0 + pct)
 
 
 func current_floor() -> int:
@@ -111,11 +181,53 @@ func current_floor() -> int:
 
 
 func gold_mult() -> float:
-	return 1.10 if "err404" in state["buffs"] else 1.0
+	return (1.10 if "err404" in state["buffs"] else 1.0) \
+			* (1.0 + renov_bonus("gold") + pet_bonus("gold") + _affix_party("gold") * 0.01)
 
 
 func mat_chance() -> float:
-	return 0.10 + (0.08 if "nono" in state["buffs"] else 0.0)
+	return 0.10 + (0.08 if "nono" in state["buffs"] else 0.0) \
+			+ renov_bonus("mat") + pet_bonus("mat") + _affix_party("mat") * 0.01
+
+
+func discover_chance() -> float:
+	return 0.08 + pet_bonus("discover")
+
+
+func crit_mult() -> float:
+	return 1.0 + renov_bonus("crit") + _affix_party("crit") * 0.01
+
+
+func dive_speed() -> float:
+	return KuroData.DIVE_SPEED * (1.0 + renov_bonus("spd") + _affix_party("spd") * 0.01)
+
+
+func sign_total() -> int:
+	return int(state["sign"]) + int(renov_bonus("sign"))
+
+
+func skill_slots() -> int:
+	return 1 + int(renov_bonus("skill_slot"))
+
+
+func known_skills(id: String) -> Array:
+	var out := []
+	for sid in KuroData.SKILL_DB:
+		var def: Dictionary = KuroData.SKILL_DB[sid]
+		if def["girl"] == id and aff(id) >= KuroData.SKILL_UNLOCK_AFF[int(def["unlock"])]:
+			out.append(sid)
+	return out
+
+
+func equip_skill(id: String, skill_id: String) -> bool:
+	var eq: Array = state["girls"][id]["skills_eq"]
+	if skill_id in eq:
+		eq.erase(skill_id)
+		return true
+	if eq.size() >= skill_slots() or not skill_id in known_skills(id):
+		return false
+	eq.append(skill_id)
+	return true
 
 
 # --- ダイブ ------------------------------------------------------------------
@@ -137,6 +249,7 @@ func start_run(mode: String, minutes: float, anchor: float, task: String = "") -
 	state["in_combat"] = false
 	state["mobs"] = []
 	state["next_enc"] = float(state["dist"]) + rng.randf_range(KuroData.ENC_MIN, KuroData.ENC_MAX)
+	state["cds"] = {}
 	state["stats"]["dives"] = int(state["stats"]["dives"]) + 1
 	_emit("log", "同期開始。%s が深層へ潜る" % "・".join(_diver_names()))
 
@@ -153,6 +266,7 @@ func step(dt: float) -> void:
 	if not run["active"]:
 		return
 	run["elapsed"] = float(run["elapsed"]) + dt
+	_tick_chests(dt)
 	if float(run["door_pending"]) > 0.0:
 		run["door_pending"] = float(run["door_pending"]) - dt
 		if float(run["door_pending"]) <= 0.0:
@@ -161,13 +275,52 @@ func step(dt: float) -> void:
 		_combat_step(dt)
 	else:
 		_travel_step(dt)
+	_quantize()
 	if float(run["elapsed"]) >= float(run["duration"]):
 		_end_run(false)
 
 
+const QUANT := 0.0001
+
+
+## 蓄積する浮動小数を毎ステップ固定グリッドへスナップする。
+## JSON往復で double の最下位ビットがずれても次のステップで自己修復し、
+## セーブ復元後も決定論が保たれる（テスト save で担保）。
+func _quantize() -> void:
+	state["dist"] = snappedf(float(state["dist"]), QUANT)
+	state["next_enc"] = snappedf(float(state["next_enc"]), QUANT)
+	state["chest_progress"] = snappedf(float(state["chest_progress"]), QUANT)
+	var run: Dictionary = state["run"]
+	run["elapsed"] = snappedf(float(run["elapsed"]), QUANT)
+	run["door_pending"] = snappedf(float(run["door_pending"]), QUANT)
+	for id in state["hp"]:
+		state["hp"][id] = snappedf(float(state["hp"][id]), QUANT)
+	for id in state["cds"]:
+		for sid in state["cds"][id]:
+			state["cds"][id][sid] = snappedf(float(state["cds"][id][sid]), QUANT)
+	for m in state["mobs"]:
+		m["hp"] = snappedf(float(m["hp"]), QUANT)
+
+
+## 箱はプレイ時間で蓄積（8分毎、改装で短縮）。ぜんまいで自動開封。
+func _tick_chests(dt: float) -> void:
+	var interval := KuroData.CHEST_INTERVAL * (1.0 - minf(renov_bonus("chest_interval"), 0.5))
+	state["chest_progress"] = float(state["chest_progress"]) + dt
+	while float(state["chest_progress"]) >= interval:
+		state["chest_progress"] = float(state["chest_progress"]) - interval
+		var grade := rng.randi(2)
+		if renov_bonus("auto_chest") > 0.0:
+			state["boxes"].append(grade)
+			var r := open_box()
+			_emit("log", "ぜんまいが箱を開けた: %s" % r.get("text", ""))
+		else:
+			state["run"]["boxes"].append(grade)
+			_emit("log", "潜行の合間に%sを拾った" % KuroData.BOX_NAMES[grade])
+
+
 func _travel_step(dt: float) -> void:
 	var dist := float(state["dist"])
-	var new_dist := dist + KuroData.DIVE_SPEED * dt
+	var new_dist := dist + dive_speed() * dt
 	var fl := current_floor()
 	var door_pos := (fl + KuroData.DOOR_AT) * KuroData.FLOOR_LEN
 	var gate := float(fl + 1) * KuroData.FLOOR_LEN
@@ -266,10 +419,22 @@ func _combat_step(dt: float) -> void:
 	var alive := _alive_divers()
 	if alive.is_empty():
 		return
-	# パーティDPS
+	# 装備スキル（CD制・自動発動）
+	for id in alive:
+		if not state["cds"].has(id):
+			state["cds"][id] = {}
+		for sid in state["girls"][id]["skills_eq"]:
+			var cd := float(state["cds"][id].get(sid, 0.0)) - dt
+			state["cds"][id][sid] = cd
+			if cd <= 0.0 and _cast_skill(id, String(sid)):
+				state["cds"][id][sid] = float(KuroData.SKILL_DB[sid]["cd"])
+				if state["mobs"].is_empty():
+					return
+	# パーティDPS（会心は期待値で適用）
 	var dps := 0.0
 	for id in alive:
 		dps += girl_atk(id)
+	dps *= crit_mult()
 	# ムゥの歌（たまに全体回復）
 	if "muu" in alive and rng.chance(0.06 * dt / 0.2):
 		for id in alive:
@@ -303,6 +468,68 @@ func _combat_step(dt: float) -> void:
 			_wipe()
 
 
+func _cast_skill(id: String, sid: String) -> bool:
+	var def: Dictionary = KuroData.SKILL_DB[sid]
+	var atk := girl_atk(id)
+	match String(def["kind"]):
+		"hit":
+			if state["mobs"].is_empty():
+				return false
+			_damage_mobs(atk * float(def["power"]))
+			return true
+		"aoe":
+			if state["mobs"].is_empty():
+				return false
+			_emit("fx", "", {"fx": "lightning" if def["girl"] == "kiriko" else "explosion"})
+			var per := atk * float(def["power"])
+			for m in state["mobs"].duplicate():
+				m["hp"] = float(m["hp"]) - per
+			_sweep_dead_mobs()
+			return true
+		"heal_one":
+			var low := ""
+			var worst := 0.92
+			for gid in _alive_divers():
+				var ratio := float(state["hp"][gid]) / girl_maxhp(gid)
+				if ratio < worst:
+					worst = ratio
+					low = gid
+			if low == "":
+				return false
+			state["hp"][low] = minf(girl_maxhp(low), float(state["hp"][low]) + girl_maxhp(low) * float(def["power"]))
+			return true
+		"heal_all":
+			var any := false
+			for gid in _alive_divers():
+				var mx := girl_maxhp(gid)
+				if float(state["hp"][gid]) < mx * 0.98:
+					state["hp"][gid] = minf(mx, float(state["hp"][gid]) + mx * float(def["power"]))
+					any = true
+			if any:
+				_emit("fx", "", {"fx": "song"})
+			return any
+		"shield_all":
+			# シールドは「次の被弾を軽減」扱い：全員を回復で代替し、盾を厚く
+			for gid in _alive_divers():
+				state["hp"][gid] = minf(girl_maxhp(gid), float(state["hp"][gid]) + girl_maxhp(gid) * float(def["power"]) * 0.6)
+			return true
+	return false
+
+
+func _sweep_dead_mobs() -> void:
+	var mobs: Array = state["mobs"]
+	var i := 0
+	while i < mobs.size():
+		if float(mobs[i]["hp"]) <= 0.0:
+			var m: Dictionary = mobs[i]
+			mobs.remove_at(i)
+			_on_mob_killed(m)
+		else:
+			i += 1
+	if mobs.is_empty() and state["in_combat"]:
+		_end_combat()
+
+
 func _damage_mobs(amount: float) -> void:
 	var mobs: Array = state["mobs"]
 	while amount > 0.0 and not mobs.is_empty():
@@ -326,6 +553,8 @@ func _on_mob_killed(m: Dictionary) -> void:
 	state["gold"] = int(state["gold"]) + g
 	if rng.chance(mat_chance()):
 		run["mats"] = int(run["mats"]) + 1
+	if rng.chance(discover_chance()) or m["boss"]:
+		_acquire_item(SimItems.roll(rng, current_floor(), _next_id()))
 	if m["elite"]:
 		var grade := rng.randi(2)  # 木〜鉄
 		run["boxes"].append(grade)
@@ -371,10 +600,28 @@ func _wipe() -> void:
 		_end_run(true)
 
 
-## 撤退（ポモドーロ放棄）＝切断扱い。
+## 撤退（ポモドーロ放棄）＝切断扱い。ストリークも失う。
 func abandon_run() -> void:
 	if state["run"]["active"]:
 		_end_run(true)
+
+
+## 完走の記録（デイリー3完走・ストリーク・週間グラフ）。日付は呼び出し側が渡す。
+func register_completion(date: String, minutes: float) -> void:
+	if String(state["daily"]["date"]) != date:
+		state["daily"] = {"date": date, "runs": 0, "claimed": false}
+	state["daily"]["runs"] = int(state["daily"]["runs"]) + 1
+	state["streak"] = int(state["streak"]) + 1
+	state["weekly"][date] = float(state["weekly"].get(date, 0.0)) + minutes
+
+
+func claim_daily() -> bool:
+	if int(state["daily"]["runs"]) >= 3 and not state["daily"]["claimed"]:
+		state["daily"]["claimed"] = true
+		state["gold"] = int(state["gold"]) + 500
+		_emit("log", "デイリー達成。タオ爺のご祝儀 +500G")
+		return true
+	return false
 
 
 func _end_run(disconnected: bool) -> void:
@@ -389,6 +636,7 @@ func _end_run(disconnected: bool) -> void:
 		mats = int(mats / 2.0)
 		run["boxes"] = []
 		state["crowd_penalty"] = true  # 翌夜の客足-40%
+		state["streak"] = 0
 	else:
 		for grade in run["boxes"]:
 			state["boxes"].append(int(grade))
@@ -419,7 +667,7 @@ func close_day() -> Dictionary:
 	var apt := float(KuroData.GIRLS[keeper]["keeper_apt"])
 	var prep := int((9.0 + 5.0 * apt) * KuroData.girl_mult(aff(keeper)))
 	# 客数 =(8+看板)×フラグ補正
-	var customers := 8 + int(state["sign"])
+	var customers := 8 + sign_total()
 	if "tao" in state["buffs"]:
 		customers += 2
 	if int(state["invites"]) > 0:
@@ -561,6 +809,8 @@ func open_box() -> Dictionary:
 	if state["boxes"].is_empty():
 		return {}
 	var grade := int(state["boxes"].pop_front())
+	if renov_bonus("chest_quality") > 0.0:
+		grade = mini(3, grade + 1)  # 目利き：中身が1段豪華に
 	var r := rng.randf()
 	if r < KuroData.DROP_RECIPE:
 		var pool := []
@@ -636,6 +886,209 @@ func market_buy(idx: int) -> Dictionary:
 			state["invites"] = int(state["invites"]) + 1
 			return {"text": "招待状を仕入れた（翌夜 客+3）"}
 	return {}
+
+
+# --- 装備（TBH準拠）----------------------------------------------------------
+
+
+func _next_id() -> int:
+	var id := int(state["next_item_id"])
+	state["next_item_id"] = id + 1
+	return id
+
+
+## 拾得時は自動装着（そのスロットのスコアが最も低い子へ。改善しないなら倉庫）。
+func _acquire_item(item: Dictionary) -> void:
+	var best_gain := 0.0
+	var best_id := ""
+	for id in KuroData.GIRL_ORDER:
+		var cur: Dictionary = state["girls"][id]["equip"][item["slot"]]
+		var cur_score := 0.0 if cur.is_empty() else float(cur["score"])
+		var gain := float(item["score"]) - cur_score
+		if gain > best_gain:
+			best_gain = gain
+			best_id = id
+	if best_id != "":
+		var old: Dictionary = state["girls"][best_id]["equip"][item["slot"]]
+		state["girls"][best_id]["equip"][item["slot"]] = item
+		if not old.is_empty():
+			state["inventory"].append(old)
+		_emit("loot", "%s が %s を装着" % [KuroData.GIRLS[best_id]["name"], SimItems.display_name(item)])
+	else:
+		state["inventory"].append(item)
+	_trim_inventory()
+
+
+func _trim_inventory() -> void:
+	var inv: Array = state["inventory"]
+	if inv.size() <= 120:
+		return
+	inv.sort_custom(func(a, b): return float(a["score"]) < float(b["score"]))
+	while inv.size() > 120:
+		state["scrap"] = int(state["scrap"]) + SimItems.salvage_value(inv.pop_front())
+
+
+func _find_inventory(item_id: int) -> int:
+	for i in state["inventory"].size():
+		if int(state["inventory"][i]["id"]) == item_id:
+			return i
+	return -1
+
+
+func equip_from_inventory(item_id: int, girl_id: String) -> bool:
+	var i := _find_inventory(item_id)
+	if i < 0:
+		return false
+	var item: Dictionary = state["inventory"][i]
+	state["inventory"].remove_at(i)
+	var old: Dictionary = state["girls"][girl_id]["equip"][item["slot"]]
+	state["girls"][girl_id]["equip"][item["slot"]] = item
+	if not old.is_empty():
+		state["inventory"].append(old)
+	return true
+
+
+func salvage_item(item_id: int) -> int:
+	var i := _find_inventory(item_id)
+	if i < 0:
+		return 0
+	var dust := SimItems.salvage_value(state["inventory"][i])
+	state["inventory"].remove_at(i)
+	state["scrap"] = int(state["scrap"]) + dust
+	return dust
+
+
+## 一括分解：誰の装備改善にもならない品をまとめて廃材に。
+func bulk_salvage() -> Dictionary:
+	var keep := []
+	var count := 0
+	var dust := 0
+	for it in state["inventory"]:
+		var useful := false
+		for id in KuroData.GIRL_ORDER:
+			var cur: Dictionary = state["girls"][id]["equip"][it["slot"]]
+			if cur.is_empty() or float(cur["score"]) < float(it["score"]):
+				useful = true
+				break
+		if useful:
+			keep.append(it)
+		else:
+			count += 1
+			dust += SimItems.salvage_value(it)
+	state["inventory"] = keep
+	state["scrap"] = int(state["scrap"]) + dust
+	return {"count": count, "dust": dust}
+
+
+## 合成：同グレード3つ→上位1つ（スコアの低い順に消費）。
+func synthesize_all() -> int:
+	var made := 0
+	for grade in range(SimItems.GRADES.size() - 1):
+		while true:
+			var same := []
+			for it in state["inventory"]:
+				if int(it["grade"]) == grade:
+					same.append(it)
+			if same.size() < 3:
+				break
+			same.sort_custom(func(a, b): return float(a["score"]) < float(b["score"]))
+			for k in 3:
+				state["inventory"].erase(same[k])
+			var item := SimItems.roll_graded(rng, int(state["best_floor"]), _next_id(), grade + 1)
+			_emit("loot", "合成成功: %s" % SimItems.display_name(item))
+			_acquire_item(item)
+			made += 1
+	return made
+
+
+## 刻印：廃材50でアフィックス再抽選（倉庫内のみ）。
+func reroll_item(item_id: int) -> bool:
+	if int(state["scrap"]) < SimItems.REROLL_COST:
+		return false
+	var i := _find_inventory(item_id)
+	if i < 0:
+		return false
+	state["scrap"] = int(state["scrap"]) - SimItems.REROLL_COST
+	SimItems.reroll_affixes(rng, state["inventory"][i])
+	return true
+
+
+# --- 改装ツリー ---------------------------------------------------------------
+
+
+func renov_available(id: String) -> bool:
+	if id in state["renov"]:
+		return false
+	for p in KuroData.RENOV_NODES[id]["prev"]:
+		if p in state["renov"]:
+			return true
+	return KuroData.RENOV_NODES[id]["prev"].is_empty()
+
+
+func unlock_renov(id: String) -> bool:
+	if not renov_available(id):
+		return false
+	var cost := int(KuroData.RENOV_NODES[id]["cost"])
+	if int(state["gold"]) < cost:
+		return false
+	state["gold"] = int(state["gold"]) - cost
+	state["renov"].append(id)
+	_emit("log", "改装「%s」（%s）" % [KuroData.RENOV_NODES[id]["name"], KuroData.RENOV_NODES[id]["desc"]])
+	return true
+
+
+# --- 交易船・オフライン --------------------------------------------------------
+
+
+## 10分毎に在庫入替。now は unix 秒。
+func maybe_rotate_ship(now: float) -> void:
+	var ship: Dictionary = state["ship"]
+	if not ship["stock"].is_empty() and now - float(ship["rotated"]) < KuroData.SHIP_ROTATE_SEC:
+		return
+	ship["rotated"] = now
+	var stock := []
+	for i in 2:
+		var it := SimItems.roll(rng, int(state["best_floor"]) + 2, _next_id(), 0.5)
+		stock.append({"type": "item", "item": it, "price": int(float(it["score"]) * 14.0)})
+	for pid in KuroData.PETS:
+		if not pid in state["pets"] and rng.chance(0.34):
+			stock.append({"type": "pet", "pet": pid, "price": int(KuroData.PETS[pid]["cost"])})
+			break
+	ship["stock"] = stock
+
+
+func buy_ship(idx: int) -> bool:
+	var stock: Array = state["ship"]["stock"]
+	if idx < 0 or idx >= stock.size():
+		return false
+	var entry: Dictionary = stock[idx]
+	if int(state["gold"]) < int(entry["price"]):
+		return false
+	state["gold"] = int(state["gold"]) - int(entry["price"])
+	if entry["type"] == "pet":
+		state["pets"].append(entry["pet"])
+		_emit("log", "%s が店に住み着いた（%s）" % [KuroData.PETS[entry["pet"]]["name"], KuroData.PETS[entry["pet"]]["desc"]])
+	else:
+		_acquire_item(entry["item"])
+	stock.remove_at(idx)
+	return true
+
+
+## 安息（改装ノード）：閉店中の収入。上限8時間。
+func apply_offline(now: float) -> Dictionary:
+	var last := float(state["last_seen"])
+	state["last_seen"] = now
+	if last <= 0.0 or renov_bonus("offline") <= 0.0:
+		return {}
+	var away := clampf(now - last, 0.0, KuroData.OFFLINE_CAP_SEC)
+	if away < 120.0:
+		return {}
+	var sc := KuroData.depth_scale(int(state["best_floor"]))
+	var g := int(away * 0.4 * sc * gold_mult())
+	var mats := int(away / 600.0)
+	state["gold"] = int(state["gold"]) + g
+	state["stock"] = int(state["stock"]) + mats
+	return {"away": away, "gold": g, "mats": mats}
 
 
 # --- 朝の設定 ----------------------------------------------------------------

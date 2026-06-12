@@ -1,0 +1,113 @@
+class_name SimItems
+extends RefCounted
+## 装備品（TBH実仕様：グレード7段階 × アフィックス0〜3個）。
+## 拾得時は自動装着（スコア比較）、分解で廃材、刻印（廃材50）で再抽選、
+## 同グレード3つで合成→上位1つ。
+
+const GRADES := [
+	{"name": "粗末", "mult": 1.0, "color": Color(0.55, 0.6, 0.7)},
+	{"name": "普通", "mult": 1.4, "color": Color(0.8, 0.85, 0.95)},
+	{"name": "上質", "mult": 2.0, "color": Color(0.45, 0.9, 0.6)},
+	{"name": "精錬", "mult": 3.0, "color": Color(0.45, 0.7, 1.0)},
+	{"name": "英雄", "mult": 4.5, "color": Color(0.8, 0.5, 1.0)},
+	{"name": "伝説", "mult": 7.0, "color": Color(1.0, 0.7, 0.3)},
+	{"name": "星界", "mult": 11.0, "color": Color(0.5, 1.0, 0.95)},
+]
+
+const SLOTS := {
+	"weapon": {"name": "武器", "atk": 1.0, "hp": 0.0},
+	"armor": {"name": "防具", "atk": 0.0, "hp": 5.0},
+	"trinket": {"name": "装飾", "atk": 0.4, "hp": 2.0},
+}
+
+# アフィックス値は%ポイント
+const AFFIXES := {
+	"atk": {"name": "攻", "min": 4, "max": 12},
+	"hp": {"name": "体", "min": 4, "max": 12},
+	"spd": {"name": "速", "min": 2, "max": 6},
+	"gold": {"name": "金", "min": 3, "max": 10},
+	"mat": {"name": "材", "min": 2, "max": 6},
+	"crit": {"name": "会", "min": 2, "max": 8},
+}
+
+const REROLL_COST := 50  # 刻印＝廃材50
+
+
+static func roll(rng: SimRNG, floor_idx: int, id_num: int, quality_bonus: float = 0.0) -> Dictionary:
+	return roll_graded(rng, floor_idx, id_num, _roll_grade(rng, floor_idx, quality_bonus))
+
+
+static func roll_graded(rng: SimRNG, floor_idx: int, id_num: int, grade: int) -> Dictionary:
+	var slot_keys: Array = SLOTS.keys()
+	var slot: String = slot_keys[rng.randi(slot_keys.size())]
+	var mult: float = GRADES[grade]["mult"]
+	var base := snappedf(mult * (5.0 + floor_idx * 1.8) * rng.randf_range(0.85, 1.15), 0.1)
+	var item := {
+		"id": id_num, "slot": slot, "grade": grade, "base": base,
+		"affixes": _roll_affixes(rng, _roll_affix_count(rng, grade)),
+	}
+	item["score"] = score(item)
+	return item
+
+
+static func reroll_affixes(rng: SimRNG, item: Dictionary) -> void:
+	item["affixes"] = _roll_affixes(rng, maxi(1, item["affixes"].size()))
+	item["score"] = score(item)
+
+
+static func score(item: Dictionary) -> float:
+	var s: float = float(item["base"]) * 2.0
+	for a in item["affixes"]:
+		s += float(a["v"])
+	return snappedf(s, 0.1)
+
+
+static func display_name(item: Dictionary) -> String:
+	var n := "【%s】%s" % [GRADES[int(item["grade"])]["name"], SLOTS[item["slot"]]["name"]]
+	if not item["affixes"].is_empty():
+		n += " +%d" % item["affixes"].size()
+	return n
+
+
+static func affix_text(item: Dictionary) -> String:
+	var parts: Array[String] = []
+	for a in item["affixes"]:
+		parts.append("%s+%d%%" % [AFFIXES[a["t"]]["name"], int(a["v"])])
+	return " ".join(parts)
+
+
+static func salvage_value(item: Dictionary) -> int:
+	var g := int(item["grade"])
+	return 1 + g * 2 + (4 if g >= 4 else 0)
+
+
+static func _roll_grade(rng: SimRNG, floor_idx: int, quality_bonus: float) -> int:
+	var p := clampf(0.30 + floor_idx * 0.015 + quality_bonus * 0.1, 0.30, 0.55)
+	var grade := 0
+	while grade < GRADES.size() - 1 and rng.chance(p):
+		grade += 1
+	return grade
+
+
+static func _roll_affix_count(rng: SimRNG, grade: int) -> int:
+	var r := rng.randf()
+	var count := 0
+	if r >= 0.92:
+		count = 3
+	elif r >= 0.75:
+		count = 2
+	elif r >= 0.45:
+		count = 1
+	if grade >= 4:
+		count = maxi(count, 1)
+	return count
+
+
+static func _roll_affixes(rng: SimRNG, count: int) -> Array:
+	var keys: Array = AFFIXES.keys()
+	var affixes := []
+	for i in count:
+		var t: String = keys[rng.randi(keys.size())]
+		var spec: Dictionary = AFFIXES[t]
+		affixes.append({"t": t, "v": rng.randi_range(int(spec["min"]), int(spec["max"]))})
+	return affixes

@@ -11,7 +11,9 @@ static func save_state(state: Dictionary) -> void:
 	if f == null:
 		push_error("セーブに失敗: " + PATH)
 		return
-	f.store_string(JSON.stringify(state))
+	# full_precision=true: 浮動小数を正確に保存しないと、復元後に
+	# 蓄積カウンタ（dist/chest_progress/cd）がずれて決定論が壊れる
+	f.store_string(JSON.stringify(state, "", false, true))
 	f.close()
 
 
@@ -29,9 +31,17 @@ static func load_state() -> Dictionary:
 
 
 static func normalize(s: Dictionary) -> Dictionary:
-	for key in ["gold", "stock", "sign", "invites", "day", "checkpoint", "best_floor", "rng_state", "seed"]:
+	for key in ["gold", "stock", "sign", "invites", "day", "checkpoint", "best_floor",
+			"rng_state", "seed", "scrap", "next_item_id", "streak"]:
 		if s.has(key):
 			s[key] = int(s[key])
+	if s.has("daily"):
+		s["daily"]["runs"] = int(s["daily"].get("runs", 0))
+	_normalize_items(s.get("inventory", []))
+	for entry in s.get("ship", {}).get("stock", []):
+		entry["price"] = int(entry.get("price", 0))
+		if entry.has("item"):
+			_normalize_item(entry["item"])
 	var boxes := []
 	for g in s.get("boxes", []):
 		boxes.append(int(g))
@@ -42,6 +52,13 @@ static func normalize(s: Dictionary) -> Dictionary:
 		for t in s["girls"][id].get("seen", []):
 			seen.append(int(t))
 		s["girls"][id]["seen"] = seen
+		if not s["girls"][id].has("equip"):
+			s["girls"][id]["equip"] = {"weapon": {}, "armor": {}, "trinket": {}}
+		if not s["girls"][id].has("skills_eq"):
+			s["girls"][id]["skills_eq"] = []
+		for slot in s["girls"][id]["equip"]:
+			if not s["girls"][id]["equip"][slot].is_empty():
+				_normalize_item(s["girls"][id]["equip"][slot])
 	for id in s.get("recipes", {}):
 		s["recipes"][id] = int(s["recipes"][id])
 	var doors := []
@@ -55,4 +72,34 @@ static func normalize(s: Dictionary) -> Dictionary:
 		s["run"]["boxes"] = rb
 		for key in ["mats", "gold0", "kills", "resyncs", "banked"]:
 			s["run"][key] = int(s["run"].get(key, 0))
+	# v4初期セーブ（装備システム導入前）との互換
+	for key_def in [["scrap", 0], ["next_item_id", 1], ["streak", 0], ["chest_progress", 0.0]]:
+		if not s.has(key_def[0]):
+			s[key_def[0]] = key_def[1]
+	if not s.has("inventory"):
+		s["inventory"] = []
+	if not s.has("renov"):
+		s["renov"] = ["start"]
+	if not s.has("pets"):
+		s["pets"] = []
+	if not s.has("cds"):
+		s["cds"] = {}
+	if not s.has("daily"):
+		s["daily"] = {"date": "", "runs": 0, "claimed": false}
+	if not s.has("weekly"):
+		s["weekly"] = {}
+	if not s.has("ship"):
+		s["ship"] = {"stock": [], "rotated": 0.0}
 	return s
+
+
+static func _normalize_items(items: Array) -> void:
+	for it in items:
+		_normalize_item(it)
+
+
+static func _normalize_item(it: Dictionary) -> void:
+	it["id"] = int(it.get("id", 0))
+	it["grade"] = int(it.get("grade", 0))
+	for a in it.get("affixes", []):
+		a["v"] = int(a.get("v", 0))
