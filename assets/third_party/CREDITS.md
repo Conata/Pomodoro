@@ -9,6 +9,9 @@
 | `sfx/` Minifantasy Dungeon SFX（chest_open, sword, damage） | Leohpaz | 無料・**要クレジット** | 宝箱・攻撃・被弾SE | https://leohpaz.itch.io/minifantasy-dungeon-sfx-pack |
 | `sfx/` RPG Essentials SFX Free（ui_*, slash, enemy_death, fire, thunder, teleport） | Leohpaz | 無料・**要クレジット** | UI/戦闘/魔法SE | https://leohpaz.itch.io/rpg-essentials-sfx-free |
 | `music/sketchbook_loop.ogg`（Music Loop Bundle より） | Abstraction (Tallbeard Studios) | CC0 1.0（同梱 LICENSE.txt） | BGMループ | https://tallbeard.itch.io/music-loop-bundle |
+| `effects/explosion2.png` Fire Spell Effect 02 | pimen | 無料（商用可・クレジット任意） | 範囲スキル/ゲート突破エフェクト | https://pimen.itch.io/fire-spell-effect-02 |
+| `effects/lightning_strike.png` Thunder Spell Effect | pimen | 無料（商用可・クレジット任意） | 連鎖雷/レベルアップエフェクト | https://pimen.itch.io/thunder-spell-effect-02 |
+| `effects/smoke.png` Smoke VFX 1 | pimen | 無料（商用可・クレジット任意） | 全滅/撤退エフェクト | https://pimen.itch.io/smoke-vfx-1 |
 | `../fonts/DotGothic16-Regular.ttf` | Fontworks | SIL OFL 1.1（同梱 OFL.txt） | UIフォント（日本語） | https://fonts.google.com/specimen/DotGothic16 |
 
 ## 加工メモ

@@ -416,6 +416,7 @@ func _cast_skill(h: Dictionary, id: String) -> bool:
 		"aoe":
 			if state["mobs"].is_empty():
 				return false
+			_emit("fx", "", {"fx": "lightning" if id == "chain" else "explosion"})
 			var per := atk * float(def["power"])
 			for m in state["mobs"].duplicate():
 				m["hp"] = float(m["hp"]) - per

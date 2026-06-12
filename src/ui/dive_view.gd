@@ -5,12 +5,22 @@ extends Control
 ## スプライトは 0x72 DungeonTilesetII（CC0）。見つからない場合は図形で代替。
 
 const FRAME_DIR := "res://assets/third_party/dungeon/frames/"
+const FX_DIR := "res://assets/third_party/effects/"
 const SCALE := 3.0
 const ANIM_FPS := 6.0
+const FX_MAX := 6
+
+# 横一列のスプライトシート（pimen / sanctumpixel、フレームは正方形）
+const FX_DEFS := {
+	"explosion": {"file": "explosion2.png", "size": 50, "frames": 18, "fps": 24.0},
+	"lightning": {"file": "lightning_strike.png", "size": 66, "frames": 13, "fps": 22.0},
+	"smoke": {"file": "smoke.png", "size": 64, "frames": 13, "fps": 14.0},
+}
 
 var sim: GameSim = null
 var pulse := 0.0
 var _tex_cache := {}
+var _fx_active: Array = []
 
 
 func _ready() -> void:
@@ -20,8 +30,47 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	pulse += delta
+	var i := 0
+	while i < _fx_active.size():
+		var fx: Dictionary = _fx_active[i]
+		fx["t"] = float(fx["t"]) + delta
+		var def: Dictionary = FX_DEFS[fx["kind"]]
+		if float(fx["t"]) * float(def["fps"]) >= float(def["frames"]):
+			_fx_active.remove_at(i)
+		else:
+			i += 1
 	if visible:
 		queue_redraw()
+
+
+## エフェクト発火。at は "enemy"（右側）か "party"（左側）。
+func spawn_fx(kind: String, at: String = "enemy") -> void:
+	if not FX_DEFS.has(kind) or _fx_active.size() >= FX_MAX:
+		return
+	_fx_active.append({"kind": kind, "at": at, "t": 0.0})
+
+
+func _fx_tex(file: String) -> Texture2D:
+	if not _tex_cache.has(file):
+		var path := FX_DIR + file
+		_tex_cache[file] = load(path) if ResourceLoader.exists(path) else null
+	return _tex_cache[file]
+
+
+func _draw_fx(ground: float) -> void:
+	for fx in _fx_active:
+		var def: Dictionary = FX_DEFS[fx["kind"]]
+		var tex := _fx_tex(String(def["file"]))
+		if tex == null:
+			continue
+		var frame := int(float(fx["t"]) * float(def["fps"]))
+		frame = clampi(frame, 0, int(def["frames"]) - 1)
+		var fsize := int(def["size"])
+		var region := Rect2(frame * fsize, 0, fsize, fsize)
+		var draw_size := fsize * SCALE
+		var x := (size.x - 110.0) if fx["at"] == "enemy" else 90.0
+		var rect := Rect2(x - draw_size * 0.5, ground - draw_size, draw_size, draw_size)
+		draw_texture_rect_region(tex, rect, region)
 
 
 func _tex(frame_name: String) -> Texture2D:
@@ -135,6 +184,8 @@ func _draw() -> void:
 			var r := 24.0 if boss else 12.0
 			draw_circle(Vector2(x, ground - r - 2), r, Color(0.85, 0.25, 0.3) if boss else Color(0.7, 0.3, 0.5))
 			_draw_hp_bar(x, ground - r * 2 - 14, ratio, 32.0)
+
+	_draw_fx(ground)
 
 	if float(sim.state["retreat_cd"]) > 0.0:
 		draw_string(font, Vector2(14, ground + 32), "態勢を立て直している…", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1, 0.7, 0.5))

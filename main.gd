@@ -126,13 +126,18 @@ func _pump_events() -> void:
 				_update_blessing_ui()
 			"level":
 				_sfx("thunder")
+				dive.spawn_fx("lightning", "party")
 				_log(e["msg"])
 			"gate":
 				_sfx("enemy_death")
+				dive.spawn_fx("explosion", "enemy")
 				_log(e["msg"])
 			"wipe":
 				_sfx("damage")
+				dive.spawn_fx("smoke", "party")
 				_log(e["msg"])
+			"fx":
+				dive.spawn_fx(String(e.get("fx", "")), "enemy")
 			_:
 				_log(e["msg"])
 
