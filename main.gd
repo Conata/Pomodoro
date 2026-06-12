@@ -401,6 +401,17 @@ func _build_dive_panel(parent: Control) -> void:
 	abandon_btn = _button("撤退（切断）…", _on_abandon_pressed, 20)
 	abandon_btn.modulate = Color(1, 0.7, 0.75)
 	dive_panel.add_child(abandon_btn)
+	# デバッグ早送り：アンカーを過去にずらすと次フレームのキャッチアップが
+	# その分を固定ステップで一気に消化する（決定論は崩れない）
+	var dbg := HBoxContainer.new()
+	dbg.add_theme_constant_override("separation", 6)
+	var dbg_label := _label("DEBUG", 14, Color(1, 1, 1, 0.3))
+	dbg.add_child(dbg_label)
+	for opt in [["⏩ +1分", 60.0], ["⏩ +10分", 600.0], ["⏩ 完走まで", -1.0]]:
+		var b := _button(String(opt[0]), _on_debug_ff.bind(float(opt[1])), 16)
+		b.modulate = Color(1, 1, 1, 0.55)
+		dbg.add_child(b)
+	dive_panel.add_child(dbg)
 	parent.add_child(dive_panel)
 
 
@@ -629,6 +640,17 @@ func _on_door_choice(open: bool) -> void:
 	door_row.visible = false
 	sim.resolve_door(open)
 	_pump_events()
+
+
+## デバッグ早送り。seconds=-1 は残り時間ぜんぶ（完走まで）。
+func _on_debug_ff(seconds: float) -> void:
+	var run: Dictionary = sim.state["run"]
+	if not run["active"]:
+		return
+	if seconds < 0.0:
+		seconds = float(run["duration"]) - float(run["elapsed"]) + 1.0
+	run["anchor"] = float(run["anchor"]) - seconds
+	_log("[DEBUG] %d秒 早送り" % int(seconds))
 
 
 func _on_open_box() -> void:
