@@ -40,7 +40,7 @@ static func new_state(seed_value: int) -> Dictionary:
 		"rng_state": seed_value,
 		"day": 1,
 		"gold": 120,
-		"stock": 8,
+		"stock": {"dry": 8, "meat": 2, "sea": 2},
 		"sign": 0,
 		"invites": 0,
 		"girls": girls,
@@ -240,7 +240,8 @@ func start_run(mode: String, minutes: float, anchor: float, task: String = "") -
 		"active": true, "mode": mode, "task": task,
 		"duration": KuroData.QUICK_SEC if mode == "quick" else minutes * 60.0,
 		"elapsed": 0.0, "anchor": anchor,
-		"boxes": [], "mats": 0, "gold0": int(state["gold"]), "kills": 0,
+		"boxes": [], "mats": {"dry": 0, "meat": 0, "sea": 0},
+		"gold0": int(state["gold"]), "kills": 0,
 		"resyncs": 0, "door_pending": 0.0, "banked": 0,
 	}
 	state["hp"] = {}
@@ -358,9 +359,10 @@ func resolve_door(open: bool) -> void:
 		state["run"]["boxes"].append(grade)
 		_emit("door_loot", "扉の奥に%s。回収（未送付＝リスク資産）" % KuroData.BOX_NAMES[grade])
 	elif r < 0.8:
+		var ing := String(KuroData.BIOMES[current_floor() % KuroData.BIOMES.size()]["ing"])
 		var mats := 3 + rng.randi(3)
-		state["run"]["mats"] = int(state["run"]["mats"]) + mats
-		_emit("door_loot", "扉の奥は食料庫だった。素材+%d" % mats)
+		state["run"]["mats"][ing] = int(state["run"]["mats"][ing]) + mats
+		_emit("door_loot", "扉の奥は食料庫だった。%s+%d" % [KuroData.ING_NAMES[ing], mats])
 	else:
 		for id in state["hp"]:
 			state["hp"][id] = float(state["hp"][id]) * 0.75
@@ -552,7 +554,8 @@ func _on_mob_killed(m: Dictionary) -> void:
 	var g := int(3.0 * sc * gold_mult() * (10.0 if m["boss"] else (3.0 if m["elite"] else 1.0)))
 	state["gold"] = int(state["gold"]) + g
 	if rng.chance(mat_chance()):
-		run["mats"] = int(run["mats"]) + 1
+		var ing := String(KuroData.BIOMES[current_floor() % KuroData.BIOMES.size()]["ing"])
+		run["mats"][ing] = int(run["mats"][ing]) + 1
 	if rng.chance(discover_chance()) or m["boss"]:
 		_acquire_item(SimItems.roll(rng, current_floor(), _next_id()))
 	if m["elite"]:
@@ -630,10 +633,11 @@ func _end_run(disconnected: bool) -> void:
 	state["in_combat"] = false
 	state["mobs"] = []
 	run["door_pending"] = 0.0
-	var mats := int(run["mats"])
+	var mats: Dictionary = run["mats"]
 	var lost_boxes: int = run["boxes"].size()
 	if disconnected:
-		mats = int(mats / 2.0)
+		for ing in mats:
+			mats[ing] = int(int(mats[ing]) / 2.0)
 		run["boxes"] = []
 		state["crowd_penalty"] = true  # 翌夜の客足-40%
 		state["streak"] = 0
@@ -641,14 +645,18 @@ func _end_run(disconnected: bool) -> void:
 		for grade in run["boxes"]:
 			state["boxes"].append(int(grade))
 		lost_boxes = 0
-	state["stock"] = int(state["stock"]) + mats
+	var mats_total := 0
+	for ing in mats:
+		state["stock"][ing] = int(state["stock"][ing]) + int(mats[ing])
+		mats_total += int(mats[ing])
 	var minutes := float(run["elapsed"]) / 60.0
 	if run["mode"] == "pomo":
 		state["stats"]["focus_min"] = float(state["stats"]["focus_min"]) + minutes
 	_emit("run_complete", "", {"summary": {
 		"mode": run["mode"], "task": run["task"], "minutes": minutes,
 		"gold": int(state["gold"]) - int(run["gold0"]), "kills": int(run["kills"]),
-		"mats": mats, "boxes": state["boxes"].size(), "lost": lost_boxes,
+		"mats": mats_total, "mats_by": mats.duplicate(),
+		"boxes": state["boxes"].size(), "lost": lost_boxes,
 		"floor": current_floor(), "resyncs": int(run["resyncs"]),
 		"disconnected": disconnected,
 	}})
@@ -701,21 +709,28 @@ func close_day() -> Dictionary:
 		synergies.append("フルコース")
 	if keeper == "kiriko":
 		synergies.append("解析仕込み")
-	# 自動調理
-	var served := mini(customers, mini(int(state["stock"]), prep))
+	# 自動調理：獲ってきた素材が、今夜つくれるものを決める
+	var stock: Dictionary = state["stock"]
+	var capacity := mini(customers, prep)
+	var served := 0
 	var counts := {}
 	var night_gold := 0
 	var matched := 0
 	var sold_tastes := {}
-	for i in served:
+	for i in capacity:
 		var pool := []
 		for id in menu:
+			if int(stock.get(KuroData.RECIPES[id]["ing"], 0)) <= 0:
+				continue  # 素材切れの皿は出せない
 			var w := 1.0 + (2.0 if KuroData.RECIPES[id]["taste"] == forecast else 0.0)
 			for k in int(w * 2.0):
 				pool.append(id)
 		if pool.is_empty():
 			break
 		var dish: String = pool[rng.randi(pool.size())]
+		var ing: String = KuroData.RECIPES[dish]["ing"]
+		stock[ing] = int(stock[ing]) - 1
+		served += 1
 		var star := int(state["recipes"].get(dish, 1))
 		var taste: String = KuroData.RECIPES[dish]["taste"]
 		var is_match := taste == forecast or keeper == "kiriko"
@@ -726,7 +741,6 @@ func close_day() -> Dictionary:
 		counts[dish] = int(counts.get(dish, 0)) + 1
 		sold_tastes[taste] = true
 	state["gold"] = int(state["gold"]) + night_gold
-	state["stock"] = maxi(0, int(state["stock"]) - served)
 	# 好感度：ダイブ同行+2／店番+1／好物の味が売れた夜+2
 	for id in divers():
 		add_aff(id, 2)
@@ -880,8 +894,9 @@ func market_buy(idx: int) -> Dictionary:
 			state["recipes"][id3] = int(state["recipes"].get(id3, 0)) + 1
 			return {"text": "写本入手: %s ☆%d" % [KuroData.RECIPES[id3]["name"], int(state["recipes"][id3])]}
 		"mats":
-			state["stock"] = int(state["stock"]) + 5
-			return {"text": "素材 +5"}
+			for ing in KuroData.INGS:
+				state["stock"][ing] = int(state["stock"][ing]) + 2
+			return {"text": "素材箱: 乾物・肉・海鮮 +2ずつ"}
 		"invite":
 			state["invites"] = int(state["invites"]) + 1
 			return {"text": "招待状を仕入れた（翌夜 客+3）"}
@@ -1085,10 +1100,11 @@ func apply_offline(now: float) -> Dictionary:
 		return {}
 	var sc := KuroData.depth_scale(int(state["best_floor"]))
 	var g := int(away * 0.4 * sc * gold_mult())
-	var mats := int(away / 600.0)
+	var per := int(away / 1500.0)
 	state["gold"] = int(state["gold"]) + g
-	state["stock"] = int(state["stock"]) + mats
-	return {"away": away, "gold": g, "mats": mats}
+	for ing in KuroData.INGS:
+		state["stock"][ing] = int(state["stock"][ing]) + per
+	return {"away": away, "gold": g, "mats": per * KuroData.INGS.size()}
 
 
 # --- 朝の設定 ----------------------------------------------------------------
@@ -1098,12 +1114,23 @@ func set_keeper(id: String) -> void:
 	state["morning"]["keeper"] = id
 
 
+func menu_limit() -> int:
+	return 4 + int(renov_bonus("menu_slot"))
+
+
+func stock_total() -> int:
+	var t := 0
+	for ing in state["stock"]:
+		t += int(state["stock"][ing])
+	return t
+
+
 func toggle_menu(id: String) -> bool:
 	var menu: Array = state["morning"]["menu"]
 	if id in menu:
 		menu.erase(id)
 		return true
-	if menu.size() >= 4:
+	if menu.size() >= menu_limit():
 		return false
 	if int(state["recipes"].get(id, 0)) <= 0:
 		return false

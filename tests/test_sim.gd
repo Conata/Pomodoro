@@ -132,22 +132,33 @@ func _test_resync_during_pomo() -> void:
 func _test_close_day() -> void:
 	print("[closeDay]")
 	var sim := _fresh(13)
-	sim.state["stock"] = 20
+	sim.state["stock"] = {"dry": 10, "meat": 5, "sea": 5}
 	var g0 := int(sim.state["gold"])
 	var night := sim.close_day()
 	check(night["lines"].size() == 3, "結果は三行")
 	check(int(night["gold"]) > 0, "売上が出る (+%dG)" % int(night["gold"]))
 	check(int(sim.state["gold"]) == g0 + int(night["gold"]), "ゴールド加算")
-	check(int(sim.state["stock"]) < 20, "素材を消費する")
+	check(sim.stock_total() < 20, "素材を消費する")
 	check(sim.aff("mil") > 10, "同行・店番で好感度が動く")
+	# 素材が献立を縛る（Dave the Diver サイクル：獲ったものが出せるものを決める）
+	var sim2 := _fresh(13)
+	sim2.state["recipes"]["suanla"] = 1
+	sim2.state["morning"]["menu"] = ["suanla"]  # 海鮮料理のみ
+	sim2.state["stock"] = {"dry": 10, "meat": 10, "sea": 0}
+	var night2 := sim2.close_day()
+	check(int(night2["served"]) == 0, "素材がない料理は出せない")
+	sim2.state["stock"]["sea"] = 6
+	sim2.state["pending_night"] = {}
+	var night3 := sim2.close_day()
+	check(int(night3["served"]) == 6, "海鮮6つなら6皿（素材で打ち止め）")
 
 
 func _test_keeper_matters() -> void:
 	print("[keeper]")
 	var a := _fresh(17)
 	var b := _fresh(17)
-	a.state["stock"] = 30
-	b.state["stock"] = 30
+	a.state["stock"] = {"dry": 10, "meat": 10, "sea": 10}
+	b.state["stock"] = {"dry": 10, "meat": 10, "sea": 10}
 	a.set_keeper("muu")   # 店内ライブ: 客数+4
 	b.set_keeper("mil")
 	var na := a.close_day()
@@ -175,7 +186,7 @@ func _test_recipe_star_up() -> void:
 func _test_talk() -> void:
 	print("[talk]")
 	var sim := _fresh(29)
-	sim.state["stock"] = 10
+	sim.state["stock"] = {"dry": 5, "meat": 3, "sea": 2}
 	sim.close_day()  # pending_night を作る
 	sim.state["girls"]["mil"]["aff"] = 20
 	var t := sim.available_talk()

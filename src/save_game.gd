@@ -31,10 +31,18 @@ static func load_state() -> Dictionary:
 
 
 static func normalize(s: Dictionary) -> Dictionary:
-	for key in ["gold", "stock", "sign", "invites", "day", "checkpoint", "best_floor",
+	for key in ["gold", "sign", "invites", "day", "checkpoint", "best_floor",
 			"rng_state", "seed", "scrap", "next_item_id", "streak"]:
 		if s.has(key):
 			s[key] = int(s[key])
+	# 素材：旧セーブ（無個性カウント）からの移行も吸収
+	if s.get("stock") is float or s.get("stock") is int:
+		s["stock"] = {"dry": int(s["stock"]), "meat": 0, "sea": 0}
+	elif s.get("stock") is Dictionary:
+		for ing in ["dry", "meat", "sea"]:
+			s["stock"][ing] = int(s["stock"].get(ing, 0))
+	else:
+		s["stock"] = {"dry": 8, "meat": 2, "sea": 2}
 	if s.has("daily"):
 		s["daily"]["runs"] = int(s["daily"].get("runs", 0))
 	_normalize_items(s.get("inventory", []))
@@ -70,8 +78,13 @@ static func normalize(s: Dictionary) -> Dictionary:
 		for g in s["run"].get("boxes", []):
 			rb.append(int(g))
 		s["run"]["boxes"] = rb
-		for key in ["mats", "gold0", "kills", "resyncs", "banked"]:
+		for key in ["gold0", "kills", "resyncs", "banked"]:
 			s["run"][key] = int(s["run"].get(key, 0))
+		if s["run"].get("mats") is Dictionary:
+			for ing in ["dry", "meat", "sea"]:
+				s["run"]["mats"][ing] = int(s["run"]["mats"].get(ing, 0))
+		else:
+			s["run"]["mats"] = {"dry": int(s["run"].get("mats", 0)), "meat": 0, "sea": 0}
 	# v4初期セーブ（装備システム導入前）との互換
 	for key_def in [["scrap", 0], ["next_item_id", 1], ["streak", 0], ["chest_progress", 0.0]]:
 		if not s.has(key_def[0]):

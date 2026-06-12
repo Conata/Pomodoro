@@ -32,6 +32,7 @@ var morning_panel: ScrollContainer
 var morning_box: VBoxContainer
 var girls_box: VBoxContainer
 var menu_box: VBoxContainer
+var menu_title: Label
 var door_btn: Button
 var task_edit: LineEdit
 var mode_group := ButtonGroup.new()
@@ -163,7 +164,11 @@ func _on_run_complete() -> void:
 	night_data = sim.close_day()
 	phase = Phase.CLOSE
 	var lines: Array = night_data["lines"]
-	var head := "【切断】素材半減・未送付の箱を失った\n\n" if disconnected else ""
+	var head := "【切断】素材半減・未送付の箱を失った\n" if disconnected else ""
+	var mats_by: Dictionary = result_summary.get("mats_by", {})
+	if not mats_by.is_empty():
+		head += "収穫: 乾物%d 肉%d 海鮮%d\n\n" % [
+			int(mats_by.get("dry", 0)), int(mats_by.get("meat", 0)), int(mats_by.get("sea", 0))]
 	close_text.text = head + "%s\n%s\n%s" % [lines[0], lines[1], lines[2]]
 	_save(Time.get_unix_time_from_system())
 	_apply_phase()
@@ -379,7 +384,8 @@ func _build_morning(parent: Control) -> void:
 	girls_box.add_theme_constant_override("separation", 6)
 	morning_box.add_child(girls_box)
 
-	morning_box.add_child(_label("― 今夜の献立（4枠まで）―", 18, COL_DIM))
+	menu_title = _label("― 今夜の献立 ―", 18, COL_DIM)
+	morning_box.add_child(menu_title)
 	menu_box = VBoxContainer.new()
 	menu_box.add_theme_constant_override("separation", 4)
 	morning_box.add_child(menu_box)
@@ -579,13 +585,15 @@ func _refresh_all() -> void:
 func _header_text() -> String:
 	var s := sim.state
 	return "Day%d 💰%d 素材%d ♻%d 看板%d 📦%d 🔥%d" % [
-		int(s["day"]), int(s["gold"]), int(s["stock"]), int(s["scrap"]),
+		int(s["day"]), int(s["gold"]), sim.stock_total(), int(s["scrap"]),
 		sim.sign_total(), s["boxes"].size(), int(s["streak"])]
 
 
 func _refresh_morning() -> void:
 	var s := sim.state
-	forecast_label.text = "%s今夜の予報：『%s』が出る。在庫 素材%d" % [offline_note, s["forecast"], int(s["stock"])]
+	forecast_label.text = "%s今夜の予報：『%s』が出る。\n在庫: 乾物%d 肉%d 海鮮%d" % [
+		offline_note, s["forecast"],
+		int(s["stock"]["dry"]), int(s["stock"]["meat"]), int(s["stock"]["sea"])]
 	_clear(girls_box)
 	for id in KuroData.GIRL_ORDER:
 		var g: Dictionary = KuroData.GIRLS[id]
@@ -621,6 +629,7 @@ func _refresh_morning() -> void:
 		row.add_child(b)
 		panel.add_child(row)
 		girls_box.add_child(panel)
+	menu_title.text = "― 今夜の献立（%d枠まで）―" % sim.menu_limit()
 	_clear(menu_box)
 	var menu: Array = s["morning"]["menu"]
 	for id in s["recipes"]:
@@ -630,11 +639,14 @@ func _refresh_morning() -> void:
 		var star := int(s["recipes"][id])
 		var in_menu: bool = id in menu
 		var hit: bool = r["taste"] == s["forecast"]
+		var ing_stock := int(s["stock"].get(r["ing"], 0))
 		var b2 := Button.new()
 		b2.toggle_mode = true
 		b2.button_pressed = in_menu
-		b2.text = "%s%s ☆%d [%s] %dG%s" % ["✓ " if in_menu else "", r["name"], star,
-				r["taste"], KuroData.recipe_price(id, star), "  ◎予報" if hit else ""]
+		b2.text = "%s%s ☆%d [%s] %s%d %dG%s%s" % ["✓ " if in_menu else "", r["name"], star,
+				r["taste"], KuroData.ING_NAMES[r["ing"]], ing_stock,
+				KuroData.recipe_price(id, star), "  ◎予報" if hit else "",
+				"  ⚠素材なし" if ing_stock <= 0 else ""]
 		b2.add_theme_font_size_override("font_size", 20)
 		b2.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b2.pressed.connect(_on_menu_toggle.bind(String(id)))

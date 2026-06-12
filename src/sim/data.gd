@@ -22,6 +22,10 @@ static func depth_scale(fl_abs: int) -> float:
 	return 1.0 + fl_abs * 0.35
 
 
+# 素材3種（Dave the Diver サイクル：何を獲ったかが献立を決める）
+const INGS := ["dry", "meat", "sea"]
+const ING_NAMES := {"dry": "乾物", "meat": "肉", "sea": "海鮮"}
+
 # 味4系統
 const TASTES := ["辛", "甘", "旨", "淡"]
 const TASTE_COLORS := {
@@ -100,6 +104,7 @@ const RENOV_NODES := {
 	"hp1": {"name": "賄いの底力", "cost": 700, "pos": [2, 0], "prev": ["atk1"], "effect": {"hp": 0.10}, "desc": "最大HP +10%"},
 	"atk2": {"name": "火力の極み", "cost": 1800, "pos": [3, 0], "prev": ["hp1"], "effect": {"atk": 0.12}, "desc": "攻撃 +12%"},
 	"crit1": {"name": "急所の図面", "cost": 1200, "pos": [2, -1], "prev": ["hp1"], "effect": {"crit": 0.10}, "desc": "会心 +10%"},
+	"kitchen": {"name": "厨房拡張", "cost": 3500, "pos": [1, -1], "prev": ["chest1", "atk1"], "effect": {"menu_slot": 1}, "desc": "献立枠 +1（披露の幅が広がる）"},
 	"spd1": {"name": "出前の健脚", "cost": 1200, "pos": [2, 1], "prev": ["hp1"], "effect": {"spd": 0.10}, "desc": "潜行速度 +10%"},
 	"sign1": {"name": "ネオン看板", "cost": 1500, "pos": [0, 1], "prev": ["start"], "effect": {"sign": 1}, "desc": "看板 +1（客が増える）"},
 	"clockwork": {"name": "ぜんまい仕掛け", "cost": 1200, "pos": [1, 2], "prev": ["sign1"], "effect": {"auto_chest": 1}, "desc": "箱を自動で開封する"},
@@ -118,19 +123,19 @@ const PETS := {
 # レシピカード：通常9種＋特注3種（住民ストーリー紐付き）。
 # 重複＝星上げ☆3まで（価格+25%/星）
 const RECIPES := {
-	"tantan": {"name": "担々麺", "taste": "辛", "base": 42},
-	"mabo": {"name": "麻婆豆腐", "taste": "辛", "base": 38},
-	"suanla": {"name": "酸辣湯", "taste": "辛", "base": 34},
-	"chashu": {"name": "叉焼麺", "taste": "旨", "base": 40},
-	"chahan": {"name": "炒飯", "taste": "旨", "base": 32},
-	"wantan": {"name": "雲呑湯", "taste": "淡", "base": 30},
-	"okayu": {"name": "翡翠粥", "taste": "淡", "base": 28},
-	"annin": {"name": "杏仁豆腐", "taste": "甘", "base": 26},
-	"goma": {"name": "胡麻団子", "taste": "甘", "base": 24},
+	"tantan": {"name": "担々麺", "taste": "辛", "base": 42, "ing": "dry"},
+	"mabo": {"name": "麻婆豆腐", "taste": "辛", "base": 38, "ing": "meat"},
+	"suanla": {"name": "酸辣湯", "taste": "辛", "base": 34, "ing": "sea"},
+	"chashu": {"name": "叉焼麺", "taste": "旨", "base": 40, "ing": "meat"},
+	"chahan": {"name": "炒飯", "taste": "旨", "base": 32, "ing": "dry"},
+	"wantan": {"name": "雲呑湯", "taste": "淡", "base": 30, "ing": "sea"},
+	"okayu": {"name": "翡翠粥", "taste": "淡", "base": 28, "ing": "dry"},
+	"annin": {"name": "杏仁豆腐", "taste": "甘", "base": 26, "ing": "dry"},
+	"goma": {"name": "胡麻団子", "taste": "甘", "base": 24, "ing": "dry"},
 	# 特注（売れた夜に住民ストーリー発火→永続バフ）
-	"yakuzen": {"name": "タオ爺の薬膳火鍋", "taste": "辛", "base": 88, "resident": "tao"},
-	"parfait": {"name": "ノノの電脳パフェ", "taste": "甘", "base": 80, "resident": "nono"},
-	"wasure": {"name": "404さんの忘れ麺", "taste": "淡", "base": 84, "resident": "err404"},
+	"yakuzen": {"name": "タオ爺の薬膳火鍋", "taste": "辛", "base": 88, "ing": "meat", "resident": "tao"},
+	"parfait": {"name": "ノノの電脳パフェ", "taste": "甘", "base": 80, "ing": "dry", "resident": "nono"},
+	"wasure": {"name": "404さんの忘れ麺", "taste": "淡", "base": 84, "ing": "sea", "resident": "err404"},
 }
 
 const RESIDENTS := {
@@ -151,18 +156,18 @@ const DROP_SHARD := 0.25
 
 # バイオーム3種ループ（電脳深層＝最初の店主の脳内）
 const BIOMES := [
-	{"name": "管理区画", "color": Color(0.10, 0.16, 0.34),
+	{"name": "管理区画", "color": Color(0.10, 0.16, 0.34), "ing": "dry",
 		"mobs": ["tiny_zombie", "skelet"], "boss": "big_zombie"},
-	{"name": "商店遺構", "color": Color(0.08, 0.20, 0.30),
+	{"name": "商店遺構", "color": Color(0.08, 0.20, 0.30), "ing": "meat",
 		"mobs": ["goblin", "imp"], "boss": "ogre"},
-	{"name": "記憶の海", "color": Color(0.07, 0.12, 0.38),
+	{"name": "記憶の海", "color": Color(0.07, 0.12, 0.38), "ing": "sea",
 		"mobs": ["wogol", "ice_zombie"], "boss": "big_demon"},
 ]
 
 # 闇市（夜に3品）
 const MARKET := [
 	{"id": "recipe", "name": "レシピの写本（ランダム）", "price": 250},
-	{"id": "mats", "name": "素材箱（+5）", "price": 100},
+	{"id": "mats", "name": "素材箱（乾・肉・海 +2ずつ）", "price": 100},
 	{"id": "invite", "name": "招待状（翌夜 客+3）", "price": 150},
 ]
 
