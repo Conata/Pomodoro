@@ -45,6 +45,10 @@ var stats_box: VBoxContainer
 var result_panel: PanelContainer
 var result_text: Label
 var confirm: ConfirmationDialog
+var bgm: AudioStreamPlayer
+var sfx_pool: Array[AudioStreamPlayer] = []
+var sfx_next := 0
+var sfx_cache := {}
 
 
 func _ready() -> void:
@@ -120,6 +124,15 @@ func _pump_events() -> void:
 			"blessing", "blessing_done":
 				_log(e["msg"])
 				_update_blessing_ui()
+			"level":
+				_sfx("thunder")
+				_log(e["msg"])
+			"gate":
+				_sfx("enemy_death")
+				_log(e["msg"])
+			"wipe":
+				_sfx("damage")
+				_log(e["msg"])
 			_:
 				_log(e["msg"])
 
@@ -129,6 +142,7 @@ func _on_run_complete() -> void:
 	var minutes := float(result_summary["minutes"])
 	sim.register_completion(Time.get_date_string_from_system(), minutes)
 	last_duration = minutes
+	_sfx("teleport")
 	_notify("完走！ %d分の集中、おつかれさま" % int(minutes))
 	phase = Phase.RESULT
 	result_text.text = _result_body()
@@ -154,6 +168,9 @@ func _on_depart() -> void:
 		task = "集中セッション"
 	var now := Time.get_unix_time_from_system()
 	_request_notify_permission()
+	_sfx("ui_confirm")
+	if bgm != null and not bgm.playing:
+		bgm.play()  # Webの自動再生制限はユーザー操作起点なら通る
 	sim.start_run(task, selected_minutes, now)
 	if selected_minutes > 0.0:
 		last_duration = selected_minutes
@@ -173,6 +190,7 @@ func _on_return_home() -> void:
 
 
 func _on_abandon_confirmed() -> void:
+	_sfx("ui_denied")
 	sim.abandon_run()
 	_pump_events()
 	_enter_idle()
@@ -301,6 +319,37 @@ func _build_ui() -> void:
 	confirm.cancel_button_text = "やめる"
 	confirm.confirmed.connect(_on_confirmed)
 	add_child(confirm)
+	_build_audio()
+
+
+func _build_audio() -> void:
+	for i in 4:
+		var p := AudioStreamPlayer.new()
+		p.volume_db = -8.0
+		add_child(p)
+		sfx_pool.append(p)
+	var music_path := "res://assets/third_party/music/sketchbook_loop.ogg"
+	if ResourceLoader.exists(music_path):
+		bgm = AudioStreamPlayer.new()
+		var stream: AudioStream = load(music_path)
+		if stream is AudioStreamOggVorbis:
+			stream.loop = true
+		bgm.stream = stream
+		bgm.volume_db = -18.0
+		add_child(bgm)
+
+
+func _sfx(sfx_name: String) -> void:
+	if not sfx_cache.has(sfx_name):
+		var path := "res://assets/third_party/sfx/%s.wav" % sfx_name
+		sfx_cache[sfx_name] = load(path) if ResourceLoader.exists(path) else null
+	var stream: AudioStream = sfx_cache[sfx_name]
+	if stream == null:
+		return
+	var p := sfx_pool[sfx_next]
+	sfx_next = (sfx_next + 1) % sfx_pool.size()
+	p.stream = stream
+	p.play()
 
 
 func _build_idle_panel(parent: Control) -> void:
@@ -637,6 +686,7 @@ func _equip_target(item: Dictionary) -> Dictionary:
 
 
 func _on_open_chests() -> void:
+	_sfx("chest_open")
 	sim.open_chests()
 	_pump_events()
 	_save(Time.get_unix_time_from_system())
@@ -661,6 +711,7 @@ func _on_equip(item_id: int) -> void:
 	for it in sim.state["inventory"]:
 		if int(it["id"]) == item_id:
 			sim.equip_from_inventory(item_id, int(_equip_target(it)["idx"]))
+			_sfx("ui_equip")
 			break
 	_refresh_all()
 
@@ -697,6 +748,7 @@ func _on_rune_tapped(id: String) -> void:
 
 func _on_rune_confirmed(id: String) -> void:
 	if sim.unlock_rune(id):
+		_sfx("ui_confirm")
 		_pump_events()
 		_save(Time.get_unix_time_from_system())
 		_refresh_all()
@@ -743,6 +795,7 @@ func _refresh_market() -> void:
 
 func _on_buy(idx: int) -> void:
 	if sim.buy_ship(idx):
+		_sfx("ui_buy")
 		_pump_events()
 		_save(Time.get_unix_time_from_system())
 		_refresh_all()
@@ -772,6 +825,11 @@ func _refresh_stats() -> void:
 		var minutes := float(s["weekly"].get(date, 0.0))
 		var bar := "▮".repeat(mini(int(minutes / 15.0) + (1 if minutes > 0.0 else 0), 20))
 		stats_box.add_child(_label("%s  %s %d分" % [date.substr(5), bar, int(minutes)], 18))
+	# クレジット（SFXは帰属表示が必須。詳細は assets/third_party/CREDITS.md）
+	stats_box.add_child(_label("― クレジット ―", 16, Color(1, 1, 1, 0.4)))
+	stats_box.add_child(_label(
+		"Sprites: 0x72 (CC0) / SFX: Leohpaz — Minifantasy & RPG Essentials / Music: Abstraction (CC0) / Font: DotGothic16 (OFL)",
+		14, Color(1, 1, 1, 0.4)))
 
 
 func _on_claim_daily() -> void:

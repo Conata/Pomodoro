@@ -334,15 +334,18 @@ func _spawn_pack(boss: bool) -> void:
 		mobs.append({
 			"name": "%sの主" % biome["name"],
 			"hp": 350.0 * s, "max_hp": 350.0 * s, "atk": 9.0 * s, "boss": true,
+			"sprite": String(biome.get("boss", "")),
 		})
 		_emit("log", "ボスゲート！ 「%sの主」が立ちはだかる" % biome["name"])
 	else:
 		var n := 2 + rng.randi(3)
+		var sprites: Array = biome.get("mobs", [])
 		for i in n:
 			var hp := 26.0 * s * rng.randf_range(0.8, 1.2)
 			mobs.append({
 				"name": "%sの魔物" % biome["name"],
 				"hp": hp, "max_hp": hp, "atk": 2.2 * s, "boss": false,
+				"sprite": "" if sprites.is_empty() else String(sprites[rng.randi(sprites.size())]),
 			})
 	state["mobs"] = mobs
 	state["in_combat"] = true
@@ -514,7 +517,7 @@ func _end_combat() -> void:
 		state["distance"] = gate + 2.0
 		state["checkpoint"] = layer + 1
 		state["best_layer"] = maxi(int(state["best_layer"]), layer + 1)
-		_emit("log", "ゲート突破！ 第%d層へ（チェックポイント更新）" % (layer + 2))
+		_emit("gate", "ゲート突破！ 第%d層へ（チェックポイント更新）" % (layer + 2))
 	state["next_encounter"] = float(state["distance"]) + 30.0 + rng.randf() * 40.0
 
 
@@ -527,7 +530,7 @@ func _wipe() -> void:
 	for h in state["heroes"]:
 		h["hp"] = hero_maxhp(h) * 0.5
 		h["shield"] = 0.0
-	_emit("log", "全滅！ チェックポイント（第%d層）から再出発…" % (int(state["checkpoint"]) + 1))
+	_emit("wipe", "全滅！ チェックポイント（第%d層）から再出発…" % (int(state["checkpoint"]) + 1))
 
 
 # --- 経験値・加護 ------------------------------------------------------------
@@ -539,7 +542,7 @@ func _grant_xp(h: Dictionary, amount: float) -> void:
 		h["xp"] = float(h["xp"]) - GameData.xp_needed(int(h["lv"]))
 		h["lv"] = int(h["lv"]) + 1
 		h["hp"] = hero_maxhp(h)
-		_emit("log", "%s が Lv%d に！" % [h["name"], int(h["lv"])])
+		_emit("level", "%s が Lv%d に！" % [h["name"], int(h["lv"])])
 		_queue_blessing(h["name"])
 
 

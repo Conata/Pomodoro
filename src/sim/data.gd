@@ -91,14 +91,22 @@ const RT_NODES := {
 	"cmd2": {"name": "指揮Ⅱ", "cost": 6000, "pos": [0, 3], "prev": ["awaken"], "effect": {"party": 1}, "desc": "ヒーロー枠 +1"},
 }
 
-# バイオーム5種ループ
+# バイオーム5種ループ。mobs/boss は 0x72 DungeonTilesetII のスプライト接頭辞
 const BIOMES := [
-	{"name": "苔の森", "color": Color(0.14, 0.30, 0.20)},
-	{"name": "廃坑", "color": Color(0.28, 0.22, 0.15)},
-	{"name": "水晶洞", "color": Color(0.16, 0.24, 0.40)},
-	{"name": "溶岩窟", "color": Color(0.38, 0.14, 0.10)},
-	{"name": "星霜の塔", "color": Color(0.22, 0.15, 0.36)},
+	{"name": "苔の森", "color": Color(0.14, 0.30, 0.20), "mobs": ["goblin", "slug"], "boss": "ogre"},
+	{"name": "廃坑", "color": Color(0.28, 0.22, 0.15), "mobs": ["skelet", "orc_warrior"], "boss": "big_zombie"},
+	{"name": "水晶洞", "color": Color(0.16, 0.24, 0.40), "mobs": ["ice_zombie", "wogol"], "boss": "big_demon"},
+	{"name": "溶岩窟", "color": Color(0.38, 0.14, 0.10), "mobs": ["imp", "chort"], "boss": "big_demon"},
+	{"name": "星霜の塔", "color": Color(0.22, 0.15, 0.36), "mobs": ["necromancer", "masked_orc"], "boss": "big_zombie"},
 ]
+
+# ヒーロークラス → スプライト接頭辞
+const CLASS_SPRITES := {
+	"warrior": "knight_m",
+	"mage": "wizzard_m",
+	"priest": "angel",
+	"rogue": "elf_m",
+}
 
 # レベルアップ時の加護（パーティ全体に累積）
 const BLESSINGS := [
