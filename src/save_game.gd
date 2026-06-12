@@ -1,9 +1,9 @@
 class_name SaveGame
 extends RefCounted
-## セーブ/ロード。key 名は HTML版と同じ pomohero-v7 系（DESIGN.md セーブ）。
-## JSON経由で int が float になるため、ロード時に既知フィールドを正規化する。
+## セーブ/ロード。key は HTML 版と同じ kuroneko-v3 系（DESIGN.md セーブ）。
+## JSON 経由で int が float になるため、ロード時に既知フィールドを正規化する。
 
-const PATH := "user://pomohero-v7.json"
+const PATH := "user://kuroneko-v3.json"
 
 
 static func save_state(state: Dictionary) -> void:
@@ -23,47 +23,36 @@ static func load_state() -> Dictionary:
 		return {}
 	var parsed: Variant = JSON.parse_string(f.get_as_text())
 	f.close()
-	if not parsed is Dictionary or parsed.get("v", "") != "v7":
+	if not parsed is Dictionary or parsed.get("v", "") != "v3":
 		return {}
 	return normalize(parsed)
 
 
 static func normalize(s: Dictionary) -> Dictionary:
-	for key in ["gold", "stardust", "chests", "next_item_id", "checkpoint", "best_layer", "streak", "rng_state", "seed"]:
+	for key in ["gold", "stock", "sign", "invites", "day", "checkpoint", "best_floor", "rng_state", "seed"]:
 		if s.has(key):
 			s[key] = int(s[key])
-	if s.has("daily"):
-		s["daily"]["runs"] = int(s["daily"].get("runs", 0))
-	if s.has("stats"):
-		s["stats"]["runs"] = int(s["stats"].get("runs", 0))
+	var boxes := []
+	for g in s.get("boxes", []):
+		boxes.append(int(g))
+	s["boxes"] = boxes
+	for id in s.get("girls", {}):
+		s["girls"][id]["aff"] = int(s["girls"][id].get("aff", 10))
+		var seen := []
+		for t in s["girls"][id].get("seen", []):
+			seen.append(int(t))
+		s["girls"][id]["seen"] = seen
+	for id in s.get("recipes", {}):
+		s["recipes"][id] = int(s["recipes"][id])
+	var doors := []
+	for d in s.get("doors_done", []):
+		doors.append(int(d))
+	s["doors_done"] = doors
 	if s.has("run"):
-		for key in ["gold0", "items", "kills", "deaths"]:
+		var rb := []
+		for g in s["run"].get("boxes", []):
+			rb.append(int(g))
+		s["run"]["boxes"] = rb
+		for key in ["mats", "gold0", "kills", "resyncs", "banked"]:
 			s["run"][key] = int(s["run"].get(key, 0))
-	for h in s.get("heroes", []):
-		_normalize_hero(h)
-	_normalize_items(s.get("inventory", []))
-	for entry in s.get("ship", {}).get("stock", []):
-		entry["price"] = int(entry.get("price", 0))
-		if entry.has("item"):
-			_normalize_item(entry["item"])
 	return s
-
-
-static func _normalize_hero(h: Dictionary) -> void:
-	h["lv"] = int(h.get("lv", 1))
-	for slot in h.get("equip", {}):
-		var it: Dictionary = h["equip"][slot]
-		if not it.is_empty():
-			_normalize_item(it)
-
-
-static func _normalize_items(items: Array) -> void:
-	for it in items:
-		_normalize_item(it)
-
-
-static func _normalize_item(it: Dictionary) -> void:
-	it["id"] = int(it.get("id", 0))
-	it["grade"] = int(it.get("grade", 0))
-	for a in it.get("affixes", []):
-		a["v"] = int(a.get("v", 0))

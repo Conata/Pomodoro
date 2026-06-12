@@ -1,133 +1,122 @@
-class_name GameData
+class_name KuroData
 extends RefCounted
-## 静的ゲームデータ。DESIGN.md の「システム仕様（TBH実仕様準拠）」に対応する。
-## バランス数値はすべてここに集約し、ロジック（GameSim）からは参照のみ。
+## 黒猫飯店 — 静的ゲームデータ。DESIGN.md（実装仕様 v4）準拠。
+## バランス数値はここに集約し、ロジック（KuroSim）からは参照のみ。
 
-const SIM_DT := 0.2  # 固定ステップ秒。DESIGN.md タイマー実装の要
-const LAYER_LENGTH := 600.0  # 1層=600m
-const CHEST_INTERVAL := 480.0  # 箱は8分毎
-const SHIP_ROTATE_SEC := 600.0  # 交易船は10分毎
-const OFFLINE_CAP_SEC := 28800.0  # 安息の上限8時間
-const BLESSING_TIMEOUT := 15.0  # 加護の自動選択
-const REROLL_COST := 50  # 刻印=星屑50
+const SIM_DT := 0.2  # 固定ステップ秒（ポモドーロ機構の要）
+const FLOOR_LEN := 420.0  # 階長
+const DOOR_AT := 0.55  # 階中間55%地点に「増築された扉」
+const QUICK_SEC := 80.0  # クイックダイブ
+const DOOR_BANNER_SEC := 12.0  # クイック時の決断バナー（同期時間+12秒補償）
+const DIVE_SPEED := 2.4  # m/s。エンカウント間隔11-17m ≒ 撃破後4.5-7秒
+const ENC_MIN := 11.0
+const ENC_MAX := 17.0
+const RESYNC_BACK := 40.0  # 緊急再同期で戻る距離
+const BREAK_SEC := 300.0  # 夜（休憩）の目安5分
 
-# グレード7段階（粗末〜星界）
-const GRADES := [
-	{"name": "粗末", "mult": 1.0, "color": Color(0.55, 0.55, 0.55)},
-	{"name": "普通", "mult": 1.4, "color": Color(0.85, 0.85, 0.85)},
-	{"name": "上質", "mult": 2.0, "color": Color(0.45, 0.85, 0.45)},
-	{"name": "精錬", "mult": 3.0, "color": Color(0.4, 0.65, 1.0)},
-	{"name": "英雄", "mult": 4.5, "color": Color(0.75, 0.45, 1.0)},
-	{"name": "伝説", "mult": 7.0, "color": Color(1.0, 0.65, 0.2)},
-	{"name": "星界", "mult": 11.0, "color": Color(0.5, 1.0, 0.95)},
-]
+# 深度スケーリング sc=1+flAbs*0.35
+static func depth_scale(fl_abs: int) -> float:
+	return 1.0 + fl_abs * 0.35
 
-const SLOTS := {
-	"weapon": {"name": "武器", "atk": 1.0, "hp": 0.0},
-	"armor": {"name": "防具", "atk": 0.0, "hp": 5.0},
-	"trinket": {"name": "装飾", "atk": 0.4, "hp": 2.0},
+
+# 味4系統
+const TASTES := ["辛", "甘", "旨", "淡"]
+const TASTE_COLORS := {
+	"辛": Color(1.0, 0.45, 0.45),
+	"甘": Color(1.0, 0.75, 0.85),
+	"旨": Color(1.0, 0.85, 0.5),
+	"淡": Color(0.65, 0.9, 1.0),
 }
 
-# アフィックス値は%ポイント
-const AFFIXES := {
-	"atk": {"name": "攻", "min": 4, "max": 12},
-	"hp": {"name": "体", "min": 4, "max": 12},
-	"spd": {"name": "速", "min": 2, "max": 6},
-	"gold": {"name": "金", "min": 3, "max": 10},
-	"xp": {"name": "知", "min": 3, "max": 10},
-	"crit": {"name": "会", "min": 2, "max": 8},
+# ヒロイン4人。order固定（ミルが必ず盾）。aff倍率 1+aff/200
+# keeper_apt: 店番の仕込み適性 / synergy: 店番シナジー
+const GIRLS := {
+	"mil": {
+		"name": "ミル", "order": 0, "role": "前衛・守護", "sprite": "knight_f",
+		"hp": 150.0, "atk": 7.0, "fav": "淡",
+		"keeper_apt": 1.0, "synergy": "静かな給仕", "synergy_desc": "単価+10%",
+		"color": Color(0.8, 0.9, 1.0),
+	},
+	"yuzuki": {
+		"name": "ユズキ", "order": 1, "role": "近接火力", "sprite": "elf_f",
+		"hp": 110.0, "atk": 13.0, "fav": "旨",
+		"keeper_apt": 1.35, "synergy": "解析いらずの仕込み", "synergy_desc": "仕込み数+35%",
+		"color": Color(1.0, 0.75, 0.55),
+	},
+	"muu": {
+		"name": "ムゥ", "order": 2, "role": "手数・歌", "sprite": "wizzard_f",
+		"hp": 95.0, "atk": 9.0, "fav": "甘",
+		"keeper_apt": 0.9, "synergy": "店内ライブ", "synergy_desc": "客数+4",
+		"color": Color(1.0, 0.7, 0.9),
+	},
+	"kiriko": {
+		"name": "キリコ", "order": 3, "role": "後衛重撃・高クリ", "sprite": "necromancer",
+		"hp": 85.0, "atk": 16.0, "fav": "辛",
+		"keeper_apt": 1.0, "synergy": "解析仕込み", "synergy_desc": "予報外れの皿も売れる",
+		"color": Color(0.75, 0.65, 1.0),
+	},
 }
 
-const CLASSES := {
-	"warrior": {"name": "戦士", "atk": 12.0, "hp": 130.0},
-	"mage": {"name": "魔法使い", "atk": 16.0, "hp": 80.0},
-	"priest": {"name": "僧侶", "atk": 8.0, "hp": 95.0},
-	"rogue": {"name": "盗賊", "atk": 14.0, "hp": 90.0},
+const GIRL_ORDER := ["mil", "yuzuki", "muu", "kiriko"]
+
+# 会話解放閾値（好感度）
+const TALK_THRESHOLDS := [15, 45, 80]
+
+# レシピカード：通常9種＋特注3種（住民ストーリー紐付き）。
+# 重複＝星上げ☆3まで（価格+25%/星）
+const RECIPES := {
+	"tantan": {"name": "担々麺", "taste": "辛", "base": 42},
+	"mabo": {"name": "麻婆豆腐", "taste": "辛", "base": 38},
+	"suanla": {"name": "酸辣湯", "taste": "辛", "base": 34},
+	"chashu": {"name": "叉焼麺", "taste": "旨", "base": 40},
+	"chahan": {"name": "炒飯", "taste": "旨", "base": 32},
+	"wantan": {"name": "雲呑湯", "taste": "淡", "base": 30},
+	"okayu": {"name": "翡翠粥", "taste": "淡", "base": 28},
+	"annin": {"name": "杏仁豆腐", "taste": "甘", "base": 26},
+	"goma": {"name": "胡麻団子", "taste": "甘", "base": 24},
+	# 特注（売れた夜に住民ストーリー発火→永続バフ）
+	"yakuzen": {"name": "タオ爺の薬膳火鍋", "taste": "辛", "base": 88, "resident": "tao"},
+	"parfait": {"name": "ノノの電脳パフェ", "taste": "甘", "base": 80, "resident": "nono"},
+	"wasure": {"name": "404さんの忘れ麺", "taste": "淡", "base": 84, "resident": "err404"},
 }
 
-const HERO_NAMES := ["アルト", "ベル", "セロ", "ディア", "エマ", "フィン", "ギド", "ハナ", "イオ", "ユノ"]
-
-# ヒーロー毎に装備するCD制アクティブ。レベルで習得（lv）
-const SKILL_DB := {
-	"strike": {"cls": "warrior", "name": "強撃", "lv": 1, "cd": 6.0, "kind": "hit", "power": 2.5},
-	"whirl": {"cls": "warrior", "name": "旋風", "lv": 8, "cd": 12.0, "kind": "aoe", "power": 1.6},
-	"bulwark": {"cls": "warrior", "name": "鉄壁", "lv": 16, "cd": 25.0, "kind": "shield_all", "power": 0.25},
-	"fireball": {"cls": "mage", "name": "火球", "lv": 1, "cd": 8.0, "kind": "aoe", "power": 2.0},
-	"chain": {"cls": "mage", "name": "連鎖雷", "lv": 10, "cd": 14.0, "kind": "aoe", "power": 2.8},
-	"pray": {"cls": "priest", "name": "祈り", "lv": 1, "cd": 10.0, "kind": "heal_one", "power": 0.3},
-	"circle": {"cls": "priest", "name": "癒しの輪", "lv": 8, "cd": 18.0, "kind": "heal_all", "power": 0.4},
-	"sanctuary": {"cls": "priest", "name": "聖域", "lv": 16, "cd": 30.0, "kind": "shield_all", "power": 0.4},
-	"ambush": {"cls": "rogue", "name": "急襲", "lv": 1, "cd": 7.0, "kind": "gold_hit", "power": 2.2},
-	"shadow": {"cls": "rogue", "name": "影討ち", "lv": 12, "cd": 13.0, "kind": "hit", "power": 3.2},
+const RESIDENTS := {
+	"tao": {"name": "タオ爺", "buff": "薬膳の評判で客数+2",
+		"story": "「効くかどうかは、わしが決める」タオ爺は完食し、杖の代わりに箸を立てて帰った。翌日から、爺の弟子たちが通ってくる。"},
+	"nono": {"name": "ノノ", "buff": "解析共有で素材ドロップ+8%",
+		"story": "「甘味は演算を加速する……」ノノはパフェの層構造を3分撮影してから食べた。お礼に、深層の素材マップが届いた。"},
+	"err404": {"name": "404さん", "buff": "投げ銭で売上+10%",
+		"story": "「思い出せないままで、うまかった」404さんは名前のない通貨で払った。レジは受理した。なぜかは聞かないことにする。"},
 }
 
-# ルーンツリー: ゴールド消費・マップ型・隣接（prev のいずれか所持）から解放。
-# 方向別傾向: 上=宝箱系/左上=金策/左下=経験値/右=戦闘/下=システム
-const RT_NODES := {
-	"start": {"name": "起点", "cost": 0, "pos": [0, 0], "prev": [], "effect": {}, "desc": "すべての始まり"},
-	# 上: 宝箱系
-	"chest1": {"name": "箱の鍵Ⅰ", "cost": 200, "pos": [0, -1], "prev": ["start"], "effect": {"chest_interval": 0.10}, "desc": "箱の獲得間隔 -10%"},
-	"chest2": {"name": "箱の鍵Ⅱ", "cost": 800, "pos": [0, -2], "prev": ["chest1"], "effect": {"chest_interval": 0.15}, "desc": "箱の獲得間隔 -15%"},
-	"chest3": {"name": "宝物庫", "cost": 2500, "pos": [0, -3], "prev": ["chest2"], "effect": {"chest_quality": 1.0}, "desc": "箱の中身が豪華になる"},
-	# 左上: 金策
-	"gold1": {"name": "商才Ⅰ", "cost": 300, "pos": [-1, -1], "prev": ["start"], "effect": {"gold": 0.10}, "desc": "獲得ゴールド +10%"},
-	"gold2": {"name": "商才Ⅱ", "cost": 900, "pos": [-2, -1], "prev": ["gold1"], "effect": {"gold": 0.15}, "desc": "獲得ゴールド +15%"},
-	"gold3": {"name": "黄金律", "cost": 3000, "pos": [-3, -2], "prev": ["gold2"], "effect": {"gold": 0.25}, "desc": "獲得ゴールド +25%"},
-	# 左下: 経験値
-	"xp1": {"name": "見聞Ⅰ", "cost": 300, "pos": [-1, 1], "prev": ["start"], "effect": {"xp": 0.10}, "desc": "獲得XP +10%"},
-	"xp2": {"name": "見聞Ⅱ", "cost": 900, "pos": [-2, 1], "prev": ["xp1"], "effect": {"xp": 0.15}, "desc": "獲得XP +15%"},
-	"xp3": {"name": "叡智", "cost": 3000, "pos": [-3, 2], "prev": ["xp2"], "effect": {"xp": 0.25}, "desc": "獲得XP +25%"},
-	# 右: 戦闘
-	"atk1": {"name": "刃研ぎ", "cost": 250, "pos": [1, 0], "prev": ["start"], "effect": {"atk": 0.08}, "desc": "攻撃 +8%"},
-	"hp1": {"name": "鍛錬", "cost": 700, "pos": [2, 0], "prev": ["atk1"], "effect": {"hp": 0.10}, "desc": "最大HP +10%"},
-	"atk2": {"name": "闘気", "cost": 1800, "pos": [3, 0], "prev": ["hp1"], "effect": {"atk": 0.12}, "desc": "攻撃 +12%"},
-	"crit1": {"name": "急所読み", "cost": 1200, "pos": [2, -1], "prev": ["hp1"], "effect": {"crit": 0.10}, "desc": "会心 +10%"},
-	"spd1": {"name": "健脚", "cost": 1200, "pos": [2, 1], "prev": ["hp1"], "effect": {"spd": 0.10}, "desc": "移動速度 +10%"},
-	# 下: システム（ゲーム構造を変える）
-	"cmd1": {"name": "指揮Ⅰ", "cost": 1500, "pos": [0, 1], "prev": ["start"], "effect": {"party": 1}, "desc": "ヒーロー枠 +1"},
-	"clockwork": {"name": "ぜんまい", "cost": 1200, "pos": [1, 2], "prev": ["cmd1"], "effect": {"auto_chest": 1}, "desc": "箱を自動で開封する"},
-	"rest": {"name": "安息", "cost": 2000, "pos": [-1, 2], "prev": ["cmd1"], "effect": {"offline": 1}, "desc": "オフライン報酬（上限8時間）"},
-	"awaken": {"name": "覚醒", "cost": 2500, "pos": [0, 2], "prev": ["cmd1"], "effect": {"skill_slot": 1}, "desc": "全員のスキル枠 +1"},
-	"cmd2": {"name": "指揮Ⅱ", "cost": 6000, "pos": [0, 3], "prev": ["awaken"], "effect": {"party": 1}, "desc": "ヒーロー枠 +1"},
-}
+# 箱グレード4段階
+const BOX_NAMES := ["木箱", "鉄箱", "銀箱", "金箱"]
+# drop table: レシピ50%／設備15%／記憶の欠片25%（♥+10）／招待状10%
+const DROP_RECIPE := 0.50
+const DROP_EQUIP := 0.15
+const DROP_SHARD := 0.25
 
-# バイオーム5種ループ。mobs/boss は 0x72 DungeonTilesetII のスプライト接頭辞
+# バイオーム3種ループ（電脳深層＝最初の店主の脳内）
 const BIOMES := [
-	{"name": "苔の森", "color": Color(0.14, 0.30, 0.20), "mobs": ["goblin", "slug"], "boss": "ogre"},
-	{"name": "廃坑", "color": Color(0.28, 0.22, 0.15), "mobs": ["skelet", "orc_warrior"], "boss": "big_zombie"},
-	{"name": "水晶洞", "color": Color(0.16, 0.24, 0.40), "mobs": ["ice_zombie", "wogol"], "boss": "big_demon"},
-	{"name": "溶岩窟", "color": Color(0.38, 0.14, 0.10), "mobs": ["imp", "chort"], "boss": "big_demon"},
-	{"name": "星霜の塔", "color": Color(0.22, 0.15, 0.36), "mobs": ["necromancer", "masked_orc"], "boss": "big_zombie"},
+	{"name": "管理区画", "color": Color(0.10, 0.16, 0.34),
+		"mobs": ["tiny_zombie", "skelet"], "boss": "big_zombie"},
+	{"name": "商店遺構", "color": Color(0.08, 0.20, 0.30),
+		"mobs": ["goblin", "imp"], "boss": "ogre"},
+	{"name": "記憶の海", "color": Color(0.07, 0.12, 0.38),
+		"mobs": ["wogol", "ice_zombie"], "boss": "big_demon"},
 ]
 
-# ヒーロークラス → スプライト接頭辞
-const CLASS_SPRITES := {
-	"warrior": "knight_m",
-	"mage": "wizzard_m",
-	"priest": "angel",
-	"rogue": "elf_m",
-}
-
-# レベルアップ時の加護（パーティ全体に累積）
-const BLESSINGS := [
-	{"id": "atk", "name": "猛攻の加護", "val": 0.10, "desc": "攻撃 +10%"},
-	{"id": "hp", "name": "堅守の加護", "val": 0.12, "desc": "最大HP +12%"},
-	{"id": "spd", "name": "疾駆の加護", "val": 0.08, "desc": "移動 +8%"},
-	{"id": "gold", "name": "黄金の加護", "val": 0.10, "desc": "獲得G +10%"},
-	{"id": "xp", "name": "叡智の加護", "val": 0.10, "desc": "獲得XP +10%"},
+# 闇市（夜に3品）
+const MARKET := [
+	{"id": "recipe", "name": "レシピの写本（ランダム）", "price": 250},
+	{"id": "mats", "name": "素材箱（+5）", "price": 100},
+	{"id": "invite", "name": "招待状（翌夜 客+3）", "price": 150},
 ]
 
-const PETS := {
-	"cat": {"name": "金策猫", "cost": 5000, "effect": {"gold": 0.15}, "desc": "獲得G +15%"},
-	"owl": {"name": "学者梟", "cost": 5000, "effect": {"xp": 0.15}, "desc": "獲得XP +15%"},
-	"fox": {"name": "探索狐", "cost": 5000, "effect": {"discover": 0.15}, "desc": "ドロップ発見率アップ"},
-}
+
+static func recipe_price(id: String, star: int) -> int:
+	return int(float(RECIPES[id]["base"]) * (1.0 + 0.25 * (star - 1)))
 
 
-## 周回スケーリング。DESIGN.md: areaScale(idx)=1+idx*0.8
-static func area_scale(idx: int) -> float:
-	return 1.0 + idx * 0.8
-
-
-static func xp_needed(lv: int) -> float:
-	return 20.0 * pow(lv, 1.6)
+static func girl_mult(aff: int) -> float:
+	return 1.0 + aff / 200.0
