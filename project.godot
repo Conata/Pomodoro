@@ -1,9 +1,9 @@
-; Godot 4.3 — スマホ開発パイプライン用ミニマルプロジェクト
+; Godot 4.3 — POMODORO HERO（ポモドーロ×放置ハクスラ）
 config_version=5
 
 [application]
 
-config/name="Kuroneko Web Pipeline"
+config/name="POMODORO HERO"
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.3", "GL Compatibility")
 config/icon="res://icon.svg"
@@ -16,7 +16,16 @@ window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 window/handheld/orientation=1
 
+[gui]
+
+theme/custom_font="res://assets/fonts/DotGothic16-Regular.ttf"
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.06, 0.045, 0.09, 1)
+; Webプリセットの vram_texture_compression/for_mobile=true に必須。
+; これが false だと「Cannot export ... configuration errors:」が
+; 空メッセージで失敗する（Godot 4.3 はエラー文を出さない）
+textures/vram_compression/import_etc2_astc=true
