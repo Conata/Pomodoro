@@ -1,8 +1,9 @@
 name: Build & Deploy to GitHub Pages
 
 on:
-  push:
-    branches: [main]
+  # NOTE: Godot開発開始までは手動トリガーのみ。
+  # push트リガーを有効化すると Pages が Actions デプロイに切り替わり、
+  # ルートの index.html（静的版）と競合するため。
   workflow_dispatch:
 
 permissions:
