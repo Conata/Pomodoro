@@ -24,13 +24,13 @@ BASE = "https://api.elevenlabs.io/v1"
 # ネオン中華＋電脳のトーン。duration は短く、prompt_influence 高めで素材寄りに。
 SFX = {
     "ui_confirm":   ("soft warm UI confirm chime, single short blip, cozy", 0.5),
-    "ui_denied":    ("muted UI error tick, soft negative, short", 0.4),
+    "ui_denied":    ("muted UI error tick, soft negative, short", 0.5),
     "ui_equip":     ("light gear equip click, cloth and metal, short", 0.5),
     "ui_buy":       ("small cash register coin clink, pleasant, short", 0.6),
     "chest_open":   ("wooden chest creak open with a soft sparkle, short", 1.0),
     "sword":        ("quick kitchen cleaver swoosh, light metallic, short", 0.5),
-    "damage":       ("soft body hit thud, muffled, short", 0.4),
-    "slash":        ("sharp blade slash whoosh, short", 0.4),
+    "damage":       ("soft body hit thud, muffled, short", 0.5),
+    "slash":        ("sharp blade slash whoosh, short", 0.5),
     "enemy_death":  ("digital glitch dissolve, enemy disappears, short", 0.7),
     "fire":         ("compact fire whoosh burst, short", 0.6),
     "thunder":      ("crisp electric zap crackle, short", 0.6),
