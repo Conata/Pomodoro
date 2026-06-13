@@ -22,6 +22,14 @@
 効果は `kind`、見た目は `fx` で完結（`sim._cast_skill` がデータから自動処理）。
 `unlock` は好感度 0/45/80 で習得。
 
+## BGM／SE（ElevenLabs で差し替え）
+- `tools/gen_audio_elevenlabs.py` を **ネットワークが通る場所**で実行
+  （この実行環境は api.elevenlabs.io が egress 許可外。手元 or 許可後に）。
+  `export ELEVENLABS_API_KEY=sk_xxx`（キーはコミット禁止）→ `python3 ... [--music]`。
+- 出力 `assets/generated/sfx/<name>.mp3` / `bgm_el/{store,dive,battle}.mp3` を
+  ゲームが**自動で優先ロード**（無ければ現行の wav/ogg/手続きBGM）。
+- 生成後は Godot でインポート（エディタ起動 or push→CIビルド）で反映。
+
 ## 女の子の育成（スキルツリー）を足す・いじる
 ゲームの進行スピンは「女の子を育てる」こと。`KuroData.GIRL_TREES[キャラ]` に
 ノードを並べる（直線：前ノード解放で次が開く）。

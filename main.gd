@@ -850,9 +850,16 @@ func _build_audio() -> void:
 		p.volume_db = -8.0
 		add_child(p)
 		sfx_pool.append(p)
-	bgm = _make_loop("res://assets/third_party/music/sketchbook_loop.ogg", -16.0)
-	bgm_dive = _make_loop("res://assets/generated/bgm/dive_drone.wav", -60.0)
-	bgm_battle = _make_loop("res://assets/generated/bgm/battle_layer.wav", -60.0)
+	# ElevenLabs生成（bgm_el/*.mp3）があれば優先、無ければ現行（CC0/手続き）
+	bgm = _make_loop(_audio_pick("bgm_el/store.mp3", "res://assets/third_party/music/sketchbook_loop.ogg"), -16.0)
+	bgm_dive = _make_loop(_audio_pick("bgm_el/dive.mp3", "res://assets/generated/bgm/dive_drone.wav"), -60.0)
+	bgm_battle = _make_loop(_audio_pick("bgm_el/battle.mp3", "res://assets/generated/bgm/battle_layer.wav"), -60.0)
+
+
+## 生成BGMがあればそのパス、無ければフォールバックを返す。
+func _audio_pick(gen_rel: String, fallback: String) -> String:
+	var el := "res://assets/generated/" + gen_rel
+	return el if ResourceLoader.exists(el) else fallback
 
 
 ## ループ再生する AudioStreamPlayer を作る（OGG/WAV 両対応）。
@@ -863,6 +870,8 @@ func _make_loop(path: String, vol_db: float) -> AudioStreamPlayer:
 	var stream: AudioStream = load(path)
 	if stream is AudioStreamOggVorbis:
 		stream.loop = true
+	elif stream is AudioStreamMP3:
+		stream.loop = true  # ElevenLabs生成のBGM
 	elif stream is AudioStreamWAV:
 		stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
 		stream.loop_begin = 0
@@ -1525,7 +1534,9 @@ func _save(now: float) -> void:
 
 func _sfx(sfx_name: String) -> void:
 	if not sfx_cache.has(sfx_name):
-		var path := "res://assets/third_party/sfx/%s.wav" % sfx_name
+		# ElevenLabs生成（mp3）があれば優先、無ければ現行のwav
+		var el := "res://assets/generated/sfx/%s.mp3" % sfx_name
+		var path := el if ResourceLoader.exists(el) else "res://assets/third_party/sfx/%s.wav" % sfx_name
 		sfx_cache[sfx_name] = load(path) if ResourceLoader.exists(path) else null
 	var stream: AudioStream = sfx_cache[sfx_name]
 	if stream == null:
