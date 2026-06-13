@@ -12,6 +12,21 @@ const COL_PANEL := Color(0.05, 0.10, 0.27, 0.92)
 const COL_EDGE := Color(0.45, 0.8, 1.0)
 const COL_TEXT := Color(0.92, 0.96, 1.0)
 const COL_DIM := Color(0.65, 0.8, 1.0, 0.7)
+const COL_ACCENT := Color(0.4, 0.85, 1.0)    # 識別色（シアン）= この店のアイデンティティ
+const COL_WARM := Color(1.0, 0.78, 0.45)     # 店番・ネオン看板の暖色アクセント
+
+# Vignelli 規律：型は自己表現でなく組織化。サイズは少なく、見出し≒2×本文。
+# 散らばっていた 14〜30 を5段に集約（白と階層差で語る）。
+const TYPE_SMALL := 15   # 注記・キャプション
+const TYPE_BODY := 19    # 本文（基準）
+const TYPE_SUB := 24     # 小見出し
+const TYPE_HEAD := 38    # 見出し（≒2×本文）
+const TYPE_DISPLAY := 54 # タイマー等の数字
+# 8pxベースの間隔スケール（happenstance を排す）
+const SP_1 := 4
+const SP_2 := 8
+const SP_3 := 12
+const SP_4 := 16
 
 var sim: KuroSim
 var phase: int = Phase.MORNING
@@ -383,10 +398,10 @@ func _build_ui() -> void:
 	# タイマー帯（潜行中のみ表示）
 	timer_box = VBoxContainer.new()
 	timer_box.add_theme_constant_override("separation", 0)
-	timer_label = _label("--:--", 54)
+	timer_label = _label("--:--", TYPE_DISPLAY)
 	timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	timer_box.add_child(timer_label)
-	status_label = _label("", 19, COL_DIM)
+	status_label = _label("", TYPE_BODY, COL_DIM)
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	timer_box.add_child(status_label)
 	main_box.add_child(timer_box)
@@ -447,7 +462,7 @@ func _build_status_overlay() -> void:
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	info.add_theme_constant_override("separation", 6)
-	status_name = _label("", 30, Color(0.9, 0.96, 1.0))
+	status_name = _label("", TYPE_HEAD, Color(0.9, 0.96, 1.0))
 	info.add_child(status_name)
 	status_body = VBoxContainer.new()
 	status_body.add_theme_constant_override("separation", 5)
@@ -470,7 +485,7 @@ func _open_status(id: String) -> void:
 	status_body.add_child(_label("♥ 好感度 %d / 100" % sim.aff(id), 20, Color(1.0, 0.7, 0.85)))
 	status_body.add_child(_label("攻撃 %d　　最大HP %d" % [int(sim.girl_atk(id)), int(sim.girl_maxhp(id))], 20))
 	status_body.add_child(_label("好物 %s　　店番シナジー：%s（%s）" % [g["fav"], g["synergy"], g["synergy_desc"]], 16, COL_DIM))
-	status_body.add_child(_label("― 装備 ―", 16, Color(0.6, 0.9, 1.0)))
+	status_body.add_child(_section("装備"))
 	for slot in ["weapon", "armor", "trinket"]:
 		var it: Dictionary = s["girls"][id]["equip"][slot]
 		var slot_name: String = SimItems.SLOTS[slot]["name"]
@@ -479,7 +494,7 @@ func _open_status(id: String) -> void:
 		else:
 			status_body.add_child(_label("%s： %s %s" % [slot_name, SimItems.display_name(it), SimItems.affix_text(it)],
 					17, SimItems.GRADES[int(it["grade"])]["color"]))
-	status_body.add_child(_label("― スキル（枠 %d）―" % sim.skill_slots(), 16, Color(0.6, 0.9, 1.0)))
+	status_body.add_child(_section("スキル（枠 %d）" % sim.skill_slots()))
 	var skill_flow := HFlowContainer.new()
 	skill_flow.add_theme_constant_override("h_separation", 5)
 	skill_flow.add_theme_constant_override("v_separation", 5)
@@ -735,12 +750,12 @@ func _build_close() -> void:
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var box := VBoxContainer.new()
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	box.add_theme_constant_override("separation", 14)
-	box.add_child(_label("― 閉店三行 ―", 28, Color(0.6, 0.95, 1.0)))
-	close_text = _label("", 22)
+	box.add_theme_constant_override("separation", SP_3)
+	box.add_child(_section("閉店三行"))
+	close_text = _label("", TYPE_BODY)
 	close_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_child(close_text)
-	var done := _button("閉店作業へ", _on_close_done, 26)
+	var done := _button("閉店作業へ", _on_close_done, TYPE_SUB)
 	done.custom_minimum_size = Vector2(0, 54)
 	box.add_child(done)
 	card.add_child(box)
@@ -777,7 +792,22 @@ func _label(text: String, font_size: int, color := COL_TEXT) -> Label:
 	return l
 
 
-func _button(text: String, cb: Callable, font_size := 24) -> Button:
+## Vignelli の「ルーラー」：フラッシュレフトの小見出し＋直下に 2px の罫。
+## 中央寄せの「― 〜 ―」を置き換え、型を吊るす規律にする。
+func _section(text: String) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", SP_1)
+	var lbl := _label(text, TYPE_SMALL, COL_ACCENT)
+	lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	box.add_child(lbl)
+	var rule := ColorRect.new()
+	rule.color = Color(COL_ACCENT.r, COL_ACCENT.g, COL_ACCENT.b, 0.5)
+	rule.custom_minimum_size = Vector2(0, 2)
+	box.add_child(rule)
+	return box
+
+
+func _button(text: String, cb: Callable, font_size := TYPE_SUB) -> Button:
 	var b := Button.new()
 	b.text = text
 	b.add_theme_font_size_override("font_size", font_size)
@@ -990,7 +1020,7 @@ func _refresh_night() -> void:
 				_on_talk_start.bind(String(talk["girl"]), int(talk["tier"])), 24)
 		tb.modulate = Color(1.0, 0.85, 0.95)
 		night_box.add_child(tb)
-	night_box.add_child(_label("― 闇市 ―", 18, COL_DIM))
+	night_box.add_child(_section("闇市"))
 	for i in KuroData.MARKET.size():
 		var item: Dictionary = KuroData.MARKET[i]
 		var row := HBoxContainer.new()
@@ -1112,7 +1142,7 @@ func _refresh_stats() -> void:
 	stats_box.add_child(_label("デイリー: 今日 %d/3 完走（ポモドーロのみ）" % runs_today, 18))
 	if runs_today >= 3 and not s["daily"]["claimed"]:
 		stats_box.add_child(_button("デイリー報酬（+500G）", _on_claim_daily, 22))
-	stats_box.add_child(_label("― 週間集中グラフ ―", 16, COL_DIM))
+	stats_box.add_child(_section("週間集中グラフ"))
 	var now := Time.get_unix_time_from_system()
 	for i in range(6, -1, -1):
 		var date := Time.get_datetime_string_from_unix_time(int(now) - i * 86400).substr(0, 10)
