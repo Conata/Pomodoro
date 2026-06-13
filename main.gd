@@ -35,6 +35,7 @@ var morning_box: VBoxContainer
 var girls_box: VBoxContainer
 var menu_box: VBoxContainer
 var menu_title: Label
+var stock_row: HBoxContainer
 var door_btn: Button
 var task_edit: LineEdit
 var mode_group := ButtonGroup.new()
@@ -350,6 +351,7 @@ func _mmss(sec: float) -> String:
 func _build_ui() -> void:
 	theme = _make_theme()
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST  # 生成アイコンをドットのまま拡大
 	var bgrect := ColorRect.new()
 	bgrect.color = COL_BG
 	bgrect.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -585,6 +587,9 @@ func _build_morning(parent: Control) -> void:
 
 	forecast_label = _label("", 19, Color(1.0, 0.85, 0.5))
 	morning_box.add_child(forecast_label)
+	stock_row = HBoxContainer.new()
+	stock_row.add_theme_constant_override("separation", 2)
+	morning_box.add_child(stock_row)
 
 	girls_box = VBoxContainer.new()
 	girls_box.add_theme_constant_override("separation", 5)
@@ -780,6 +785,37 @@ func _button(text: String, cb: Callable, font_size := 24) -> Button:
 	return b
 
 
+var _gen_cache := {}
+
+
+func _gen_tex(path: String) -> Texture2D:
+	if not _gen_cache.has(path):
+		var full := "res://assets/generated/%s.png" % path
+		_gen_cache[path] = load(full) if ResourceLoader.exists(full) else null
+	return _gen_cache[path]
+
+
+func _food_icon(id: String) -> Texture2D:
+	return _gen_tex("food/" + id)
+
+
+func _box_icon(grade: int) -> Texture2D:
+	return _gen_tex("box/%d" % grade)
+
+
+func _ing_icon(kind: String) -> Texture2D:
+	return _gen_tex("ing/" + kind)
+
+
+func _icon_rect(tex: Texture2D, sz: int) -> TextureRect:
+	var tr := TextureRect.new()
+	tr.texture = tex
+	tr.custom_minimum_size = Vector2(sz, sz)
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	return tr
+
+
 func _girl_icon(id: String) -> TextureRect:
 	var tr := TextureRect.new()
 	var sprite: String = KuroData.GIRLS[id]["sprite"]
@@ -819,9 +855,16 @@ func _header_text() -> String:
 
 func _refresh_morning() -> void:
 	var s := sim.state
-	forecast_label.text = "%s予報『%s』  ｜  乾%d 肉%d 海%d" % [
-		offline_note, s["forecast"],
-		int(s["stock"]["dry"]), int(s["stock"]["meat"]), int(s["stock"]["sea"])]
+	forecast_label.text = "%s予報『%s』の客が多い夜" % [offline_note, s["forecast"]]
+	# 素材在庫をアイコン付きで
+	_clear(stock_row)
+	for kind in KuroData.INGS:
+		var ic := _ing_icon(kind)
+		if ic != null:
+			stock_row.add_child(_icon_rect(ic, 26))
+		var sl := _label("%s%d　" % [KuroData.ING_NAMES[kind], int(s["stock"][kind])], 18, COL_DIM)
+		sl.autowrap_mode = TextServer.AUTOWRAP_OFF
+		stock_row.add_child(sl)
 	_clear(girls_box)
 	for id in KuroData.GIRL_ORDER:
 		girls_box.add_child(_girl_card(id))
@@ -846,6 +889,10 @@ func _refresh_morning() -> void:
 				KuroData.ING_NAMES[r["ing"]], ing_stock,
 				" ◎" if hit else "", " ！" if ing_stock <= 0 else ""]
 		b2.add_theme_font_size_override("font_size", 17)
+		var fi := _food_icon(id)
+		if fi != null:
+			b2.icon = fi
+			b2.add_theme_constant_override("icon_max_width", 26)
 		if in_menu:
 			b2.add_theme_color_override("font_color", Color(1.0, 0.9, 0.55))
 		b2.pressed.connect(_on_menu_toggle.bind(String(id)))
@@ -929,6 +976,11 @@ func _refresh_night() -> void:
 			night_box.add_child(sp)
 	var open_b := _button("箱を開ける（残り %d）" % s["boxes"].size(), _on_open_box, 24)
 	open_b.disabled = s["boxes"].is_empty()
+	if not s["boxes"].is_empty():
+		var bi := _box_icon(int(s["boxes"][0]))
+		if bi != null:
+			open_b.icon = bi
+			open_b.add_theme_constant_override("icon_max_width", 30)
 	night_box.add_child(open_b)
 	var talk := sim.available_talk()
 	if not talk.is_empty():
@@ -1137,8 +1189,15 @@ func _on_open_box() -> void:
 		return
 	_sfx("chest_open")
 	var panel := PanelContainer.new()
-	panel.add_child(_label("%s → %s" % [KuroData.BOX_NAMES[int(r["grade"])], r["text"]], 20,
-			Color(0.7, 1.0, 0.85)))
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 8)
+	var bi := _box_icon(int(r["grade"]))
+	if bi != null:
+		hb.add_child(_icon_rect(bi, 30))
+	var rl := _label("%s → %s" % [KuroData.BOX_NAMES[int(r["grade"])], r["text"]], 20, Color(0.7, 1.0, 0.85))
+	rl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb.add_child(rl)
+	panel.add_child(hb)
 	night_box.add_child(panel)
 	night_box.move_child(panel, 1)
 	_save(Time.get_unix_time_from_system())
