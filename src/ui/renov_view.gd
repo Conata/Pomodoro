@@ -35,7 +35,7 @@ func _draw() -> void:
 		for p in KuroData.RENOV_NODES[id]["prev"]:
 			var owned: bool = id in sim.state["renov"]
 			draw_line(_node_center(String(p)), _node_center(id),
-					Color(0.5, 0.9, 1.0, 0.5) if owned else Color(0.6, 0.8, 1.0, 0.12), 3.0)
+					Color(DS.ACCENT.r, DS.ACCENT.g, DS.ACCENT.b, 0.5) if owned else DS.LINE, 3.0)
 	for id in KuroData.RENOV_NODES:
 		var node: Dictionary = KuroData.RENOV_NODES[id]
 		var c := _node_center(id)
@@ -43,27 +43,27 @@ func _draw() -> void:
 		var avail: bool = sim.renov_available(id)
 		var affordable: bool = avail and int(sim.state["gold"]) >= int(node["cost"])
 		if owned:
-			draw_circle(c, RADIUS, Color(0.10, 0.32, 0.5))
-			draw_arc(c, RADIUS, 0, TAU, 32, Color(0.5, 0.95, 1.0), 3.0)
+			draw_circle(c, RADIUS, DS.SURFACE_2)
+			draw_arc(c, RADIUS, 0, TAU, 32, DS.ACCENT, 3.0)
 		elif avail:
 			var a: float = (0.5 + 0.3 * sin(pulse * 3.0)) if affordable else 0.35
-			draw_circle(c, RADIUS, Color(0.06, 0.14, 0.3))
-			draw_arc(c, RADIUS, 0, TAU, 32, Color(0.4, 0.85, 1.0, a + 0.3), 3.0)
+			draw_circle(c, RADIUS, DS.SURFACE)
+			draw_arc(c, RADIUS, 0, TAU, 32, Color(DS.ACCENT.r, DS.ACCENT.g, DS.ACCENT.b, a + 0.3), 3.0)
 		else:
 			draw_circle(c, RADIUS, Color(0.05, 0.08, 0.16))
-			draw_arc(c, RADIUS, 0, TAU, 32, Color(0.6, 0.8, 1.0, 0.1), 2.0)
-		var label_color := Color(0.92, 0.97, 1.0) if owned or avail else Color(0.7, 0.85, 1.0, 0.3)
+			draw_arc(c, RADIUS, 0, TAU, 32, DS.LINE, 2.0)
+		var label_color := DS.TEXT if owned or avail else DS.TEXT_MUTE
 		var nm: String = node["name"]
 		var w := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_CENTER, -1, 15).x
 		draw_string(font, c + Vector2(-w * 0.5, RADIUS + 19), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, label_color)
 		if owned:
 			var mw := font.get_string_size("●", HORIZONTAL_ALIGNMENT_CENTER, -1, 18).x
-			draw_string(font, c + Vector2(-mw * 0.5, 7), "●", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.6, 1.0, 1.0))
+			draw_string(font, c + Vector2(-mw * 0.5, 7), "●", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, DS.ACCENT)
 		else:
 			var cost := "%dG" % int(node["cost"])
 			var cw := font.get_string_size(cost, HORIZONTAL_ALIGNMENT_CENTER, -1, 13).x
 			draw_string(font, c + Vector2(-cw * 0.5, 6), cost, HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
-					Color(1.0, 0.85, 0.4, 0.9) if avail else Color(1, 1, 1, 0.25))
+					DS.WARM if avail else DS.TEXT_MUTE)
 
 
 func _gui_input(event: InputEvent) -> void:

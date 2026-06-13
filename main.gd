@@ -1049,21 +1049,28 @@ func _refresh_inventory() -> void:
 	_clear(inv_box)
 	var s := sim.state
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 6)
-	row.add_child(_label("廃材 %d" % int(s["scrap"]), 20, Color(0.7, 1.0, 0.85)))
-	row.add_child(_button("一括分解", _on_bulk_salvage, 20))
-	row.add_child(_button("合成 3→1", _on_synthesize, 20))
+	row.add_theme_constant_override("separation", SP_2)
+	row.add_child(_badge(null, "屑 %d" % int(s["scrap"]), DS.SUCCESS))
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(sp)
+	row.add_child(_button("一括分解", _on_bulk_salvage, TYPE_BODY))
+	row.add_child(_button("合成 3→1", _on_synthesize, TYPE_BODY))
 	inv_box.add_child(row)
 	# 装備中サマリ
+	inv_box.add_child(_section("装備中"))
 	for id in KuroData.GIRL_ORDER:
 		var parts: Array[String] = []
 		for slot in ["weapon", "armor", "trinket"]:
 			var it: Dictionary = s["girls"][id]["equip"][slot]
 			parts.append("—" if it.is_empty() else SimItems.display_name(it))
-		inv_box.add_child(_label("%s: %s" % [KuroData.GIRLS[id]["name"], "  ".join(parts)], 15, COL_DIM))
+		var sl := _label("%s  %s" % [KuroData.GIRLS[id]["name"], "  ".join(parts)], TYPE_SMALL, COL_DIM)
+		sl.autowrap_mode = TextServer.AUTOWRAP_OFF
+		inv_box.add_child(sl)
 	var inv: Array = s["inventory"]
+	inv_box.add_child(_section("倉庫"))
 	if inv.is_empty():
-		inv_box.add_child(_label("倉庫は空。潜って拾おう（装備は自動装着される）", 17, Color(1, 1, 1, 0.4)))
+		inv_box.add_child(_label("倉庫は空。潜って拾おう（装備は自動装着される）", TYPE_SMALL, COL_DIM))
 		return
 	var sorted_items := inv.duplicate()
 	sorted_items.sort_custom(func(a, b): return float(a["score"]) > float(b["score"]))
@@ -1073,22 +1080,25 @@ func _refresh_inventory() -> void:
 		var target := _equip_target(it)
 		var diff := float(it["score"]) - float(target["cur_score"])
 		var badge := ("▲+%d" % int(diff)) if diff > 0.0 else ("▼%d" % int(diff))
+		var panel := PanelContainer.new()
+		panel.add_theme_stylebox_override("panel", DS._sb(DS.SURFACE, DS.LINE, DS.R_SM, DS.SP_2))
 		var line := HBoxContainer.new()
-		line.add_theme_constant_override("separation", 4)
+		line.add_theme_constant_override("separation", SP_1)
 		var name_label := _label("%s %s %s" % [SimItems.display_name(it), SimItems.affix_text(it), badge],
-				16, SimItems.GRADES[int(it["grade"])]["color"])
+				TYPE_SMALL, SimItems.GRADES[int(it["grade"])]["color"])
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		line.add_child(name_label)
-		var eq := _button("装備", _on_equip.bind(int(it["id"])), 16)
+		var eq := _button("装備", _on_equip.bind(int(it["id"])), TYPE_SMALL)
 		eq.disabled = diff <= 0.0
 		line.add_child(eq)
-		line.add_child(_button("分解", _on_salvage.bind(int(it["id"])), 16))
-		var rr := _button("刻印", _on_reroll.bind(int(it["id"])), 16)
+		line.add_child(_button("分解", _on_salvage.bind(int(it["id"])), TYPE_SMALL))
+		var rr := _button("刻印", _on_reroll.bind(int(it["id"])), TYPE_SMALL)
 		rr.disabled = int(s["scrap"]) < SimItems.REROLL_COST
 		line.add_child(rr)
-		inv_box.add_child(line)
+		panel.add_child(line)
+		inv_box.add_child(panel)
 	if sorted_items.size() > shown:
-		inv_box.add_child(_label("…ほか %d 品（スコア上位のみ表示）" % (sorted_items.size() - shown), 14, Color(1, 1, 1, 0.3)))
+		inv_box.add_child(_label("…ほか %d 品（スコア上位のみ表示）" % (sorted_items.size() - shown), TYPE_SMALL, COL_DIM))
 
 
 ## このアイテムを最も活かせる子（現装備スコアが最低）。
