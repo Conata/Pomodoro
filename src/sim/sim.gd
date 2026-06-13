@@ -76,6 +76,7 @@ static func new_state(seed_value: int) -> Dictionary:
 		"weekly": {},
 		"ship": {"stock": [], "rotated": 0.0},
 		"stats": {"days": 0, "focus_min": 0.0, "dives": 0},
+		"events_seen": [],
 		"last_seen": 0.0,
 	}
 
@@ -470,24 +471,24 @@ func _combat_step(dt: float) -> void:
 			_wipe()
 
 
+## スキル発動。効果は kind、見た目は def["fx"]（あれば）で完全にデータ駆動。
+## 新スキルは SKILL_DB に1行（kind/power/fx）足すだけで成立する。
 func _cast_skill(id: String, sid: String) -> bool:
 	var def: Dictionary = KuroData.SKILL_DB[sid]
 	var atk := girl_atk(id)
+	var ok := false
 	match String(def["kind"]):
 		"hit":
-			if state["mobs"].is_empty():
-				return false
-			_damage_mobs(atk * float(def["power"]))
-			return true
+			if not state["mobs"].is_empty():
+				_damage_mobs(atk * float(def["power"]))
+				ok = true
 		"aoe":
-			if state["mobs"].is_empty():
-				return false
-			_emit("fx", "", {"fx": "lightning" if def["girl"] == "kiriko" else "explosion"})
-			var per := atk * float(def["power"])
-			for m in state["mobs"].duplicate():
-				m["hp"] = float(m["hp"]) - per
-			_sweep_dead_mobs()
-			return true
+			if not state["mobs"].is_empty():
+				var per := atk * float(def["power"])
+				for m in state["mobs"].duplicate():
+					m["hp"] = float(m["hp"]) - per
+				_sweep_dead_mobs()
+				ok = true
 		"heal_one":
 			var low := ""
 			var worst := 0.92
@@ -496,27 +497,23 @@ func _cast_skill(id: String, sid: String) -> bool:
 				if ratio < worst:
 					worst = ratio
 					low = gid
-			if low == "":
-				return false
-			state["hp"][low] = minf(girl_maxhp(low), float(state["hp"][low]) + girl_maxhp(low) * float(def["power"]))
-			_emit("fx", "", {"fx": "heal"})
-			return true
+			if low != "":
+				state["hp"][low] = minf(girl_maxhp(low), float(state["hp"][low]) + girl_maxhp(low) * float(def["power"]))
+				ok = true
 		"heal_all":
-			var any := false
 			for gid in _alive_divers():
 				var mx := girl_maxhp(gid)
 				if float(state["hp"][gid]) < mx * 0.98:
 					state["hp"][gid] = minf(mx, float(state["hp"][gid]) + mx * float(def["power"]))
-					any = true
-			if any:
-				_emit("fx", "", {"fx": "heal"})
-			return any
+					ok = true
 		"shield_all":
 			# シールドは「次の被弾を軽減」扱い：全員を回復で代替し、盾を厚く
 			for gid in _alive_divers():
 				state["hp"][gid] = minf(girl_maxhp(gid), float(state["hp"][gid]) + girl_maxhp(gid) * float(def["power"]) * 0.6)
-			return true
-	return false
+			ok = true
+	if ok and def.has("fx"):
+		_emit("fx", "", {"fx": String(def["fx"])})
+	return ok
 
 
 func _sweep_dead_mobs() -> void:

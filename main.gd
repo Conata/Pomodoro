@@ -104,6 +104,32 @@ func _ready() -> void:
 	_pump_events()
 	_apply_phase()
 	_refresh_all()
+	_maybe_event("tutorial")  # 初回だけチュートリアルを出す
+
+
+## 未読イベントなら再生する。発火条件を増やすのはここに1行。
+func _maybe_event(id: String) -> void:
+	if id in sim.state["events_seen"] or not EventData.EVENTS.has(id):
+		return
+	if talk_view.visible:
+		return
+	var ev: Dictionary = EventData.EVENTS[id]
+	talk_view.play(ev, String(ev["speaker"]), {"kind": "event", "id": id})
+
+
+## シーン（会話/イベント）完了時の共通処理。
+func _on_scene_finished(meta: Dictionary) -> void:
+	match String(meta.get("kind", "")):
+		"talk":
+			sim.complete_talk(String(meta["girl"]), int(meta["tier"]))
+			_sfx("ui_equip")
+			_save(Time.get_unix_time_from_system())
+			_refresh_night()
+			_refresh_all()
+		"event":
+			if not meta["id"] in sim.state["events_seen"]:
+				sim.state["events_seen"].append(meta["id"])
+				_save(Time.get_unix_time_from_system())
 
 
 func _process(delta: float) -> void:
@@ -196,9 +222,7 @@ func _pump_events() -> void:
 				_banter("levelup")
 			"fx":
 				var fxn := String(e.get("fx", ""))
-				# 回復・煙は味方側、攻撃系は敵側に出す
-				var at := "party" if fxn in ["heal", "song", "smoke"] else "enemy"
-				dive.spawn_fx(fxn, at)
+				dive.spawn_fx(fxn, FxData.side_of(fxn))  # 出す側もFxData定義に従う
 			_:
 				_log(e["msg"])
 
@@ -427,7 +451,7 @@ func _build_ui() -> void:
 	talk_view = TalkView.new()
 	talk_view.set_anchors_preset(Control.PRESET_FULL_RECT)
 	talk_view.visible = false
-	talk_view.finished.connect(_on_talk_finished)
+	talk_view.finished.connect(_on_scene_finished)
 	add_child(talk_view)
 
 	confirm = ConfirmationDialog.new()
@@ -588,7 +612,7 @@ func _build_morning(parent: Control) -> void:
 		b.pressed.connect(_on_mode.bind(String(opt[1]), float(opt[2])))
 		if float(opt[2]) == 25.0:
 			b.button_pressed = true
-		ctrl.add_child(b)
+		ctrl.add_child(_juice(b))
 	morning_box.add_child(ctrl)
 	task_edit = LineEdit.new()
 	task_edit.placeholder_text = "集中するタスクを書く（ポモドーロ時）"
@@ -798,6 +822,20 @@ func _button(text: String, cb: Callable, font_size := TYPE_SUB) -> Button:
 	b.text = text
 	b.add_theme_font_size_override("font_size", font_size)
 	b.pressed.connect(cb)
+	return _juice(b)
+
+
+## 押し心地：押下で少し縮み、離すとポンと戻る。全ボタンに自動適用。
+## トグル等 Button.new() を直接作る箇所も _juice(b) を通せば同じ手触りになる。
+func _juice(b: Button) -> Button:
+	b.resized.connect(func() -> void: b.pivot_offset = b.size * 0.5)
+	b.button_down.connect(func() -> void:
+		b.pivot_offset = b.size * 0.5
+		create_tween().tween_property(b, "scale", Vector2(0.93, 0.93), 0.06))
+	b.button_up.connect(func() -> void:
+		var tw := create_tween()
+		tw.tween_property(b, "scale", Vector2(1.05, 1.05), 0.07)
+		tw.tween_property(b, "scale", Vector2.ONE, 0.08))
 	return b
 
 
@@ -921,7 +959,7 @@ func _refresh_morning() -> void:
 		if in_menu:
 			b2.add_theme_color_override("font_color", Color(1.0, 0.9, 0.55))
 		b2.pressed.connect(_on_menu_toggle.bind(String(id)))
-		flow.add_child(b2)
+		flow.add_child(_juice(b2))
 	menu_box.add_child(flow)
 	door_btn.text = "扉方針：%s" % ("開ける" if s["morning"]["door"] == "open" else "無視する")
 
@@ -1348,15 +1386,7 @@ func _on_claim_daily() -> void:
 
 func _on_talk_start(girl: String, tier: int) -> void:
 	_sfx("ui_confirm")
-	talk_view.start(girl, tier)
-
-
-func _on_talk_finished(girl: String, tier: int) -> void:
-	sim.complete_talk(girl, tier)
-	_sfx("ui_equip")
-	_save(Time.get_unix_time_from_system())
-	_refresh_night()
-	_refresh_all()
+	talk_view.start(girl, tier)  # 完了は _on_scene_finished が処理
 
 
 func _ask(text: String, cb: Callable) -> void:

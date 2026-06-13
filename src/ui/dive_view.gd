@@ -12,13 +12,8 @@ const FX_MAX := 6
 const TINT := Color(0.62, 0.78, 1.15)  # 青に沈める
 const RAIN_N := 46
 
-const FX_DEFS := {
-	"explosion": {"file": "res://assets/third_party/effects/explosion2.png", "size": 50, "frames": 18, "fps": 24.0},
-	"lightning": {"file": "res://assets/third_party/effects/lightning_strike.png", "size": 66, "frames": 13, "fps": 22.0},
-	"smoke": {"file": "res://assets/third_party/effects/smoke.png", "size": 64, "frames": 13, "fps": 14.0},
-	"song": {"file": "res://assets/third_party/effects/lightning_strike.png", "size": 66, "frames": 13, "fps": 26.0},
-	"heal": {"file": "res://assets/generated/fx/heal.png", "size": 48, "frames": 10, "fps": 18.0},
-}
+# エフェクト定義は FxData（src/sim/fx_data.gd）に一元化。ここは別名。
+const FX_DEFS := FxData.FX
 
 var sim: KuroSim = null
 var pulse := 0.0

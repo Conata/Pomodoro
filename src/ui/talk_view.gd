@@ -4,16 +4,20 @@ extends Control
 ## 青一色の画面、雨、白の斜めバンドに黒文字の名前、行送りはタップ。
 ## 選択肢はアウトラインの白枠ボックス2つ。
 
-signal finished(girl: String, tier: int)
+## 汎用シーンプレイヤー。会話・イベント・チュートリアルを同じ仕組みで再生する。
+## scene = {"title":見出し, "lines":[[who,text]...], 任意で "a"/"b"（2択）}。
+## who: "g"=話者, "*"=地の文（雨/行動）。finished は meta を返すので
+## 呼び出し側が文脈（会話完了/イベント既読など）を処理する。
+signal finished(meta: Dictionary)
 
 const FRAME_DIR := "res://assets/third_party/dungeon/frames/"
 
-var girl := ""
-var tier := 0
+var girl := ""          # 立ち絵＆名前の話者
 var scene_data := {}
 var queue: Array = []  # [[who, text], ...]
 var picked := false
 var pulse := 0.0
+var _meta := {}
 var _tex_cache := {}
 
 var choice_a: Button
@@ -46,12 +50,18 @@ func _mk_choice() -> Button:
 	return b
 
 
+## 好感度会話（TalkData）を再生。
 func start(p_girl: String, p_tier: int) -> void:
-	girl = p_girl
-	tier = p_tier
-	scene_data = TalkData.TALKS[girl][tier]
-	queue = scene_data["lines"].duplicate()
+	play(TalkData.TALKS[p_girl][p_tier], p_girl, {"kind": "talk", "girl": p_girl, "tier": p_tier})
+
+
+## 任意のシーンを再生（イベント/チュートリアル兼用）。
+func play(scene: Dictionary, speaker: String, meta: Dictionary) -> void:
+	girl = speaker
+	scene_data = scene
+	queue = scene["lines"].duplicate()
 	picked = false
+	_meta = meta
 	visible = true
 	_advance_to_current()
 
@@ -63,7 +73,8 @@ func _process(delta: float) -> void:
 
 
 func _advance_to_current() -> void:
-	var show_choice: bool = queue.is_empty() and not picked
+	# 2択は scene に "a" があり、まだ選んでいない時だけ出す
+	var show_choice: bool = queue.is_empty() and scene_data.has("a") and not picked
 	choice_a.visible = show_choice
 	choice_b.visible = show_choice
 	if show_choice:
@@ -74,9 +85,10 @@ func _advance_to_current() -> void:
 		choice_a.size = Vector2(w, 56)
 		choice_b.position = Vector2(60, size.y * 0.42 + 72)
 		choice_b.size = Vector2(w, 56)
-	if queue.is_empty() and picked:
+	# 行が尽きて、選択肢が無い（or選択済み）なら終了
+	if queue.is_empty() and (picked or not scene_data.has("a")):
 		visible = false
-		finished.emit(girl, tier)
+		finished.emit(_meta)
 
 
 func _on_choice(which: String) -> void:

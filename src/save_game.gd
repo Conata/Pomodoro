@@ -103,6 +103,8 @@ static func normalize(s: Dictionary) -> Dictionary:
 		s["weekly"] = {}
 	if not s.has("ship"):
 		s["ship"] = {"stock": [], "rotated": 0.0}
+	if not s.has("events_seen"):
+		s["events_seen"] = []
 	return s
 
 
