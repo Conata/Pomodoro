@@ -57,8 +57,8 @@ func _draw() -> void:
 		var w := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_CENTER, -1, 15).x
 		draw_string(font, c + Vector2(-w * 0.5, RADIUS + 19), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, label_color)
 		if owned:
-			var mw := font.get_string_size("✓", HORIZONTAL_ALIGNMENT_CENTER, -1, 18).x
-			draw_string(font, c + Vector2(-mw * 0.5, 7), "✓", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.6, 1.0, 1.0))
+			var mw := font.get_string_size("●", HORIZONTAL_ALIGNMENT_CENTER, -1, 18).x
+			draw_string(font, c + Vector2(-mw * 0.5, 7), "●", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.6, 1.0, 1.0))
 		else:
 			var cost := "%dG" % int(node["cost"])
 			var cw := font.get_string_size(cost, HORIZONTAL_ALIGNMENT_CENTER, -1, 13).x

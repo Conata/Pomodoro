@@ -43,7 +43,7 @@ var dive_panel: VBoxContainer
 var log_label: RichTextLabel
 var door_row: HBoxContainer
 var abandon_btn: Button
-var close_panel: PanelContainer
+var close_panel: Control
 var close_text: Label
 var night_panel: ScrollContainer
 var night_box: VBoxContainer
@@ -455,7 +455,7 @@ func _build_morning(parent: Control) -> void:
 	door_btn = _button("", _on_door_policy, 17)
 	door_btn.custom_minimum_size = Vector2(150, 0)
 	ctrl.add_child(door_btn)
-	for opt in [["⚡80s", "quick", 0.0], ["15", "pomo", 15.0], ["25", "pomo", 25.0], ["50", "pomo", 50.0]]:
+	for opt in [["速80s", "quick", 0.0], ["15", "pomo", 15.0], ["25", "pomo", 25.0], ["50", "pomo", 50.0]]:
 		var b := Button.new()
 		b.toggle_mode = true
 		b.button_group = mode_group
@@ -508,7 +508,7 @@ func _build_dive_panel(parent: Control) -> void:
 	dbg.add_theme_constant_override("separation", 6)
 	var dbg_label := _label("DEBUG", 14, Color(1, 1, 1, 0.3))
 	dbg.add_child(dbg_label)
-	for opt in [["⏩ +1分", 60.0], ["⏩ +10分", 600.0], ["⏩ 完走まで", -1.0]]:
+	for opt in [["≫ +1分", 60.0], ["≫ +10分", 600.0], ["≫ 完走まで", -1.0]]:
 		var b := _button(String(opt[0]), _on_debug_ff.bind(float(opt[1])), 16)
 		b.modulate = Color(1, 1, 1, 0.55)
 		dbg.add_child(b)
@@ -560,17 +560,42 @@ func _build_stats_tab() -> void:
 
 
 func _build_close() -> void:
-	close_panel = PanelContainer.new()
-	close_panel.set_anchors_preset(Control.PRESET_CENTER)
+	# 全画面オーバーレイ＋中央カード（はみ出し防止のため幅をマージンで束縛）
+	close_panel = Control.new()
+	close_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	close_panel.visible = false
+	var backdrop := ColorRect.new()
+	backdrop.color = Color(0.01, 0.02, 0.06, 0.82)
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	close_panel.add_child(backdrop)
+	var margin := MarginContainer.new()
+	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for m in ["margin_left", "margin_right"]:
+		margin.add_theme_constant_override(m, 28)
+	close_panel.add_child(margin)
+	# 縦スペーサーで上下中央寄せしつつ、カードは束縛幅いっぱいに広げる
+	var col := VBoxContainer.new()
+	margin.add_child(col)
+	var sp_top := Control.new()
+	sp_top.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	col.add_child(sp_top)
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var box := VBoxContainer.new()
-	box.custom_minimum_size = Vector2(580, 0)
-	box.add_theme_constant_override("separation", 12)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_theme_constant_override("separation", 14)
 	box.add_child(_label("― 閉店三行 ―", 28, Color(0.6, 0.95, 1.0)))
-	close_text = _label("", 23)
+	close_text = _label("", 22)
+	close_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_child(close_text)
-	box.add_child(_button("閉店作業へ", _on_close_done, 26))
-	close_panel.add_child(box)
+	var done := _button("閉店作業へ", _on_close_done, 26)
+	done.custom_minimum_size = Vector2(0, 54)
+	box.add_child(done)
+	card.add_child(box)
+	col.add_child(card)
+	var sp_bot := Control.new()
+	sp_bot.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	col.add_child(sp_bot)
 	add_child(close_panel)
 
 
@@ -640,7 +665,7 @@ func _refresh_all() -> void:
 
 func _header_text() -> String:
 	var s := sim.state
-	return "Day%d 💰%d 素材%d ♻%d 看板%d 📦%d 🔥%d" % [
+	return "Day%d  金%d 素材%d 屑%d 看板%d 箱%d 連%d" % [
 		int(s["day"]), int(s["gold"]), sim.stock_total(), int(s["scrap"]),
 		sim.sign_total(), s["boxes"].size(), int(s["streak"])]
 
@@ -670,9 +695,9 @@ func _refresh_morning() -> void:
 		var b2 := Button.new()
 		b2.toggle_mode = true
 		b2.button_pressed = in_menu
-		b2.text = "%s%s☆%d %s%d%s%s" % ["✓" if in_menu else "", r["name"], star,
+		b2.text = "%s%s☆%d %s%d%s%s" % ["● " if in_menu else "", r["name"], star,
 				KuroData.ING_NAMES[r["ing"]], ing_stock,
-				" ◎" if hit else "", " ⚠" if ing_stock <= 0 else ""]
+				" ◎" if hit else "", " ！" if ing_stock <= 0 else ""]
 		b2.add_theme_font_size_override("font_size", 17)
 		if in_menu:
 			b2.add_theme_color_override("font_color", Color(1.0, 0.9, 0.55))
@@ -713,7 +738,7 @@ func _girl_card(id: String) -> PanelContainer:
 	for sid in sim.known_skills(id):
 		var def: Dictionary = KuroData.SKILL_DB[sid]
 		var equipped: bool = sid in s["girls"][id]["skills_eq"]
-		var sk := _button(("✦" if equipped else "") + String(def["name"]), _on_skill_toggle.bind(id, String(sid)), 14)
+		var sk := _button(("★" if equipped else "") + String(def["name"]), _on_skill_toggle.bind(id, String(sid)), 14)
 		if not equipped and s["girls"][id]["skills_eq"].size() >= sim.skill_slots():
 			sk.disabled = true
 		skill_row.add_child(sk)
@@ -748,14 +773,14 @@ func _refresh_night() -> void:
 			var sl := _label("【住民の物語】\n" + String(night_data["story"]), 19, Color(1.0, 0.9, 0.6))
 			sp.add_child(sl)
 			night_box.add_child(sp)
-	var open_b := _button("📦 箱を開ける（残り %d）" % s["boxes"].size(), _on_open_box, 24)
+	var open_b := _button("箱を開ける（残り %d）" % s["boxes"].size(), _on_open_box, 24)
 	open_b.disabled = s["boxes"].is_empty()
 	night_box.add_child(open_b)
 	var talk := sim.available_talk()
 	if not talk.is_empty():
 		var g: Dictionary = KuroData.GIRLS[talk["girl"]]
 		var scene: Dictionary = TalkData.TALKS[talk["girl"]][talk["tier"]]
-		var tb := _button("💬 %s と話す —「%s」" % [g["name"], scene["title"]],
+		var tb := _button("会話：%s —「%s」" % [g["name"], scene["title"]],
 				_on_talk_start.bind(String(talk["girl"]), int(talk["tier"])), 24)
 		tb.modulate = Color(1.0, 0.85, 0.95)
 		night_box.add_child(tb)
@@ -782,7 +807,7 @@ func _refresh_night() -> void:
 		var text := ""
 		if entry["type"] == "pet":
 			var pet: Dictionary = KuroData.PETS[entry["pet"]]
-			text = "🐾 %s — %s" % [pet["name"], pet["desc"]]
+			text = "ペット：%s — %s" % [pet["name"], pet["desc"]]
 		else:
 			var it: Dictionary = entry["item"]
 			text = "%s %s" % [SimItems.display_name(it), SimItems.affix_text(it)]
@@ -806,7 +831,7 @@ func _refresh_night() -> void:
 
 func _ship_head(now: float) -> String:
 	var rem := maxf(0.0, KuroData.SHIP_ROTATE_SEC - (now - float(sim.state["ship"]["rotated"])))
-	return "― 🚢 交易船（入替まで %s）―" % _mmss(rem)
+	return "― 交易船（入替まで %s）―" % _mmss(rem)
 
 
 func _refresh_inventory() -> void:
@@ -814,7 +839,7 @@ func _refresh_inventory() -> void:
 	var s := sim.state
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
-	row.add_child(_label("♻ 廃材 %d" % int(s["scrap"]), 20, Color(0.7, 1.0, 0.85)))
+	row.add_child(_label("廃材 %d" % int(s["scrap"]), 20, Color(0.7, 1.0, 0.85)))
 	row.add_child(_button("一括分解", _on_bulk_salvage, 20))
 	row.add_child(_button("合成 3→1", _on_synthesize, 20))
 	inv_box.add_child(row)
@@ -880,13 +905,13 @@ func _refresh_stats() -> void:
 	var runs_today := int(s["daily"]["runs"]) if String(s["daily"]["date"]) == today else 0
 	stats_box.add_child(_label("デイリー: 今日 %d/3 完走（ポモドーロのみ）" % runs_today, 18))
 	if runs_today >= 3 and not s["daily"]["claimed"]:
-		stats_box.add_child(_button("🎁 デイリー報酬（+500G）", _on_claim_daily, 22))
+		stats_box.add_child(_button("デイリー報酬（+500G）", _on_claim_daily, 22))
 	stats_box.add_child(_label("― 週間集中グラフ ―", 16, COL_DIM))
 	var now := Time.get_unix_time_from_system()
 	for i in range(6, -1, -1):
 		var date := Time.get_datetime_string_from_unix_time(int(now) - i * 86400).substr(0, 10)
 		var minutes := float(s["weekly"].get(date, 0.0))
-		var bar := "▮".repeat(mini(int(minutes / 15.0) + (1 if minutes > 0.0 else 0), 20))
+		var bar := "■".repeat(mini(int(minutes / 15.0) + (1 if minutes > 0.0 else 0), 20))
 		stats_box.add_child(_label("%s  %s %d分" % [date.substr(5), bar, int(minutes)], 16))
 	stats_box.add_child(_label(
 		"Sprites:0x72(CC0) FX:pimen SFX:Leohpaz Music:Abstraction(CC0) Font:DotGothic16(OFL)",
