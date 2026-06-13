@@ -13,6 +13,15 @@ const ENC_MIN := 11.0
 const ENC_MAX := 17.0
 const RESYNC_BACK := 40.0  # 緊急再同期で戻る距離
 const BREAK_SEC := 300.0  # 夜（休憩）の目安5分
+
+# ── バランス調整ノブ（tools/balance_report.gd で測りながら触る）──
+# 旧設定は25分=+約4900G/7日=約20万Gと過剰だった。選択が意味を持つよう希少化。
+const GOLD_PER_KILL := 1.0      # 雑魚1体の基礎ゴールド（旧3.0）。25分≈1500G狙い
+const MAT_DROP_CHANCE := 0.05   # 素材ドロップ基礎（旧0.10）
+const ELITE_BOX_CHANCE := 0.35  # エリートが箱を落とす確率（旧=必ず）
+const SHARD_PER_BOX := 1        # 箱(欠片枠)の基礎欠片（実際は +grade）
+const NIGHT_GOLD_SCALE := 0.6   # 夜の売上倍率（インフレ抑制）
+const DEBUG_GAIN := 10.0        # デバッグ時の獲得倍率（gold/素材/欠片/売上）
 const CHEST_INTERVAL := 480.0  # 箱はプレイ時間8分毎に蓄積（TBH準拠）
 const SHIP_ROTATE_SEC := 600.0  # 交易船は10分毎に在庫入替
 const OFFLINE_CAP_SEC := 28800.0  # 安息の上限8時間

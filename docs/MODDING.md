@@ -64,7 +64,10 @@
   - 戦利品の量: `sim._on_mob_killed`（ゴールド/素材/箱）
   - 夜の売上: `sim.close_day`（客数=8+看板、味マッチ単価1.2、店番シナジー）
   - 価格/星上げ: `KuroData.recipe_price`、闇市 `KuroData.MARKET`
+- 主要ノブは `KuroData` 冒頭の「バランス調整ノブ」に集約
+  （GOLD_PER_KILL / MAT_DROP_CHANCE / ELITE_BOX_CHANCE / SHARD_PER_BOX / NIGHT_GOLD_SCALE）。
 - 手順：ノブを1つ変える → `tools/balance_report.gd` を回す → 25分/7日の傾きを見る。
-- 現状メモ（2026-06 計測）：25分=+約4900G、7日=約20万G。DESIGN.md の旧目標
-  （25分+1339G/7日5000G）から大きく上振れ。エンカウント高頻度化の影響。
-  **最終は実機の体感で決める**（DESIGN.md）。
+- 現状（締め後）：1日（25分潜行＋精算）≈1700G。旧4900Gから希少化し、闇市/育成/
+  改装の選択が効くように。深層スケーリングで日が進むほど増える設計は維持。
+- **デバッグ獲得x10**：統計タブの「DEBUG 獲得x10」トグル（`state["debug_x10"]`、
+  `KuroData.DEBUG_GAIN`）。gold/素材/欠片/売上が10倍。後半の検証用。

@@ -1299,7 +1299,12 @@ func _refresh_stats() -> void:
 	var runs_today := int(s["daily"]["runs"]) if String(s["daily"]["date"]) == today else 0
 	stats_box.add_child(_label("デイリー: 今日 %d/3 完走（ポモドーロのみ）" % runs_today, 18))
 	if runs_today >= 3 and not s["daily"]["claimed"]:
-		stats_box.add_child(_button("デイリー報酬（+500G）", _on_claim_daily, 22))
+		stats_box.add_child(_button("デイリー報酬（+500G）", _on_claim_daily, TYPE_SUB))
+	# デバッグ：獲得x10トグル
+	var dbg := _button("DEBUG 獲得x10：%s" % ("ON" if s.get("debug_x10", false) else "OFF"),
+			_on_toggle_debug_gain, TYPE_SMALL)
+	dbg.modulate = Color(1, 0.85, 0.5) if s.get("debug_x10", false) else Color(1, 1, 1, 0.6)
+	stats_box.add_child(dbg)
 	stats_box.add_child(_section("週間集中グラフ"))
 	var now := Time.get_unix_time_from_system()
 	for i in range(6, -1, -1):
@@ -1481,6 +1486,13 @@ func _on_claim_daily() -> void:
 		_pump_events()
 		_save(Time.get_unix_time_from_system())
 		_refresh_all()
+
+
+func _on_toggle_debug_gain() -> void:
+	sim.state["debug_x10"] = not sim.state.get("debug_x10", false)
+	_sfx("ui_confirm")
+	_save(Time.get_unix_time_from_system())
+	_refresh_all()
 
 
 func _on_talk_start(girl: String, tier: int) -> void:

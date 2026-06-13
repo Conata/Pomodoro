@@ -79,6 +79,7 @@ static func new_state(seed_value: int) -> Dictionary:
 		"ship": {"stock": [], "rotated": 0.0},
 		"stats": {"days": 0, "focus_min": 0.0, "dives": 0},
 		"events_seen": [],
+		"debug_x10": false,
 		"last_seen": 0.0,
 	}
 
@@ -230,8 +231,13 @@ func gold_mult() -> float:
 
 
 func mat_chance() -> float:
-	return 0.10 + (0.08 if "nono" in state["buffs"] else 0.0) \
+	return KuroData.MAT_DROP_CHANCE + (0.08 if "nono" in state["buffs"] else 0.0) \
 			+ renov_bonus("mat") + pet_bonus("mat") + _affix_party("mat") * 0.01
+
+
+## デバッグ獲得倍率（gold/素材/欠片/売上に乗る）。state["debug_x10"] で切替。
+func gain_mult() -> float:
+	return KuroData.DEBUG_GAIN if state.get("debug_x10", false) else 1.0
 
 
 func discover_chance() -> float:
@@ -609,14 +615,15 @@ func _on_mob_killed(m: Dictionary) -> void:
 	var sc := KuroData.depth_scale(current_floor())
 	var run: Dictionary = state["run"]
 	run["kills"] = int(run["kills"]) + 1
-	var g := int(3.0 * sc * gold_mult() * (10.0 if m["boss"] else (3.0 if m["elite"] else 1.0)))
+	var g := int(KuroData.GOLD_PER_KILL * sc * gold_mult() * gain_mult() \
+			* (10.0 if m["boss"] else (3.0 if m["elite"] else 1.0)))
 	state["gold"] = int(state["gold"]) + g
 	if rng.chance(mat_chance()):
 		var ing := String(KuroData.BIOMES[current_floor() % KuroData.BIOMES.size()]["ing"])
-		run["mats"][ing] = int(run["mats"][ing]) + 1
+		run["mats"][ing] = int(run["mats"][ing]) + maxi(1, int(gain_mult()))
 	if rng.chance(discover_chance()) or m["boss"]:
 		_acquire_item(SimItems.roll(rng, current_floor(), _next_id()))
-	if m["elite"]:
+	if m["elite"] and rng.chance(KuroData.ELITE_BOX_CHANCE):
 		var grade := rng.randi(2)  # 木〜鉄
 		run["boxes"].append(grade)
 		_emit("loot", "肥大した断片が%sを落とした" % KuroData.BOX_NAMES[grade])
@@ -795,7 +802,7 @@ func close_day() -> Dictionary:
 		if taste == forecast:
 			matched += 1
 		var price := KuroData.recipe_price(dish, star) * price_mult * (1.2 if is_match else 1.0)
-		night_gold += int(price * gold_mult())
+		night_gold += int(price * gold_mult() * KuroData.NIGHT_GOLD_SCALE * gain_mult())
 		counts[dish] = int(counts.get(dish, 0)) + 1
 		sold_tastes[taste] = true
 	state["gold"] = int(state["gold"]) + night_gold
@@ -905,7 +912,7 @@ func open_box() -> Dictionary:
 		state["sign"] = int(state["sign"]) + 1
 		return {"kind": "equip", "grade": grade, "text": "設備が増えた。看板+1（客数が増える）"}
 	elif r < KuroData.DROP_RECIPE + KuroData.DROP_EQUIP + KuroData.DROP_SHARD:
-		var amt := 2 + grade  # 育成通貨。箱が良いほど多い
+		var amt := int((KuroData.SHARD_PER_BOX + grade) * gain_mult())  # 育成通貨。箱が良いほど多い
 		state["shards"] = int(state["shards"]) + amt
 		return {"kind": "shard", "grade": grade,
 			"text": "記憶の欠片 +%d（育成に使える）" % amt}
@@ -1157,8 +1164,8 @@ func apply_offline(now: float) -> Dictionary:
 	if away < 120.0:
 		return {}
 	var sc := KuroData.depth_scale(int(state["best_floor"]))
-	var g := int(away * 0.4 * sc * gold_mult())
-	var per := int(away / 1500.0)
+	var g := int(away * 0.4 * sc * gold_mult() * KuroData.NIGHT_GOLD_SCALE * gain_mult())
+	var per := int(away / 1500.0 * gain_mult())
 	state["gold"] = int(state["gold"]) + g
 	for ing in KuroData.INGS:
 		state["stock"][ing] = int(state["stock"][ing]) + per
