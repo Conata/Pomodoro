@@ -850,16 +850,20 @@ func _build_audio() -> void:
 		p.volume_db = -8.0
 		add_child(p)
 		sfx_pool.append(p)
-	# ElevenLabs生成（bgm_el/*.mp3）があれば優先、無ければ現行（CC0/手続き）
-	bgm = _make_loop(_audio_pick("bgm_el/store.mp3", "res://assets/third_party/music/sketchbook_loop.ogg"), -16.0)
-	bgm_dive = _make_loop(_audio_pick("bgm_el/dive.mp3", "res://assets/generated/bgm/dive_drone.wav"), -60.0)
-	bgm_battle = _make_loop(_audio_pick("bgm_el/battle.mp3", "res://assets/generated/bgm/battle_layer.wav"), -60.0)
+	# ElevenLabs(mp3) > 手続き生成(wav) > 現行（CC0/手続き）の順で優先
+	bgm = _make_loop(_audio_pick("bgm_el/store", "res://assets/third_party/music/sketchbook_loop.ogg"), -16.0)
+	bgm_dive = _make_loop(_audio_pick("bgm_el/dive", "res://assets/generated/bgm/dive_drone.wav"), -60.0)
+	bgm_battle = _make_loop(_audio_pick("bgm_el/battle", "res://assets/generated/bgm/battle_layer.wav"), -60.0)
 
 
-## 生成BGMがあればそのパス、無ければフォールバックを返す。
-func _audio_pick(gen_rel: String, fallback: String) -> String:
-	var el := "res://assets/generated/" + gen_rel
-	return el if ResourceLoader.exists(el) else fallback
+## 生成BGMがあればそのパス（mp3優先・無ければwav）、無ければフォールバックを返す。
+func _audio_pick(gen_base: String, fallback: String) -> String:
+	var base := "res://assets/generated/" + gen_base
+	if ResourceLoader.exists(base + ".mp3"):
+		return base + ".mp3"
+	if ResourceLoader.exists(base + ".wav"):
+		return base + ".wav"
+	return fallback
 
 
 ## ループ再生する AudioStreamPlayer を作る（OGG/WAV 両対応）。
@@ -1534,9 +1538,13 @@ func _save(now: float) -> void:
 
 func _sfx(sfx_name: String) -> void:
 	if not sfx_cache.has(sfx_name):
-		# ElevenLabs生成（mp3）があれば優先、無ければ現行のwav
-		var el := "res://assets/generated/sfx/%s.mp3" % sfx_name
-		var path := el if ResourceLoader.exists(el) else "res://assets/third_party/sfx/%s.wav" % sfx_name
+		# ElevenLabs(mp3) > 手続き生成(wav) > 現行(wav) の順で優先
+		var gen := "res://assets/generated/sfx/" + sfx_name
+		var path := "res://assets/third_party/sfx/%s.wav" % sfx_name
+		if ResourceLoader.exists(gen + ".mp3"):
+			path = gen + ".mp3"
+		elif ResourceLoader.exists(gen + ".wav"):
+			path = gen + ".wav"
 		sfx_cache[sfx_name] = load(path) if ResourceLoader.exists(path) else null
 	var stream: AudioStream = sfx_cache[sfx_name]
 	if stream == null:
