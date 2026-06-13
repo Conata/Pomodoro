@@ -76,7 +76,9 @@ var status_overlay: Control
 var status_portrait: PortraitRect
 var status_name: Label
 var status_body: VBoxContainer
-var bgm: AudioStreamPlayer
+var bgm: AudioStreamPlayer       # 店テーマ（Abstraction CC0）
+var bgm_dive: AudioStreamPlayer  # 潜行ドローン（手続き生成）
+var bgm_battle: AudioStreamPlayer  # 戦闘レイヤー（手続き生成）
 var sfx_pool: Array[AudioStreamPlayer] = []
 var sfx_next := 0
 var sfx_cache := {}
@@ -106,6 +108,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	var now := Time.get_unix_time_from_system()
+	_update_bgm(delta)
 	if phase == Phase.DIVE:
 		_catch_up(now)
 		save_accum += delta
@@ -725,15 +728,45 @@ func _build_audio() -> void:
 		p.volume_db = -8.0
 		add_child(p)
 		sfx_pool.append(p)
-	var music_path := "res://assets/third_party/music/sketchbook_loop.ogg"
-	if ResourceLoader.exists(music_path):
-		bgm = AudioStreamPlayer.new()
-		var stream: AudioStream = load(music_path)
-		if stream is AudioStreamOggVorbis:
-			stream.loop = true
-		bgm.stream = stream
-		bgm.volume_db = -18.0
-		add_child(bgm)
+	bgm = _make_loop("res://assets/third_party/music/sketchbook_loop.ogg", -16.0)
+	bgm_dive = _make_loop("res://assets/generated/bgm/dive_drone.wav", -60.0)
+	bgm_battle = _make_loop("res://assets/generated/bgm/battle_layer.wav", -60.0)
+
+
+## ループ再生する AudioStreamPlayer を作る（OGG/WAV 両対応）。
+func _make_loop(path: String, vol_db: float) -> AudioStreamPlayer:
+	if not ResourceLoader.exists(path):
+		return null
+	var p := AudioStreamPlayer.new()
+	var stream: AudioStream = load(path)
+	if stream is AudioStreamOggVorbis:
+		stream.loop = true
+	elif stream is AudioStreamWAV:
+		stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		stream.loop_begin = 0
+		stream.loop_end = int(stream.get_length() * stream.mix_rate)
+	p.stream = stream
+	p.volume_db = vol_db
+	add_child(p)
+	return p
+
+
+## フェーズ・戦況でBGMをクロスフェード（店⇄潜行＋戦闘レイヤー）。
+func _update_bgm(delta: float) -> void:
+	var diving := phase == Phase.DIVE
+	var in_combat: bool = diving and sim.state["in_combat"]
+	_fade(bgm, -16.0 if not diving else -42.0, delta)
+	_fade(bgm_dive, -10.0 if diving else -60.0, delta)
+	_fade(bgm_battle, -10.0 if in_combat else -60.0, delta)
+
+
+func _fade(p: AudioStreamPlayer, target_db: float, delta: float) -> void:
+	if p == null:
+		return
+	# 鳴っていなければ開始（ユーザー操作後＝Webの自動再生制限を回避）
+	if not p.playing and bgm != null and bgm.playing and target_db > -55.0:
+		p.play()
+	p.volume_db = move_toward(p.volume_db, target_db, 30.0 * delta)
 
 
 func _label(text: String, font_size: int, color := COL_TEXT) -> Label:

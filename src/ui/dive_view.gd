@@ -81,14 +81,14 @@ func _anim_tex(prefix: String, mode: String) -> Texture2D:
 ## 待機中の店先バナー。薄い高さ（~96px）でも成立するモダンなネオン演出：
 ## 深い藍のグラデ＋雨＋ネオンの暖色サイン「黒猫飯店」＋脈動する OPEN ＋黒猫。
 func _draw_storefront(sz: Vector2, font: Font) -> void:
-	# 背景グラデ（上＝藍、下＝路面の照り返し）
-	draw_rect(Rect2(Vector2.ZERO, sz), Color(0.04, 0.07, 0.18))
-	# 遠景の摩天楼（ゆっくり流れる）
-	_draw_parallax("bg/city_far.png", pulse * 6.0, sz.y * 0.04, Color(0.55, 0.78, 1.05, 0.7))
-	draw_rect(Rect2(0, sz.y * 0.55, sz.x, sz.y * 0.45), Color(0.06, 0.11, 0.26, 0.78))
-	# 路面の反射ライン
-	draw_line(Vector2(0, sz.y - 3), Vector2(sz.x, sz.y - 3), Color(0.5, 0.8, 1.0, 0.18), 2.0)
-	_draw_lightshaft(sz)
+	# 店内（暖色）を背景に。窓の外は冷たいネオン都市＝寒暖の対比
+	var interior := _tex("res://assets/generated/bg/interior.png")
+	if interior != null:
+		draw_texture_rect(interior, Rect2(0, 0, sz.x, sz.y), false)
+	else:
+		draw_rect(Rect2(Vector2.ZERO, sz), Color(0.13, 0.08, 0.06))
+	# 文字の可読性のため下を少し沈める
+	draw_rect(Rect2(0, sz.y * 0.5, sz.x, sz.y * 0.5), Color(0.05, 0.03, 0.02, 0.45))
 	_draw_rain(sz)
 	# 提灯（暖色の脈動する円）
 	var lantern_glow := 0.35 + 0.12 * sin(pulse * 2.0)
@@ -167,6 +167,27 @@ func _draw_parallax(path: String, scroll: float, top_y: float, tint: Color) -> v
 	var off := fposmod(scroll, tw)
 	for k in range(-1, ceili(size.x / tw) + 2):
 		draw_texture_rect(tex, Rect2(k * tw - off, top_y, tw, th), false, tint)
+
+
+## ボス戦の専用演出：画面端の赤いふち＋上部の大きなボスHPバー。
+func _draw_boss_stage(sz: Vector2, font: Font, boss: Dictionary) -> void:
+	var pulse_a := 0.18 + 0.10 * sin(pulse * 4.0)
+	# 赤いふち（4辺）
+	var edge := 6.0
+	var ec := Color(1.0, 0.3, 0.35, pulse_a)
+	draw_rect(Rect2(0, 0, sz.x, edge), ec)
+	draw_rect(Rect2(0, sz.y - edge, sz.x, edge), ec)
+	draw_rect(Rect2(0, 0, edge, sz.y), ec)
+	draw_rect(Rect2(sz.x - edge, 0, edge, sz.y), ec)
+	# ボスHPバー（上部・全幅）
+	var by := 52.0
+	var bw := sz.x - 28.0
+	var ratio := clampf(float(boss["hp"]) / float(boss["max_hp"]), 0.0, 1.0)
+	draw_rect(Rect2(14, by, bw, 12), Color(0.1, 0.02, 0.04, 0.85))
+	draw_rect(Rect2(14, by, bw * ratio, 12), Color(0.95, 0.3, 0.32))
+	draw_rect(Rect2(14, by, bw, 12), Color(1.0, 0.5, 0.5, 0.4), false, 1.0)
+	draw_string(font, Vector2(16, by - 4), "◆ %s" % String(boss["name"]),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1.0, 0.6, 0.62))
 
 
 ## ネオンの光芒（上から差すシアンの光）。
@@ -248,11 +269,15 @@ func _draw() -> void:
 		if door_tex != null:
 			_draw_sprite(door_tex, Vector2(sz.x * 0.5, ground), false, Color(0.8, 0.9, 1.3))
 
+	# 戦闘中の突進モーション（味方は右へ、敵は左へ、交互に踏み込む）
+	var lunge_party := (7.0 * maxf(0.0, sin(pulse * 5.0))) if in_combat else 0.0
+	var lunge_enemy := (7.0 * maxf(0.0, sin(pulse * 5.0 + PI))) if in_combat else 0.0
+
 	# 潜行メンバー（左）
 	var ds: Array = sim.divers()
 	for i in ds.size():
 		var id: String = ds[i]
-		var x := 56.0 + i * 60.0
+		var x := 56.0 + i * 60.0 + lunge_party
 		var alive := float(sim.state["hp"].get(id, 0.0)) > 0.0
 		var tex := _anim_tex(String(KuroData.GIRLS[id]["sprite"]), mode if alive else "idle")
 		if tex != null:
@@ -264,17 +289,26 @@ func _draw() -> void:
 			draw_circle(Vector2(x, ground - 14), 12.0, KuroData.GIRLS[id]["color"])
 
 	# 敵（右・左向き）
+	var boss_mob := {}
 	for i in sim.state["mobs"].size():
 		var m: Dictionary = sim.state["mobs"][i]
-		var x: float = sz.x - 90.0 - i * 58.0
+		var x: float = sz.x - 90.0 - i * 58.0 - lunge_enemy
 		var tex2 := _anim_tex(String(m.get("sprite", "")), "idle")
 		var ratio := clampf(float(m["hp"]) / float(m["max_hp"]), 0.0, 1.0)
 		var tint: Color = Color(1.0, 0.55, 0.6) if m["boss"] else (Color(0.9, 0.75, 1.1) if m["elite"] else TINT)
+		if m["boss"]:
+			boss_mob = m
+			# ボスは一回り大きく、脈動するオーラ
+			draw_circle(Vector2(x, ground - 30), 40.0 + 4.0 * sin(pulse * 3.0), Color(1.0, 0.3, 0.35, 0.16))
 		if tex2 != null:
 			_draw_sprite(tex2, Vector2(x, ground), true, tint)
 			_draw_hp(x, ground - tex2.get_size().y * SCALE - 10.0, ratio, 44.0 if m["boss"] else 32.0)
 		else:
 			draw_circle(Vector2(x, ground - 14), 16.0 if m["boss"] else 10.0, tint)
+
+	# ボス演出：上部の専用HPバー＋ラベル＋赤いふち
+	if not boss_mob.is_empty():
+		_draw_boss_stage(sz, font, boss_mob)
 
 	_draw_fx(ground)
 	_draw_rain(sz)
