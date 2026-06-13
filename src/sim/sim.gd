@@ -499,6 +499,7 @@ func _cast_skill(id: String, sid: String) -> bool:
 			if low == "":
 				return false
 			state["hp"][low] = minf(girl_maxhp(low), float(state["hp"][low]) + girl_maxhp(low) * float(def["power"]))
+			_emit("fx", "", {"fx": "heal"})
 			return true
 		"heal_all":
 			var any := false
@@ -508,7 +509,7 @@ func _cast_skill(id: String, sid: String) -> bool:
 					state["hp"][gid] = minf(mx, float(state["hp"][gid]) + mx * float(def["power"]))
 					any = true
 			if any:
-				_emit("fx", "", {"fx": "song"})
+				_emit("fx", "", {"fx": "heal"})
 			return any
 		"shield_all":
 			# シールドは「次の被弾を軽減」扱い：全員を回復で代替し、盾を厚く

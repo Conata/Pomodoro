@@ -192,7 +192,10 @@ func _pump_events() -> void:
 				_log(e["msg"])
 				_banter("levelup")
 			"fx":
-				dive.spawn_fx(String(e.get("fx", "")), "enemy")
+				var fxn := String(e.get("fx", ""))
+				# 回復・煙は味方側、攻撃系は敵側に出す
+				var at := "party" if fxn in ["heal", "song", "smoke"] else "enemy"
+				dive.spawn_fx(fxn, at)
 			_:
 				_log(e["msg"])
 

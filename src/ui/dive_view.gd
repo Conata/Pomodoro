@@ -13,10 +13,11 @@ const TINT := Color(0.62, 0.78, 1.15)  # 青に沈める
 const RAIN_N := 46
 
 const FX_DEFS := {
-	"explosion": {"file": "explosion2.png", "size": 50, "frames": 18, "fps": 24.0},
-	"lightning": {"file": "lightning_strike.png", "size": 66, "frames": 13, "fps": 22.0},
-	"smoke": {"file": "smoke.png", "size": 64, "frames": 13, "fps": 14.0},
-	"song": {"file": "lightning_strike.png", "size": 66, "frames": 13, "fps": 26.0},
+	"explosion": {"file": "res://assets/third_party/effects/explosion2.png", "size": 50, "frames": 18, "fps": 24.0},
+	"lightning": {"file": "res://assets/third_party/effects/lightning_strike.png", "size": 66, "frames": 13, "fps": 22.0},
+	"smoke": {"file": "res://assets/third_party/effects/smoke.png", "size": 64, "frames": 13, "fps": 14.0},
+	"song": {"file": "res://assets/third_party/effects/lightning_strike.png", "size": 66, "frames": 13, "fps": 26.0},
+	"heal": {"file": "res://assets/generated/fx/heal.png", "size": 48, "frames": 10, "fps": 18.0},
 }
 
 var sim: KuroSim = null
@@ -82,15 +83,12 @@ func _anim_tex(prefix: String, mode: String) -> Texture2D:
 func _draw_storefront(sz: Vector2, font: Font) -> void:
 	# 背景グラデ（上＝藍、下＝路面の照り返し）
 	draw_rect(Rect2(Vector2.ZERO, sz), Color(0.04, 0.07, 0.18))
-	draw_rect(Rect2(0, sz.y * 0.55, sz.x, sz.y * 0.45), Color(0.06, 0.11, 0.26, 0.7))
+	# 遠景の摩天楼（ゆっくり流れる）
+	_draw_parallax("bg/city_far.png", pulse * 6.0, sz.y * 0.04, Color(0.55, 0.78, 1.05, 0.7))
+	draw_rect(Rect2(0, sz.y * 0.55, sz.x, sz.y * 0.45), Color(0.06, 0.11, 0.26, 0.78))
 	# 路面の反射ライン
 	draw_line(Vector2(0, sz.y - 3), Vector2(sz.x, sz.y - 3), Color(0.5, 0.8, 1.0, 0.18), 2.0)
-	# 遠景：窓明かりのドット（ピクセルらしい矩形）
-	for i in 22:
-		var wx := fposmod(i * 47.0, sz.x)
-		var wy := 8.0 + fposmod(i * 29.0, sz.y * 0.42)
-		var tw := 0.18 + 0.18 * sin(pulse * 1.3 + i)
-		draw_rect(Rect2(wx, wy, 4, 4), Color(1.0, 0.82, 0.5, tw))
+	_draw_lightshaft(sz)
 	_draw_rain(sz)
 	# 提灯（暖色の脈動する円）
 	var lantern_glow := 0.35 + 0.12 * sin(pulse * 2.0)
@@ -159,6 +157,28 @@ func _draw_sprite(tex: Texture2D, foot: Vector2, flip: bool = false, tint: Color
 	draw_texture_rect(tex, rect, false, tint)
 
 
+## 視差スクロールの背景レイヤー（横タイル）。
+func _draw_parallax(path: String, scroll: float, top_y: float, tint: Color) -> void:
+	var tex := _tex("res://assets/generated/" + path)
+	if tex == null:
+		return
+	var tw := tex.get_size().x
+	var th := tex.get_size().y
+	var off := fposmod(scroll, tw)
+	for k in range(-1, ceili(size.x / tw) + 2):
+		draw_texture_rect(tex, Rect2(k * tw - off, top_y, tw, th), false, tint)
+
+
+## ネオンの光芒（上から差すシアンの光）。
+func _draw_lightshaft(sz: Vector2) -> void:
+	var tex := _tex("res://assets/third_party/overlays/raylight.png")
+	if tex == null:
+		return
+	var a := 0.10 + 0.05 * sin(pulse * 0.8)
+	draw_texture_rect(tex, Rect2(sz.x * 0.45, -20, 320, 460), false, Color(0.45, 0.85, 1.0, a))
+	draw_texture_rect(tex, Rect2(-40, -10, 240, 380), false, Color(0.5, 0.8, 1.0, a * 0.7))
+
+
 func _draw_hp(center_x: float, top_y: float, ratio: float, width: float = 34.0) -> void:
 	draw_rect(Rect2(center_x - width * 0.5, top_y, width, 4), Color(0, 0, 0, 0.55))
 	var r := clampf(ratio, 0.0, 1.0)
@@ -169,7 +189,7 @@ func _draw_hp(center_x: float, top_y: float, ratio: float, width: float = 34.0) 
 func _draw_fx(ground: float) -> void:
 	for fx in _fx_active:
 		var def: Dictionary = FX_DEFS[fx["kind"]]
-		var tex := _tex(FX_DIR + String(def["file"]))
+		var tex := _tex(String(def["file"]))
 		if tex == null:
 			continue
 		var frame := clampi(int(float(fx["t"]) * float(def["fps"])), 0, int(def["frames"]) - 1)
@@ -197,9 +217,14 @@ func _draw() -> void:
 	var bg: Color = biome["color"]
 	# 背景：深い青の縦グラデーション
 	draw_rect(Rect2(Vector2.ZERO, sz), Color(bg.r * 0.4, bg.g * 0.4, bg.b * 0.55))
-	draw_rect(Rect2(0, sz.y * 0.6, sz.x, sz.y * 0.4), Color(0.02, 0.04, 0.10, 0.55))
-
+	# 電脳深層の摩天楼（視差スクロール）。バイオーム色で淡く染める
 	var dist := float(sim.state["dist"])
+	var city_tint := Color(bg.r * 1.6 + 0.4, bg.g * 1.6 + 0.5, bg.b * 1.6 + 0.6, 0.9)
+	_draw_parallax("bg/city_far.png", dist * 0.10, sz.y * 0.40, city_tint)
+	_draw_parallax("bg/city_mid.png", dist * 0.22, sz.y * 0.46, Color(city_tint.r, city_tint.g, city_tint.b, 1.0))
+	draw_rect(Rect2(0, sz.y * 0.6, sz.x, sz.y * 0.4), Color(0.02, 0.04, 0.10, 0.4))
+	_draw_lightshaft(sz)
+
 	var progress := fmod(dist, KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN
 	draw_rect(Rect2(0, 0, sz.x, 5), Color(0, 0, 0, 0.5))
 	draw_rect(Rect2(0, 0, sz.x * progress, 5), DS.ACCENT)

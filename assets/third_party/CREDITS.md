@@ -12,6 +12,7 @@
 | `effects/explosion2.png` Fire Spell Effect 02 | pimen | 無料（商用可・クレジット任意） | 範囲スキル/ゲート突破エフェクト | https://pimen.itch.io/fire-spell-effect-02 |
 | `effects/lightning_strike.png` Thunder Spell Effect | pimen | 無料（商用可・クレジット任意） | 連鎖雷/レベルアップエフェクト | https://pimen.itch.io/thunder-spell-effect-02 |
 | `effects/smoke.png` Smoke VFX 1 | pimen | 無料（商用可・クレジット任意） | 全滅/撤退エフェクト | https://pimen.itch.io/smoke-vfx-1 |
+| `overlays/raylight.png` `overlays/fog.png` | Pixel-Boy / AAA（Ninja Adventure Asset Pack） | CC0 1.0 | 光芒・霧のアトモスフィア | https://github.com/pixel-boy/NinjaAdventure |
 | `../fonts/DotGothic16-Regular.ttf` | Fontworks | SIL OFL 1.1（同梱 OFL.txt） | UIフォント（日本語） | https://fonts.google.com/specimen/DotGothic16 |
 
 ## 加工メモ
