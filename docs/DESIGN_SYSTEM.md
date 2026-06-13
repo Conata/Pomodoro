@@ -34,6 +34,8 @@ UIの色・型・間隔・コンポーネントの唯一の真実は **`src/ui/d
 - **ボタン**：既定＝ゴースト（縁のみ）／ `DS.as_primary()`＝アクセント塗りCTA（潜る・翌朝へ・閉店作業へ）／ `DS.as_danger()`＝撤退。
 - **見出し** `_section(title)` — フラッシュレフトの小見出し＋直下2px罫（Vignelli の Grandi Stazioni サイン）。中央寄せの「― 〜 ―」は使わない。
 - **資源バッジ** `_badge(icon, value)` — ヘッダーの資源バー。
+- **リスト行** `_list_row(title, action, cb, enabled, icon, color)` — 1行1アクションの薄カード（闇市・交易船）。先頭アイコン＋伸長見出し＋末尾ゴーストボタン。
+- **適用範囲**：UIの色はメイン画面だけでなく DiveView / TalkView / RenovView も DS から引く（HP低下=DANGER、罫・吹き出し=ACCENT 等）。
 - **アイコン** `assets/generated/`（料理/箱/素材、`tools/gen_assets.py` で再生成）。
 
 ## 規律（self-critique）

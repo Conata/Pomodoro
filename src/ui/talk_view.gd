@@ -32,19 +32,16 @@ func _ready() -> void:
 func _mk_choice() -> Button:
 	var b := Button.new()
 	b.visible = false
-	b.add_theme_font_size_override("font_size", 24)
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.04, 0.10, 0.30, 0.85)
-	sb.border_color = Color(0.92, 0.97, 1.0)
-	sb.set_border_width_all(2)
-	sb.set_content_margin_all(12)
-	sb.skew = Vector2(-0.12, 0.0)
+	b.add_theme_font_size_override("font_size", DS.T_SUB)
+	var sb := DS._sb(Color(DS.SURFACE_2.r, DS.SURFACE_2.g, DS.SURFACE_2.b, 0.9), DS.ACCENT, DS.R_SM, DS.SP_3, 2)
+	sb.skew = Vector2(-0.12, 0.0)  # Rain98 の斜めバンド
 	b.add_theme_stylebox_override("normal", sb)
 	var sb2 := sb.duplicate()
-	sb2.bg_color = Color(0.10, 0.22, 0.5, 0.9)
+	sb2.bg_color = DS.ACCENT
 	b.add_theme_stylebox_override("hover", sb2)
 	b.add_theme_stylebox_override("pressed", sb2)
-	b.add_theme_color_override("font_color", Color(0.95, 0.98, 1.0))
+	b.add_theme_color_override("font_color", DS.TEXT)
+	b.add_theme_color_override("font_hover_color", Color(0.02, 0.06, 0.12))
 	add_child(b)
 	return b
 
@@ -136,8 +133,8 @@ func _draw() -> void:
 	draw_string(font, Vector2(46, sz.y * 0.62 + 38), "%s — %s" % [g["name"], scene_data.get("title", "")],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color(0.03, 0.06, 0.15))
 	# 台詞バンド
-	_band(sz.y * 0.62 + 64.0, 150.0, Color(0.02, 0.05, 0.14, 0.92))
-	draw_rect(Rect2(0, sz.y * 0.62 + 64.0, sz.x, 2), Color(0.5, 0.85, 1.0, 0.7))
+	_band(sz.y * 0.62 + 64.0, 150.0, Color(DS.BG.r, DS.BG.g, DS.BG.b, 0.95))
+	draw_rect(Rect2(0, sz.y * 0.62 + 64.0, sz.x, 2), Color(DS.ACCENT.r, DS.ACCENT.g, DS.ACCENT.b, 0.7))
 	if not queue.is_empty():
 		var line: Array = queue[0]
 		var who := String(line[0])

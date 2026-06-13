@@ -132,7 +132,7 @@ func _draw_bubble(font: Font, anchor: Vector2, who: String, text: String) -> voi
 	var bg := Color(0.92, 0.96, 1.0, 0.95 * fade)
 	var rect := Rect2(bx, by, bw, bh)
 	draw_rect(rect, bg)
-	draw_rect(Rect2(bx, by, bw, 2), Color(0.4, 0.8, 1.0, fade))  # 上辺アクセント
+	draw_rect(Rect2(bx, by, bw, 2), Color(DS.ACCENT.r, DS.ACCENT.g, DS.ACCENT.b, fade))  # 上辺アクセント
 	# しっぽ
 	var tip := clampf(anchor.x, bx + 8, bx + bw - 8)
 	draw_colored_polygon(PackedVector2Array([
@@ -161,7 +161,9 @@ func _draw_sprite(tex: Texture2D, foot: Vector2, flip: bool = false, tint: Color
 
 func _draw_hp(center_x: float, top_y: float, ratio: float, width: float = 34.0) -> void:
 	draw_rect(Rect2(center_x - width * 0.5, top_y, width, 4), Color(0, 0, 0, 0.55))
-	draw_rect(Rect2(center_x - width * 0.5, top_y, width * clampf(ratio, 0.0, 1.0), 4), Color(0.5, 0.9, 1.0))
+	var r := clampf(ratio, 0.0, 1.0)
+	var c: Color = DS.ACCENT if r > 0.3 else DS.DANGER  # 低HPは危険色
+	draw_rect(Rect2(center_x - width * 0.5, top_y, width * r, 4), c)
 
 
 func _draw_fx(ground: float) -> void:
@@ -200,16 +202,16 @@ func _draw() -> void:
 	var dist := float(sim.state["dist"])
 	var progress := fmod(dist, KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN
 	draw_rect(Rect2(0, 0, sz.x, 5), Color(0, 0, 0, 0.5))
-	draw_rect(Rect2(0, 0, sz.x * progress, 5), Color(0.45, 0.85, 1.0))
+	draw_rect(Rect2(0, 0, sz.x * progress, 5), DS.ACCENT)
 
 	var head := "B%dF %s  %dm" % [fl + 1, biome["name"], int(dist)]
-	draw_string(font, Vector2(14, 36), head, HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color(0.8, 0.92, 1.0))
+	draw_string(font, Vector2(14, 36), head, HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_SUB, DS.TEXT)
 	if int(run.get("banked", 0)) > 0:
 		draw_string(font, Vector2(sz.x - 190, 36), "送付済の箱 ×%d" % int(run["banked"]),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.55, 0.9, 1.0, 0.9))
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 18, DS.ACCENT)
 
 	var ground := sz.y * 0.80
-	draw_line(Vector2(0, ground), Vector2(sz.x, ground), Color(0.5, 0.8, 1.0, 0.18), 2.0)
+	draw_line(Vector2(0, ground), Vector2(sz.x, ground), DS.LINE, 2.0)
 
 	var in_combat: bool = sim.state["in_combat"]
 	var door_open := float(run["door_pending"]) > 0.0

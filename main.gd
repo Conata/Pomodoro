@@ -976,14 +976,13 @@ func _refresh_night() -> void:
 	night_box.add_child(_section("闇市"))
 	for i in KuroData.MARKET.size():
 		var item: Dictionary = KuroData.MARKET[i]
-		var row := HBoxContainer.new()
-		var lbl := _label(String(item["name"]), 20)
-		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(lbl)
-		var buy := _button("%dG" % int(item["price"]), _on_buy.bind(i), 20)
-		buy.disabled = int(s["gold"]) < int(item["price"])
-		row.add_child(buy)
-		night_box.add_child(row)
+		var icon: Texture2D = null
+		if String(item["id"]) == "mats":
+			icon = _ing_icon("meat")
+		elif String(item["id"]) == "recipe":
+			icon = _food_icon("chashu")
+		night_box.add_child(_list_row(String(item["name"]), "%dG" % int(item["price"]),
+				_on_buy.bind(i), int(s["gold"]) >= int(item["price"]), icon))
 	# 交易船（10分毎に在庫入替）
 	ship_label = _label(_ship_head(Time.get_unix_time_from_system()), TYPE_SMALL, COL_ACCENT)
 	ship_label.autowrap_mode = TextServer.AUTOWRAP_OFF
@@ -994,24 +993,21 @@ func _refresh_night() -> void:
 	night_box.add_child(ship_rule)
 	var stock: Array = s["ship"]["stock"]
 	if stock.is_empty():
-		night_box.add_child(_label("（船は出払っている。次の入荷を待とう）", 16, Color(1, 1, 1, 0.4)))
+		night_box.add_child(_label("（船は出払っている。次の入荷を待とう）", TYPE_SMALL, COL_DIM))
 	for i in stock.size():
 		var entry: Dictionary = stock[i]
-		var row2 := HBoxContainer.new()
 		var text := ""
+		var tcol := COL_TEXT
 		if entry["type"] == "pet":
 			var pet: Dictionary = KuroData.PETS[entry["pet"]]
 			text = "ペット：%s — %s" % [pet["name"], pet["desc"]]
+			tcol = COL_WARM
 		else:
 			var it: Dictionary = entry["item"]
 			text = "%s %s" % [SimItems.display_name(it), SimItems.affix_text(it)]
-		var lbl2 := _label(text, 18)
-		lbl2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row2.add_child(lbl2)
-		var buy2 := _button("%dG" % int(entry["price"]), _on_ship_buy.bind(i), 18)
-		buy2.disabled = int(s["gold"]) < int(entry["price"])
-		row2.add_child(buy2)
-		night_box.add_child(row2)
+			tcol = SimItems.GRADES[int(entry["item"]["grade"])]["color"]
+		night_box.add_child(_list_row(text, "%dG" % int(entry["price"]),
+				_on_ship_buy.bind(i), int(s["gold"]) >= int(entry["price"]), null, tcol))
 	if not s["pets"].is_empty():
 		var pet_names: Array[String] = []
 		for pid in s["pets"]:
@@ -1021,6 +1017,27 @@ func _refresh_night() -> void:
 	var next := _cta("☀ 翌朝へ", _on_next_morning, TYPE_SUB)
 	next.custom_minimum_size = Vector2(0, 56)
 	night_box.add_child(next)
+
+
+## リスト行コンポーネント：[アイコン] 見出し（伸長）[末尾アクション]。
+## 闇市・交易船など「1行1アクション」のリストに使う。面はSURFACEの薄カード。
+func _list_row(title: String, action_text: String, cb: Callable, enabled: bool,
+		icon: Texture2D = null, title_color := COL_TEXT) -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", DS._sb(DS.SURFACE, DS.LINE, DS.R_SM, DS.SP_2))
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", DS.SP_2)
+	if icon != null:
+		row.add_child(_icon_rect(icon, 30))
+	var lbl := _label(title, TYPE_BODY, title_color)
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(lbl)
+	var act := _button(action_text, cb, TYPE_BODY)
+	act.disabled = not enabled
+	act.custom_minimum_size = Vector2(78, 0)
+	row.add_child(act)
+	panel.add_child(row)
+	return panel
 
 
 func _ship_head(now: float) -> String:
