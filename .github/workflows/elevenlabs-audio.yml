@@ -1,0 +1,51 @@
+name: Generate ElevenLabs Audio
+
+# GitHub Actions ランナーは egress 制限が無いので、ここから ElevenLabs を叩く。
+# 使い方:
+#   1) リポジトリ Settings → Secrets and variables → Actions に
+#      ELEVENLABS_API_KEY を登録（値はAPIキー。リポジトリには残らない）
+#   2) Actions タブでこのワークフローを Run workflow（または Claude が起動）
+#   3) 生成された mp3 が main に push され、deploy.yml が走って Web に反映
+on:
+  workflow_dispatch:
+    inputs:
+      music:
+        description: "BGMも生成する（Music API必要）"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate audio via ElevenLabs
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+        run: |
+          if [ -z "$ELEVENLABS_API_KEY" ]; then
+            echo "::error::ELEVENLABS_API_KEY secret が未設定です。Settings→Secrets で登録してください。"
+            exit 1
+          fi
+          if [ "${{ inputs.music }}" = "true" ]; then
+            python3 tools/gen_audio_elevenlabs.py --music
+          else
+            python3 tools/gen_audio_elevenlabs.py
+          fi
+
+      - name: Commit generated audio
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add assets/generated/sfx/*.mp3 assets/generated/bgm_el/*.mp3 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "生成物に差分なし（APIが空応答の可能性）"
+          else
+            git commit -m "chore: ElevenLabs生成の音声を反映 (mp3)"
+            git push origin HEAD:main
+          fi
