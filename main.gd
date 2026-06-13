@@ -7,26 +7,23 @@ extends Control
 
 enum Phase { MORNING, DIVE, CLOSE, NIGHT }
 
-const COL_BG := Color(0.025, 0.05, 0.15)
-const COL_PANEL := Color(0.05, 0.10, 0.27, 0.92)
-const COL_EDGE := Color(0.45, 0.8, 1.0)
-const COL_TEXT := Color(0.92, 0.96, 1.0)
-const COL_DIM := Color(0.65, 0.8, 1.0, 0.7)
-const COL_ACCENT := Color(0.4, 0.85, 1.0)    # 識別色（シアン）= この店のアイデンティティ
-const COL_WARM := Color(1.0, 0.78, 0.45)     # 店番・ネオン看板の暖色アクセント
-
-# Vignelli 規律：型は自己表現でなく組織化。サイズは少なく、見出し≒2×本文。
-# 散らばっていた 14〜30 を5段に集約（白と階層差で語る）。
-const TYPE_SMALL := 15   # 注記・キャプション
-const TYPE_BODY := 19    # 本文（基準）
-const TYPE_SUB := 24     # 小見出し
-const TYPE_HEAD := 38    # 見出し（≒2×本文）
-const TYPE_DISPLAY := 54 # タイマー等の数字
-# 8pxベースの間隔スケール（happenstance を排す）
-const SP_1 := 4
-const SP_2 := 8
-const SP_3 := 12
-const SP_4 := 16
+# デザインシステム（src/ui/ds.gd）から引く。色・型・間隔の唯一の真実は DS。
+const COL_BG := DS.BG
+const COL_PANEL := DS.SURFACE
+const COL_EDGE := DS.ACCENT
+const COL_TEXT := DS.TEXT
+const COL_DIM := DS.TEXT_2
+const COL_ACCENT := DS.ACCENT       # 識別色（シアン）= この店のアイデンティティ
+const COL_WARM := DS.WARM           # 店番・ネオン看板の暖色アクセント
+const TYPE_SMALL := DS.T_MICRO
+const TYPE_BODY := DS.T_BODY
+const TYPE_SUB := DS.T_SUB
+const TYPE_HEAD := DS.T_HEAD
+const TYPE_DISPLAY := DS.T_DISPLAY
+const SP_1 := DS.SP_1
+const SP_2 := DS.SP_2
+const SP_3 := DS.SP_3
+const SP_4 := DS.SP_4
 
 var sim: KuroSim
 var phase: int = Phase.MORNING
@@ -38,7 +35,7 @@ var pending_confirm := Callable()
 var result_summary := {}
 var night_data := {}
 
-var header_label: Label
+var header_bar: HBoxContainer
 var dive: DiveView
 var dive_frame: PanelContainer
 var talk_view: TalkView
@@ -125,7 +122,7 @@ func _process(delta: float) -> void:
 	ui_accum += delta
 	if ui_accum >= 1.0:
 		ui_accum = 0.0
-		header_label.text = _header_text()
+		_refresh_header()
 		if phase == Phase.NIGHT:
 			var before := float(sim.state["ship"]["rotated"])
 			sim.maybe_rotate_ship(now)
@@ -364,7 +361,7 @@ func _mmss(sec: float) -> String:
 
 
 func _build_ui() -> void:
-	theme = _make_theme()
+	theme = DS.theme()
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST  # 生成アイコンをドットのまま拡大
 	var bgrect := ColorRect.new()
@@ -381,8 +378,12 @@ func _build_ui() -> void:
 	main_box.add_theme_constant_override("separation", 8)
 	root.add_child(main_box)
 
-	header_label = _label("", 19, Color(0.6, 0.9, 1.0))
-	main_box.add_child(header_label)
+	var header_panel := PanelContainer.new()
+	header_panel.add_theme_stylebox_override("panel", DS._sb(DS.SURFACE, DS.LINE, DS.R_MD, DS.SP_2))
+	header_bar = HBoxContainer.new()
+	header_bar.add_theme_constant_override("separation", DS.SP_4)
+	header_panel.add_child(header_bar)
+	main_box.add_child(header_panel)
 
 	# 店先バナー（待機中）／潜行画面（ダイブ中）。高さはフェーズで可変
 	dive = DiveView.new()
@@ -480,9 +481,10 @@ func _open_status(id: String) -> void:
 	var s := sim.state
 	var g: Dictionary = KuroData.GIRLS[id]
 	status_portrait.girl_id = id
-	status_name.text = "%s　%s" % [g["name"], g["role"]]
+	status_name.text = String(g["name"])
 	_clear(status_body)
-	status_body.add_child(_label("♥ 好感度 %d / 100" % sim.aff(id), 20, Color(1.0, 0.7, 0.85)))
+	status_body.add_child(_label(String(g["role"]), TYPE_BODY, COL_WARM))
+	status_body.add_child(_label("♥ 好感度 %d / 100" % sim.aff(id), TYPE_BODY, Color(1.0, 0.7, 0.85)))
 	status_body.add_child(_label("攻撃 %d　　最大HP %d" % [int(sim.girl_atk(id)), int(sim.girl_maxhp(id))], 20))
 	status_body.add_child(_label("好物 %s　　店番シナジー：%s（%s）" % [g["fav"], g["synergy"], g["synergy_desc"]], 16, COL_DIM))
 	status_body.add_child(_section("装備"))
@@ -516,78 +518,27 @@ func _close_status() -> void:
 	status_overlay.visible = false
 
 
-func _make_theme() -> Theme:
-	var th := Theme.new()
-	th.default_font_size = 24
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.06, 0.13, 0.34)
-	sb.border_color = Color(COL_EDGE.r, COL_EDGE.g, COL_EDGE.b, 0.55)
-	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(3)
-	sb.set_content_margin_all(10)
-	th.set_stylebox("normal", "Button", sb)
-	var sbh := sb.duplicate()
-	sbh.bg_color = Color(0.10, 0.22, 0.5)
-	sbh.border_color = COL_EDGE
-	th.set_stylebox("hover", "Button", sbh)
-	th.set_stylebox("pressed", "Button", sbh)
-	var sbd := sb.duplicate()
-	sbd.bg_color = Color(0.04, 0.07, 0.16)
-	sbd.border_color = Color(1, 1, 1, 0.12)
-	th.set_stylebox("disabled", "Button", sbd)
-	th.set_color("font_color", "Button", COL_TEXT)
-	th.set_color("font_hover_color", "Button", Color.WHITE)
-	th.set_color("font_pressed_color", "Button", Color.WHITE)
-	th.set_color("font_disabled_color", "Button", Color(1, 1, 1, 0.3))
-	var pb := StyleBoxFlat.new()
-	pb.bg_color = COL_PANEL
-	pb.border_color = Color(COL_EDGE.r, COL_EDGE.g, COL_EDGE.b, 0.35)
-	pb.set_border_width_all(1)
-	pb.set_corner_radius_all(6)
-	pb.set_content_margin_all(8)
-	th.set_stylebox("panel", "PanelContainer", pb)
-	# タブ：モダンなフラットバー
-	var tab_sel := StyleBoxFlat.new()
-	tab_sel.bg_color = Color(0.10, 0.20, 0.42)
-	tab_sel.set_corner_radius_all(6)
-	tab_sel.border_width_bottom = 2
-	tab_sel.border_color = COL_EDGE
-	tab_sel.set_content_margin_all(8)
-	var tab_un := tab_sel.duplicate()
-	tab_un.bg_color = Color(0.05, 0.09, 0.20)
-	tab_un.border_color = Color(0, 0, 0, 0)
-	th.set_stylebox("tab_selected", "TabContainer", tab_sel)
-	th.set_stylebox("tab_unselected", "TabContainer", tab_un)
-	th.set_stylebox("tab_hovered", "TabContainer", tab_sel)
-	var panel_bg := StyleBoxFlat.new()
-	panel_bg.bg_color = Color(0.03, 0.06, 0.16)
-	panel_bg.set_corner_radius_all(6)
-	th.set_stylebox("panel", "TabContainer", panel_bg)
-	th.set_color("font_selected_color", "TabContainer", Color.WHITE)
-	th.set_color("font_unselected_color", "TabContainer", COL_DIM)
-	var le := StyleBoxFlat.new()
-	le.bg_color = Color(0.04, 0.08, 0.2)
-	le.border_color = Color(COL_EDGE.r, COL_EDGE.g, COL_EDGE.b, 0.4)
-	le.set_border_width_all(1)
-	le.set_corner_radius_all(5)
-	le.set_content_margin_all(8)
-	th.set_stylebox("normal", "LineEdit", le)
-	th.set_color("font_color", "LineEdit", COL_TEXT)
-	return th
-
-
-## 店先バナーの枠（角丸＋ネオン縁）。
+## 店先バナーの枠（角丸＋ネオン縁、内側余白なし）。
 func _banner_style() -> StyleBoxFlat:
-	var b := StyleBoxFlat.new()
-	b.bg_color = Color(0.03, 0.06, 0.16)
-	b.border_color = Color(0.45, 0.8, 1.0, 0.45)
-	b.set_border_width_all(1)
-	b.set_corner_radius_all(8)
-	b.content_margin_left = 0
-	b.content_margin_right = 0
-	b.content_margin_top = 0
-	b.content_margin_bottom = 0
+	var b := DS._sb(DS.SURFACE, Color(DS.ACCENT.r, DS.ACCENT.g, DS.ACCENT.b, 0.45), DS.R_MD, 0)
 	return b
+
+
+## CTA（主要動線）ボタン：アクセント塗り。
+func _cta(text: String, cb: Callable, font_size := DS.T_SUB) -> Button:
+	return DS.as_primary(_button(text, cb, font_size))
+
+
+## 資源バッジ：アイコン＋数値（ヘッダーの資源バー用）。
+func _badge(tex: Texture2D, value: String, color := COL_TEXT) -> HBoxContainer:
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", DS.SP_1)
+	if tex != null:
+		hb.add_child(_icon_rect(tex, 22))
+	var l := _label(value, DS.T_BODY, color)
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	hb.add_child(l)
+	return hb
 
 
 func _build_morning(parent: Control) -> void:
@@ -638,8 +589,8 @@ func _build_morning(parent: Control) -> void:
 	task_edit.add_theme_font_size_override("font_size", 19)
 	morning_box.add_child(task_edit)
 
-	var depart := _button("☂ 潜る", _on_depart, 28)
-	depart.custom_minimum_size = Vector2(0, 54)
+	var depart := _cta("☂ 潜る", _on_depart, TYPE_SUB)
+	depart.custom_minimum_size = Vector2(0, 56)
 	morning_box.add_child(depart)
 	parent.add_child(morning_panel)
 
@@ -666,8 +617,7 @@ func _build_dive_panel(parent: Control) -> void:
 	log_label.add_theme_font_size_override("normal_font_size", 19)
 	log_label.add_theme_color_override("default_color", COL_TEXT)
 	dive_panel.add_child(log_label)
-	abandon_btn = _button("撤退（切断）…", _on_abandon_pressed, 20)
-	abandon_btn.modulate = Color(1, 0.7, 0.75)
+	abandon_btn = DS.as_danger(_button("撤退（切断）…", _on_abandon_pressed, TYPE_BODY))
 	dive_panel.add_child(abandon_btn)
 	# デバッグ早送り：アンカーを過去にずらすと次フレームのキャッチアップが
 	# その分を固定ステップで一気に消化する（決定論は崩れない）
@@ -755,7 +705,7 @@ func _build_close() -> void:
 	close_text = _label("", TYPE_BODY)
 	close_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_child(close_text)
-	var done := _button("閉店作業へ", _on_close_done, TYPE_SUB)
+	var done := _cta("閉店作業へ", _on_close_done, TYPE_SUB)
 	done.custom_minimum_size = Vector2(0, 54)
 	box.add_child(done)
 	card.add_child(box)
@@ -865,7 +815,7 @@ func _girl_icon(id: String) -> TextureRect:
 
 
 func _refresh_all() -> void:
-	header_label.text = _header_text()
+	_refresh_header()
 	if phase == Phase.MORNING:
 		_refresh_morning()
 	elif phase == Phase.NIGHT:
@@ -876,11 +826,20 @@ func _refresh_all() -> void:
 		renov_view.queue_redraw()
 
 
-func _header_text() -> String:
+## ヘッダーの資源バー（アイコン付きバッジ）。
+func _refresh_header() -> void:
 	var s := sim.state
-	return "Day%d  金%d 素材%d 屑%d 看板%d 箱%d 連%d" % [
-		int(s["day"]), int(s["gold"]), sim.stock_total(), int(s["scrap"]),
-		sim.sign_total(), s["boxes"].size(), int(s["streak"])]
+	_clear(header_bar)
+	header_bar.add_child(_badge(null, "Day %d" % int(s["day"]), COL_WARM))
+	header_bar.add_child(_badge(null, "金%d" % int(s["gold"]), Color(1.0, 0.86, 0.5)))
+	header_bar.add_child(_badge(_box_icon(2), "%d" % s["boxes"].size()))
+	if int(s["streak"]) > 0:
+		header_bar.add_child(_badge(null, "連%d" % int(s["streak"]), COL_ACCENT))
+	# 右寄せのスペーサー＋廃材
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header_bar.add_child(sp)
+	header_bar.add_child(_badge(null, "屑%d" % int(s["scrap"]), DS.SUCCESS))
 
 
 func _refresh_morning() -> void:
@@ -938,13 +897,7 @@ func _girl_card(id: String) -> PanelContainer:
 	var keeper: bool = s["morning"]["keeper"] == id
 	var panel := PanelContainer.new()
 	if keeper:
-		var ps := StyleBoxFlat.new()
-		ps.bg_color = Color(0.14, 0.11, 0.05, 0.92)
-		ps.border_color = Color(1.0, 0.8, 0.4, 0.6)
-		ps.set_border_width_all(1)
-		ps.set_corner_radius_all(6)
-		ps.set_content_margin_all(7)
-		panel.add_theme_stylebox_override("panel", ps)
+		panel.add_theme_stylebox_override("panel", DS.card_accent(COL_WARM))
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	# 立ち絵タップで詳細（ステータス）画面
@@ -1032,8 +985,13 @@ func _refresh_night() -> void:
 		row.add_child(buy)
 		night_box.add_child(row)
 	# 交易船（10分毎に在庫入替）
-	ship_label = _label(_ship_head(Time.get_unix_time_from_system()), 18, Color(0.55, 0.9, 1.0))
+	ship_label = _label(_ship_head(Time.get_unix_time_from_system()), TYPE_SMALL, COL_ACCENT)
+	ship_label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	night_box.add_child(ship_label)
+	var ship_rule := ColorRect.new()
+	ship_rule.color = DS.ACCENT_DIM
+	ship_rule.custom_minimum_size = Vector2(0, 2)
+	night_box.add_child(ship_rule)
 	var stock: Array = s["ship"]["stock"]
 	if stock.is_empty():
 		night_box.add_child(_label("（船は出払っている。次の入荷を待とう）", 16, Color(1, 1, 1, 0.4)))
@@ -1060,14 +1018,14 @@ func _refresh_night() -> void:
 			pet_names.append(KuroData.PETS[pid]["name"])
 		night_box.add_child(_label("店の住人: " + "、".join(pet_names), 16, COL_DIM))
 	night_box.add_child(_label("好感度：%s" % "  ".join(_aff_summary()), 16, COL_DIM))
-	var next := _button("☀ 翌朝へ", _on_next_morning, 26)
+	var next := _cta("☀ 翌朝へ", _on_next_morning, TYPE_SUB)
 	next.custom_minimum_size = Vector2(0, 56)
 	night_box.add_child(next)
 
 
 func _ship_head(now: float) -> String:
 	var rem := maxf(0.0, KuroData.SHIP_ROTATE_SEC - (now - float(sim.state["ship"]["rotated"])))
-	return "― 交易船（入替まで %s）―" % _mmss(rem)
+	return "交易船　入替まで %s" % _mmss(rem)
 
 
 func _refresh_inventory() -> void:
@@ -1260,21 +1218,21 @@ func _on_equip(item_id: int) -> void:
 func _on_salvage(item_id: int) -> void:
 	sim.salvage_item(item_id)
 	_refresh_inventory()
-	header_label.text = _header_text()
+	_refresh_header()
 
 
 func _on_reroll(item_id: int) -> void:
 	if sim.reroll_item(item_id):
 		_sfx("ui_equip")
 	_refresh_inventory()
-	header_label.text = _header_text()
+	_refresh_header()
 
 
 func _on_bulk_salvage() -> void:
 	var r := sim.bulk_salvage()
 	_sfx("ui_buy")
 	_refresh_inventory()
-	header_label.text = _header_text()
+	_refresh_header()
 	inv_box.add_child(_label("一括分解: %d品 → 廃材+%d" % [int(r["count"]), int(r["dust"])], 16, Color(0.7, 1.0, 0.85)))
 
 
