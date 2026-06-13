@@ -25,7 +25,9 @@ var night_data := {}
 
 var header_label: Label
 var dive: DiveView
+var dive_frame: PanelContainer
 var talk_view: TalkView
+var timer_box: VBoxContainer
 var timer_label: Label
 var status_label: Label
 var morning_panel: ScrollContainer
@@ -227,16 +229,25 @@ func _on_next_morning() -> void:
 
 
 func _apply_phase() -> void:
-	dive_panel.visible = phase == Phase.DIVE
+	var diving := phase == Phase.DIVE
+	dive_panel.visible = diving
 	close_panel.visible = phase == Phase.CLOSE
+	timer_box.visible = diving
+	# 潜行中はビューを大きく、待機中は薄い店先バナーに畳む（スマホ一画面のため）
+	if diving:
+		dive.custom_minimum_size = Vector2(0, 230)
+		dive_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	else:
+		dive.custom_minimum_size = Vector2(0, 92)
+		dive_frame.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	tabs.visible = phase == Phase.MORNING or phase == Phase.NIGHT
 	if tabs.visible:
+		# 準備(0)と閉店後(1)はフェーズ排他。該当タブを明示選択してから他方を隠す
+		tabs.set_tab_hidden(0, false)
+		tabs.set_tab_hidden(1, false)
+		tabs.current_tab = 0 if phase == Phase.MORNING else 1
 		tabs.set_tab_hidden(0, phase != Phase.MORNING)
 		tabs.set_tab_hidden(1, phase != Phase.NIGHT)
-		if phase == Phase.MORNING and tabs.current_tab == 1:
-			tabs.current_tab = 0
-		elif phase == Phase.NIGHT and tabs.current_tab == 0:
-			tabs.current_tab = 1
 	if phase != Phase.DIVE:
 		door_row.visible = false
 
@@ -292,25 +303,34 @@ func _build_ui() -> void:
 	main_box.add_theme_constant_override("separation", 8)
 	root.add_child(main_box)
 
-	header_label = _label("", 20, Color(0.6, 0.9, 1.0))
+	header_label = _label("", 19, Color(0.6, 0.9, 1.0))
 	main_box.add_child(header_label)
 
+	# 店先バナー（待機中）／潜行画面（ダイブ中）。高さはフェーズで可変
 	dive = DiveView.new()
 	dive.sim = sim
-	dive.custom_minimum_size = Vector2(0, 300)
-	main_box.add_child(dive)
+	dive.custom_minimum_size = Vector2(0, 92)
+	dive.clip_contents = true
+	dive_frame = PanelContainer.new()
+	dive_frame.add_theme_stylebox_override("panel", _banner_style())
+	dive_frame.add_child(dive)
+	dive_frame.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	main_box.add_child(dive_frame)
 
-	timer_label = _label("--:--", 56)
+	# タイマー帯（潜行中のみ表示）
+	timer_box = VBoxContainer.new()
+	timer_box.add_theme_constant_override("separation", 0)
+	timer_label = _label("--:--", 54)
 	timer_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	main_box.add_child(timer_label)
-	status_label = _label("", 20, COL_DIM)
+	timer_box.add_child(timer_label)
+	status_label = _label("", 19, COL_DIM)
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	main_box.add_child(status_label)
+	timer_box.add_child(status_label)
+	main_box.add_child(timer_box)
 
 	_build_dive_panel(main_box)
 	tabs = TabContainer.new()
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	tabs.custom_minimum_size = Vector2(0, 430)
 	main_box.add_child(tabs)
 	_build_morning(tabs)
 	_build_night(tabs)
@@ -360,10 +380,51 @@ func _make_theme() -> Theme:
 	pb.bg_color = COL_PANEL
 	pb.border_color = Color(COL_EDGE.r, COL_EDGE.g, COL_EDGE.b, 0.35)
 	pb.set_border_width_all(1)
-	pb.set_corner_radius_all(3)
-	pb.set_content_margin_all(10)
+	pb.set_corner_radius_all(6)
+	pb.set_content_margin_all(8)
 	th.set_stylebox("panel", "PanelContainer", pb)
+	# タブ：モダンなフラットバー
+	var tab_sel := StyleBoxFlat.new()
+	tab_sel.bg_color = Color(0.10, 0.20, 0.42)
+	tab_sel.set_corner_radius_all(6)
+	tab_sel.border_width_bottom = 2
+	tab_sel.border_color = COL_EDGE
+	tab_sel.set_content_margin_all(8)
+	var tab_un := tab_sel.duplicate()
+	tab_un.bg_color = Color(0.05, 0.09, 0.20)
+	tab_un.border_color = Color(0, 0, 0, 0)
+	th.set_stylebox("tab_selected", "TabContainer", tab_sel)
+	th.set_stylebox("tab_unselected", "TabContainer", tab_un)
+	th.set_stylebox("tab_hovered", "TabContainer", tab_sel)
+	var panel_bg := StyleBoxFlat.new()
+	panel_bg.bg_color = Color(0.03, 0.06, 0.16)
+	panel_bg.set_corner_radius_all(6)
+	th.set_stylebox("panel", "TabContainer", panel_bg)
+	th.set_color("font_selected_color", "TabContainer", Color.WHITE)
+	th.set_color("font_unselected_color", "TabContainer", COL_DIM)
+	var le := StyleBoxFlat.new()
+	le.bg_color = Color(0.04, 0.08, 0.2)
+	le.border_color = Color(COL_EDGE.r, COL_EDGE.g, COL_EDGE.b, 0.4)
+	le.set_border_width_all(1)
+	le.set_corner_radius_all(5)
+	le.set_content_margin_all(8)
+	th.set_stylebox("normal", "LineEdit", le)
+	th.set_color("font_color", "LineEdit", COL_TEXT)
 	return th
+
+
+## 店先バナーの枠（角丸＋ネオン縁）。
+func _banner_style() -> StyleBoxFlat:
+	var b := StyleBoxFlat.new()
+	b.bg_color = Color(0.03, 0.06, 0.16)
+	b.border_color = Color(0.45, 0.8, 1.0, 0.45)
+	b.set_border_width_all(1)
+	b.set_corner_radius_all(8)
+	b.content_margin_left = 0
+	b.content_margin_right = 0
+	b.content_margin_top = 0
+	b.content_margin_bottom = 0
+	return b
 
 
 func _build_morning(parent: Control) -> void:
@@ -373,51 +434,46 @@ func _build_morning(parent: Control) -> void:
 	morning_panel.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	morning_box = VBoxContainer.new()
 	morning_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	morning_box.add_theme_constant_override("separation", 8)
+	morning_box.add_theme_constant_override("separation", 6)
 	morning_panel.add_child(morning_box)
 
-	forecast_label = _label("", 22, Color(1.0, 0.85, 0.5))
+	forecast_label = _label("", 19, Color(1.0, 0.85, 0.5))
 	morning_box.add_child(forecast_label)
 
-	morning_box.add_child(_label("― 編成（潜行3人＋店番1人。タップで店番交代）―", 18, COL_DIM))
 	girls_box = VBoxContainer.new()
-	girls_box.add_theme_constant_override("separation", 6)
+	girls_box.add_theme_constant_override("separation", 5)
 	morning_box.add_child(girls_box)
 
-	menu_title = _label("― 今夜の献立 ―", 18, COL_DIM)
+	menu_title = _label("献立", 15, COL_DIM)
 	morning_box.add_child(menu_title)
 	menu_box = VBoxContainer.new()
-	menu_box.add_theme_constant_override("separation", 4)
 	morning_box.add_child(menu_box)
 
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	door_btn = _button("", _on_door_policy, 20)
-	door_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	row.add_child(door_btn)
-	morning_box.add_child(row)
-
-	morning_box.add_child(_label("― 同期時間 ―", 18, COL_DIM))
-	var mrow := HBoxContainer.new()
-	mrow.add_theme_constant_override("separation", 6)
-	for opt in [["クイック", "quick", 0.0], ["15分", "pomo", 15.0], ["25分", "pomo", 25.0], ["50分", "pomo", 50.0]]:
+	# 下部アクション帯：扉方針＋同期時間＋タスク＋潜る
+	var ctrl := HBoxContainer.new()
+	ctrl.add_theme_constant_override("separation", 6)
+	door_btn = _button("", _on_door_policy, 17)
+	door_btn.custom_minimum_size = Vector2(150, 0)
+	ctrl.add_child(door_btn)
+	for opt in [["⚡80s", "quick", 0.0], ["15", "pomo", 15.0], ["25", "pomo", 25.0], ["50", "pomo", 50.0]]:
 		var b := Button.new()
 		b.toggle_mode = true
 		b.button_group = mode_group
 		b.text = String(opt[0])
+		b.add_theme_font_size_override("font_size", 17)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.pressed.connect(_on_mode.bind(String(opt[1]), float(opt[2])))
 		if float(opt[2]) == 25.0:
 			b.button_pressed = true
-		mrow.add_child(b)
-	morning_box.add_child(mrow)
+		ctrl.add_child(b)
+	morning_box.add_child(ctrl)
 	task_edit = LineEdit.new()
 	task_edit.placeholder_text = "集中するタスクを書く（ポモドーロ時）"
-	task_edit.add_theme_font_size_override("font_size", 22)
+	task_edit.add_theme_font_size_override("font_size", 19)
 	morning_box.add_child(task_edit)
 
-	var depart := _button("☂ 潜る", _on_depart, 30)
-	depart.custom_minimum_size = Vector2(0, 60)
+	var depart := _button("☂ 潜る", _on_depart, 28)
+	depart.custom_minimum_size = Vector2(0, 54)
 	morning_box.add_child(depart)
 	parent.add_child(morning_panel)
 
@@ -439,8 +495,8 @@ func _build_dive_panel(parent: Control) -> void:
 	log_label = RichTextLabel.new()
 	log_label.scroll_following = true
 	log_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	log_label.custom_minimum_size = Vector2(0, 200)
-	log_label.add_theme_font_size_override("normal_font_size", 20)
+	log_label.custom_minimum_size = Vector2(0, 120)
+	log_label.add_theme_font_size_override("normal_font_size", 19)
 	log_label.add_theme_color_override("default_color", COL_TEXT)
 	dive_panel.add_child(log_label)
 	abandon_btn = _button("撤退（切断）…", _on_abandon_pressed, 20)
@@ -591,47 +647,18 @@ func _header_text() -> String:
 
 func _refresh_morning() -> void:
 	var s := sim.state
-	forecast_label.text = "%s今夜の予報：『%s』が出る。\n在庫: 乾物%d 肉%d 海鮮%d" % [
+	forecast_label.text = "%s予報『%s』  ｜  乾%d 肉%d 海%d" % [
 		offline_note, s["forecast"],
 		int(s["stock"]["dry"]), int(s["stock"]["meat"]), int(s["stock"]["sea"])]
 	_clear(girls_box)
 	for id in KuroData.GIRL_ORDER:
-		var g: Dictionary = KuroData.GIRLS[id]
-		var keeper: bool = s["morning"]["keeper"] == id
-		var panel := PanelContainer.new()
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 10)
-		row.add_child(_girl_icon(id))
-		var col := VBoxContainer.new()
-		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		col.add_child(_label("%s（%s）♥%d  攻%d HP%d" % [g["name"], g["role"], sim.aff(id),
-				int(sim.girl_atk(id)), int(sim.girl_maxhp(id))], 22, g["color"]))
-		col.add_child(_label("好物:%s ／ 店番:%s（%s）" % [g["fav"], g["synergy"], g["synergy_desc"]], 16, COL_DIM))
-		var skill_row := HBoxContainer.new()
-		skill_row.add_theme_constant_override("separation", 4)
-		skill_row.add_child(_label("技 %d/%d:" % [s["girls"][id]["skills_eq"].size(), sim.skill_slots()], 15, COL_DIM))
-		for sid in sim.known_skills(id):
-			var def: Dictionary = KuroData.SKILL_DB[sid]
-			var equipped: bool = sid in s["girls"][id]["skills_eq"]
-			var sk := _button(("✦" if equipped else "") + String(def["name"]), _on_skill_toggle.bind(id, String(sid)), 15)
-			if not equipped and s["girls"][id]["skills_eq"].size() >= sim.skill_slots():
-				sk.disabled = true
-			skill_row.add_child(sk)
-		var next_tier := sim.known_skills(id).size()
-		if next_tier < 3:
-			skill_row.add_child(_label("（次:♥%d）" % KuroData.SKILL_UNLOCK_AFF[next_tier], 14, Color(1, 1, 1, 0.3)))
-		col.add_child(skill_row)
-		row.add_child(col)
-		var b := _button("店番" if keeper else "潜行", _on_keeper.bind(id), 20)
-		b.disabled = keeper
-		if keeper:
-			b.modulate = Color(1.0, 0.85, 0.5)
-		row.add_child(b)
-		panel.add_child(row)
-		girls_box.add_child(panel)
-	menu_title.text = "― 今夜の献立（%d枠まで）―" % sim.menu_limit()
+		girls_box.add_child(_girl_card(id))
+	menu_title.text = "献立 %d/%d枠 ｜ ◎=予報一致 ⚠=素材切れ" % [s["morning"]["menu"].size(), sim.menu_limit()]
 	_clear(menu_box)
 	var menu: Array = s["morning"]["menu"]
+	var flow := HFlowContainer.new()
+	flow.add_theme_constant_override("h_separation", 5)
+	flow.add_theme_constant_override("v_separation", 5)
 	for id in s["recipes"]:
 		if int(s["recipes"][id]) <= 0:
 			continue
@@ -643,16 +670,67 @@ func _refresh_morning() -> void:
 		var b2 := Button.new()
 		b2.toggle_mode = true
 		b2.button_pressed = in_menu
-		b2.text = "%s%s ☆%d [%s] %s%d %dG%s%s" % ["✓ " if in_menu else "", r["name"], star,
-				r["taste"], KuroData.ING_NAMES[r["ing"]], ing_stock,
-				KuroData.recipe_price(id, star), "  ◎予報" if hit else "",
-				"  ⚠素材なし" if ing_stock <= 0 else ""]
-		b2.add_theme_font_size_override("font_size", 20)
-		b2.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b2.text = "%s%s☆%d %s%d%s%s" % ["✓" if in_menu else "", r["name"], star,
+				KuroData.ING_NAMES[r["ing"]], ing_stock,
+				" ◎" if hit else "", " ⚠" if ing_stock <= 0 else ""]
+		b2.add_theme_font_size_override("font_size", 17)
+		if in_menu:
+			b2.add_theme_color_override("font_color", Color(1.0, 0.9, 0.55))
 		b2.pressed.connect(_on_menu_toggle.bind(String(id)))
-		menu_box.add_child(b2)
-	door_btn.text = "扉方針：%s（階の中間に「増築された扉」が出る）" % (
-			"開ける" if s["morning"]["door"] == "open" else "無視する")
+		flow.add_child(b2)
+	menu_box.add_child(flow)
+	door_btn.text = "扉方針：%s" % ("開ける" if s["morning"]["door"] == "open" else "無視する")
+
+
+## コンパクトな編成カード（小型立ち絵＋2行＋店番トグル）。
+func _girl_card(id: String) -> PanelContainer:
+	var s := sim.state
+	var g: Dictionary = KuroData.GIRLS[id]
+	var keeper: bool = s["morning"]["keeper"] == id
+	var panel := PanelContainer.new()
+	if keeper:
+		var ps := StyleBoxFlat.new()
+		ps.bg_color = Color(0.14, 0.11, 0.05, 0.92)
+		ps.border_color = Color(1.0, 0.8, 0.4, 0.6)
+		ps.set_border_width_all(1)
+		ps.set_corner_radius_all(6)
+		ps.set_content_margin_all(7)
+		panel.add_theme_stylebox_override("panel", ps)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var icon := _girl_icon(id)
+	icon.custom_minimum_size = Vector2(38, 54)
+	row.add_child(icon)
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_theme_constant_override("separation", 2)
+	var role := "店番" if keeper else "潜行"
+	col.add_child(_label("%s ♥%d  攻%d HP%d  好%s" % [g["name"], sim.aff(id),
+			int(sim.girl_atk(id)), int(sim.girl_maxhp(id)), g["fav"]], 18, g["color"]))
+	# スキルチップ（コンパクト）
+	var skill_row := HBoxContainer.new()
+	skill_row.add_theme_constant_override("separation", 3)
+	for sid in sim.known_skills(id):
+		var def: Dictionary = KuroData.SKILL_DB[sid]
+		var equipped: bool = sid in s["girls"][id]["skills_eq"]
+		var sk := _button(("✦" if equipped else "") + String(def["name"]), _on_skill_toggle.bind(id, String(sid)), 14)
+		if not equipped and s["girls"][id]["skills_eq"].size() >= sim.skill_slots():
+			sk.disabled = true
+		skill_row.add_child(sk)
+	if keeper:
+		var syn := _label("→ %s" % g["synergy"], 14, Color(1.0, 0.85, 0.5))
+		syn.autowrap_mode = TextServer.AUTOWRAP_OFF
+		skill_row.add_child(syn)
+	col.add_child(skill_row)
+	row.add_child(col)
+	var b := _button(role, _on_keeper.bind(id), 18)
+	b.custom_minimum_size = Vector2(58, 0)
+	b.disabled = keeper
+	if keeper:
+		b.modulate = Color(1.0, 0.85, 0.5)
+	row.add_child(b)
+	panel.add_child(row)
+	return panel
 
 
 func _refresh_night() -> void:

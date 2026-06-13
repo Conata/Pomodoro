@@ -67,6 +67,47 @@ func _anim_tex(prefix: String, mode: String) -> Texture2D:
 	return tex
 
 
+## 待機中の店先バナー。薄い高さ（~96px）でも成立するモダンなネオン演出：
+## 深い藍のグラデ＋雨＋ネオンの暖色サイン「黒猫飯店」＋脈動する OPEN ＋黒猫。
+func _draw_storefront(sz: Vector2, font: Font) -> void:
+	# 背景グラデ（上＝藍、下＝路面の照り返し）
+	draw_rect(Rect2(Vector2.ZERO, sz), Color(0.04, 0.07, 0.18))
+	draw_rect(Rect2(0, sz.y * 0.55, sz.x, sz.y * 0.45), Color(0.06, 0.11, 0.26, 0.7))
+	# 路面の反射ライン
+	draw_line(Vector2(0, sz.y - 3), Vector2(sz.x, sz.y - 3), Color(0.5, 0.8, 1.0, 0.18), 2.0)
+	# 遠景：窓明かりのドット（ピクセルらしい矩形）
+	for i in 22:
+		var wx := fposmod(i * 47.0, sz.x)
+		var wy := 8.0 + fposmod(i * 29.0, sz.y * 0.42)
+		var tw := 0.18 + 0.18 * sin(pulse * 1.3 + i)
+		draw_rect(Rect2(wx, wy, 4, 4), Color(1.0, 0.82, 0.5, tw))
+	_draw_rain(sz)
+	# 提灯（暖色の脈動する円）
+	var lantern_glow := 0.35 + 0.12 * sin(pulse * 2.0)
+	draw_circle(Vector2(46, sz.y * 0.5), 26.0, Color(1.0, 0.45, 0.35, lantern_glow * 0.5))
+	draw_circle(Vector2(46, sz.y * 0.5), 13.0, Color(1.0, 0.55, 0.4, 0.9))
+	# ネオンの店名（暖色＋淡いグロー）
+	var title := "黒猫飯店"
+	var tsize := font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 38)
+	var tx := 80.0
+	var ty := sz.y * 0.5 + 14.0
+	draw_string(font, Vector2(tx + 1.5, ty + 1.5), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 38, Color(1.0, 0.4, 0.3, 0.35))
+	draw_string(font, Vector2(tx, ty), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 38, Color(1.0, 0.78, 0.55))
+	# OPEN サイン（シアンの明滅）
+	var open_on := fposmod(pulse, 3.0) < 2.7
+	var open_col := Color(0.4, 1.0, 0.9, 1.0) if open_on else Color(0.4, 1.0, 0.9, 0.2)
+	draw_string(font, Vector2(tx + tsize.x + 20.0, ty), "OPEN", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, open_col)
+	# 黒猫（右下のカウンター端で目を光らせている）
+	var cx := sz.x - 42.0
+	var cy := sz.y - 20.0
+	draw_circle(Vector2(cx, cy), 12.0, Color(0.01, 0.02, 0.05))
+	draw_circle(Vector2(cx - 8, cy - 12), 6.0, Color(0.01, 0.02, 0.05))  # 耳
+	draw_circle(Vector2(cx + 8, cy - 12), 6.0, Color(0.01, 0.02, 0.05))
+	if fposmod(pulse, 4.0) < 3.7:  # まばたき
+		draw_circle(Vector2(cx - 4, cy - 3), 1.6, Color(0.55, 0.95, 0.7))
+		draw_circle(Vector2(cx + 4, cy - 3), 1.6, Color(0.55, 0.95, 0.7))
+
+
 func _draw_rain(sz: Vector2) -> void:
 	for i in RAIN_N:
 		var speed := 420.0 + fposmod(i * 37.7, 220.0)
@@ -107,15 +148,21 @@ func _draw() -> void:
 	if sim == null:
 		return
 	var sz := size
+	var run: Dictionary = sim.state["run"]
+	var font := get_theme_default_font()
+
+	# 待機中（朝/夜/精算）は薄い店先バナー。潜行画面は出さない
+	if not run["active"]:
+		_draw_storefront(sz, font)
+		return
+
 	var fl := sim.current_floor()
 	var biome: Dictionary = KuroData.BIOMES[fl % KuroData.BIOMES.size()]
 	var bg: Color = biome["color"]
 	# 背景：深い青の縦グラデーション
 	draw_rect(Rect2(Vector2.ZERO, sz), Color(bg.r * 0.4, bg.g * 0.4, bg.b * 0.55))
 	draw_rect(Rect2(0, sz.y * 0.6, sz.x, sz.y * 0.4), Color(0.02, 0.04, 0.10, 0.55))
-	var font := get_theme_default_font()
 
-	var run: Dictionary = sim.state["run"]
 	var dist := float(sim.state["dist"])
 	var progress := fmod(dist, KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN
 	draw_rect(Rect2(0, 0, sz.x, 5), Color(0, 0, 0, 0.5))
@@ -129,12 +176,6 @@ func _draw() -> void:
 
 	var ground := sz.y * 0.80
 	draw_line(Vector2(0, ground), Vector2(sz.x, ground), Color(0.5, 0.8, 1.0, 0.18), 2.0)
-
-	if not run["active"]:
-		_draw_rain(sz)
-		draw_string(font, Vector2(14, sz.y * 0.5), "雨。開店前。編成を決めて潜る",
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(0.7, 0.85, 1.0, 0.6))
-		return
 
 	var in_combat: bool = sim.state["in_combat"]
 	var door_open := float(run["door_pending"]) > 0.0
