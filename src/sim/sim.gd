@@ -387,7 +387,7 @@ func _spawn_pack(boss: bool) -> void:
 			"hp": 220.0 * sc, "max_hp": 220.0 * sc, "atk": 7.0 * sc,
 			"boss": true, "elite": false, "sprite": String(biome["boss"]),
 		})
-		_emit("log", "階の最奥。欠落ボスが待っている")
+		_emit("boss", "階の最奥。欠落ボスが待っている")
 	else:
 		var n := 2 + rng.randi(2)
 		var elite := rng.chance(0.18)

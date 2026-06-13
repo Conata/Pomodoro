@@ -55,7 +55,14 @@ var stats_box: VBoxContainer
 var ship_label: Label
 var ui_accum := 0.0
 var offline_note := ""
+var banter_rng := RandomNumberGenerator.new()
+var banter_timer := 0.0
+var banter_next := 6.0
 var confirm: ConfirmationDialog
+var status_overlay: Control
+var status_portrait: PortraitRect
+var status_name: Label
+var status_body: VBoxContainer
 var bgm: AudioStreamPlayer
 var sfx_pool: Array[AudioStreamPlayer] = []
 var sfx_next := 0
@@ -63,6 +70,7 @@ var sfx_cache := {}
 
 
 func _ready() -> void:
+	banter_rng.randomize()
 	var saved := SaveGame.load_state()
 	sim = KuroSim.new(saved)
 	_build_ui()
@@ -91,6 +99,12 @@ func _process(delta: float) -> void:
 		if save_accum >= 20.0:
 			save_accum = 0.0
 			_save(now)
+		# 何もない時間の独り言（放置で愛着が湧くやつ）
+		banter_timer += delta
+		if banter_timer >= banter_next:
+			banter_timer = 0.0
+			banter_next = banter_rng.randf_range(8.0, 15.0)
+			_idle_banter()
 	_update_clock(now)
 	ui_accum += delta
 	if ui_accum >= 1.0:
@@ -138,6 +152,7 @@ func _pump_events() -> void:
 				_sfx("ui_confirm")
 				_log(e["msg"])
 				door_row.visible = true
+				_banter("door")
 			"door_loot":
 				_sfx("chest_open")
 				_log(e["msg"])
@@ -145,14 +160,57 @@ func _pump_events() -> void:
 				_sfx("enemy_death")
 				dive.spawn_fx("explosion", "enemy")
 				_log(e["msg"])
+				_banter("gate")
+			"boss":
+				_log(e["msg"])
+				_banter("boss")
 			"resync":
 				_sfx("damage")
 				dive.spawn_fx("smoke", "party")
 				_log(e["msg"])
+				_banter("wipe")
+			"loot":
+				_log(e["msg"])
+				if banter_rng.randf() < 0.3:
+					_banter("loot")
+			"level":
+				_sfx("thunder")
+				dive.spawn_fx("lightning", "party")
+				_log(e["msg"])
+				_banter("levelup")
 			"fx":
 				dive.spawn_fx(String(e.get("fx", "")), "enemy")
 			_:
 				_log(e["msg"])
+
+
+# --- 掛け合い（潜行中のキャラのセリフ）---------------------------------------
+
+
+func _banter(cat: String) -> void:
+	var line := Banter.pick(cat, sim.divers(), banter_rng)
+	if not line.is_empty():
+		_say(String(line["girl"]), String(line["text"]))
+		banter_timer = 0.0  # 直後の独り言と被らせない
+
+
+## 何もない時間：戦況に応じて combat/boss/idle を喋る。
+func _idle_banter() -> void:
+	if phase != Phase.DIVE:
+		return
+	var cat := "idle"
+	for m in sim.state["mobs"]:
+		if m["boss"]:
+			cat = "boss"
+			break
+	if cat == "idle" and sim.state["in_combat"]:
+		cat = "combat"
+	_banter(cat)
+
+
+func _say(gid: String, text: String) -> void:
+	dive.say(gid, text)
+	_log("[color=#9fd8ff]%s[/color]「%s」" % [KuroData.GIRLS[gid]["name"], text])
 
 
 func _on_run_complete() -> void:
@@ -194,7 +252,10 @@ func _on_depart() -> void:
 	phase = Phase.DIVE
 	log_label.clear()
 	log_count = 0
+	banter_timer = 0.0
+	banter_next = 3.5
 	_pump_events()
+	_banter("start")
 	_save(now)
 	_apply_phase()
 	_refresh_all()
@@ -350,7 +411,92 @@ func _build_ui() -> void:
 	confirm.cancel_button_text = "やめる"
 	confirm.confirmed.connect(_on_confirmed)
 	add_child(confirm)
+	_build_status_overlay()
 	_build_audio()
+
+
+## TBH の英雄画面のような、高解像度キャラ＋装備＋スキルの詳細。
+func _build_status_overlay() -> void:
+	status_overlay = Control.new()
+	status_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	status_overlay.visible = false
+	var backdrop := ColorRect.new()
+	backdrop.color = Color(0.01, 0.02, 0.06, 0.88)
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
+	status_overlay.add_child(backdrop)
+	var margin := MarginContainer.new()
+	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for m in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+		margin.add_theme_constant_override(m, 20)
+	status_overlay.add_child(margin)
+	var card := PanelContainer.new()
+	margin.add_child(card)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
+	card.add_child(box)
+	# 上段：ポートレート＋名前/ステータス
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 14)
+	status_portrait = PortraitRect.new()
+	status_portrait.custom_minimum_size = Vector2(190, 280)
+	top.add_child(status_portrait)
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	info.add_theme_constant_override("separation", 6)
+	status_name = _label("", 30, Color(0.9, 0.96, 1.0))
+	info.add_child(status_name)
+	status_body = VBoxContainer.new()
+	status_body.add_theme_constant_override("separation", 5)
+	info.add_child(status_body)
+	top.add_child(info)
+	box.add_child(top)
+	var close := _button("閉じる", _close_status, 24)
+	close.custom_minimum_size = Vector2(0, 50)
+	box.add_child(close)
+	add_child(status_overlay)
+
+
+func _open_status(id: String) -> void:
+	_sfx("ui_confirm")
+	var s := sim.state
+	var g: Dictionary = KuroData.GIRLS[id]
+	status_portrait.girl_id = id
+	status_name.text = "%s　%s" % [g["name"], g["role"]]
+	_clear(status_body)
+	status_body.add_child(_label("♥ 好感度 %d / 100" % sim.aff(id), 20, Color(1.0, 0.7, 0.85)))
+	status_body.add_child(_label("攻撃 %d　　最大HP %d" % [int(sim.girl_atk(id)), int(sim.girl_maxhp(id))], 20))
+	status_body.add_child(_label("好物 %s　　店番シナジー：%s（%s）" % [g["fav"], g["synergy"], g["synergy_desc"]], 16, COL_DIM))
+	status_body.add_child(_label("― 装備 ―", 16, Color(0.6, 0.9, 1.0)))
+	for slot in ["weapon", "armor", "trinket"]:
+		var it: Dictionary = s["girls"][id]["equip"][slot]
+		var slot_name: String = SimItems.SLOTS[slot]["name"]
+		if it.is_empty():
+			status_body.add_child(_label("%s： —" % slot_name, 17, Color(1, 1, 1, 0.45)))
+		else:
+			status_body.add_child(_label("%s： %s %s" % [slot_name, SimItems.display_name(it), SimItems.affix_text(it)],
+					17, SimItems.GRADES[int(it["grade"])]["color"]))
+	status_body.add_child(_label("― スキル（枠 %d）―" % sim.skill_slots(), 16, Color(0.6, 0.9, 1.0)))
+	var skill_flow := HFlowContainer.new()
+	skill_flow.add_theme_constant_override("h_separation", 5)
+	skill_flow.add_theme_constant_override("v_separation", 5)
+	for sid in sim.known_skills(id):
+		var def: Dictionary = KuroData.SKILL_DB[sid]
+		var equipped: bool = sid in s["girls"][id]["skills_eq"]
+		var chip := _label("%s%s(CD%d)" % ["★" if equipped else "", def["name"], int(def["cd"])],
+				16, Color(1.0, 0.9, 0.55) if equipped else COL_DIM)
+		chip.autowrap_mode = TextServer.AUTOWRAP_OFF
+		skill_flow.add_child(chip)
+	status_body.add_child(skill_flow)
+	var nxt := sim.known_skills(id).size()
+	if nxt < 3:
+		status_body.add_child(_label("次のスキルは ♥%d で習得" % KuroData.SKILL_UNLOCK_AFF[nxt], 15, Color(1, 1, 1, 0.4)))
+	status_overlay.visible = true
+
+
+func _close_status() -> void:
+	status_overlay.visible = false
 
 
 func _make_theme() -> Theme:
@@ -493,6 +639,7 @@ func _build_dive_panel(parent: Control) -> void:
 	door_row.add_child(skip_b)
 	dive_panel.add_child(door_row)
 	log_label = RichTextLabel.new()
+	log_label.bbcode_enabled = true
 	log_label.scroll_following = true
 	log_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	log_label.custom_minimum_size = Vector2(0, 120)
@@ -723,9 +870,16 @@ func _girl_card(id: String) -> PanelContainer:
 		panel.add_theme_stylebox_override("panel", ps)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
+	# 立ち絵タップで詳細（ステータス）画面
+	var icon_btn := Button.new()
+	icon_btn.flat = true
+	icon_btn.custom_minimum_size = Vector2(44, 58)
+	icon_btn.pressed.connect(_open_status.bind(id))
 	var icon := _girl_icon(id)
 	icon.custom_minimum_size = Vector2(38, 54)
-	row.add_child(icon)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon_btn.add_child(icon)
+	row.add_child(icon_btn)
 	var col := VBoxContainer.new()
 	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	col.add_theme_constant_override("separation", 2)
@@ -974,7 +1128,7 @@ func _on_debug_ff(seconds: float) -> void:
 	if seconds < 0.0:
 		seconds = float(run["duration"]) - float(run["elapsed"]) + 1.0
 	run["anchor"] = float(run["anchor"]) - seconds
-	_log("[DEBUG] %d秒 早送り" % int(seconds))
+	_log("（DEBUG）%d秒 早送り" % int(seconds))
 
 
 func _on_open_box() -> void:

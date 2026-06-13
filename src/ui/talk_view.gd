@@ -116,7 +116,7 @@ func _band(y: float, h: float, color: Color, skew_px: float = 26.0) -> void:
 
 func _draw() -> void:
 	var sz := size
-	draw_rect(Rect2(Vector2.ZERO, sz), Color(0.025, 0.05, 0.16, 0.97))
+	draw_rect(Rect2(Vector2.ZERO, sz), Color(0.025, 0.05, 0.16, 1.0))
 	# 雨
 	for i in 60:
 		var speed := 380.0 + fposmod(i * 41.3, 260.0)
@@ -124,15 +124,12 @@ func _draw() -> void:
 		var py := fposmod(i * 113.7 + pulse * speed, sz.y + 30.0) - 15.0
 		draw_line(Vector2(px, py), Vector2(px - 5, py + 18),
 				Color(0.6, 0.82, 1.0, 0.08 + fposmod(i * 0.11, 0.1)), 1.2)
-	# 立ち絵（ピクセルスプライトを大きく、青く沈めて）
+	# 立ち絵（等身の高いキャラ。ピクセルではなくポートレート）。
+	# res://assets/portraits/<id>.png があればそれ、無ければシルエット。
 	var g: Dictionary = KuroData.GIRLS[girl]
-	var tex := _tex(FRAME_DIR + "%s_idle_anim_f%d.png" % [g["sprite"], int(pulse * 4.0) % 4])
-	if tex == null:
-		tex = _tex(FRAME_DIR + "%s_anim_f%d.png" % [g["sprite"], int(pulse * 4.0) % 4])
-	if tex != null:
-		var s := tex.get_size() * 10.0
-		draw_texture_rect(tex, Rect2(sz.x - s.x - 70.0, sz.y * 0.62 - s.y, s.x, s.y),
-				false, Color(0.55, 0.72, 1.1))
+	var pw := sz.x * 0.62
+	var ph := sz.y * 0.62
+	Portrait.draw_into(self, girl, Rect2(sz.x - pw - 20.0, 10.0, pw, ph), pulse)
 	var font := get_theme_default_font()
 	# 名前の斜めバンド（白地に黒、Rain98 の名前演出）
 	_band(sz.y * 0.62, 52.0, Color(0.94, 0.97, 1.0))

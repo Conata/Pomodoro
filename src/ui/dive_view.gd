@@ -23,6 +23,7 @@ var sim: KuroSim = null
 var pulse := 0.0
 var _tex_cache := {}
 var _fx_active: Array = []
+var _bubble := {}  # {girl, text, t}
 
 
 func _ready() -> void:
@@ -30,8 +31,17 @@ func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
 
+## キャラのセリフ吹き出しを数秒表示。
+func say(girl_id: String, text: String) -> void:
+	_bubble = {"girl": girl_id, "text": text, "t": 3.6}
+
+
 func _process(delta: float) -> void:
 	pulse += delta
+	if not _bubble.is_empty():
+		_bubble["t"] = float(_bubble["t"]) - delta
+		if float(_bubble["t"]) <= 0.0:
+			_bubble = {}
 	var i := 0
 	while i < _fx_active.size():
 		var fx: Dictionary = _fx_active[i]
@@ -106,6 +116,30 @@ func _draw_storefront(sz: Vector2, font: Font) -> void:
 	if fposmod(pulse, 4.0) < 3.7:  # まばたき
 		draw_circle(Vector2(cx - 4, cy - 3), 1.6, Color(0.55, 0.95, 0.7))
 		draw_circle(Vector2(cx + 4, cy - 3), 1.6, Color(0.55, 0.95, 0.7))
+
+
+## キャラの頭上にセリフ吹き出しを描く（角丸＋しっぽ）。横幅は画面内に収める。
+func _draw_bubble(font: Font, anchor: Vector2, who: String, text: String) -> void:
+	var fs := 17
+	var pad := 9.0
+	var line := "%s「%s」" % [who, text]
+	var tw := minf(font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x, size.x - 28.0)
+	var bw := tw + pad * 2
+	var bh := 30.0
+	var bx := clampf(anchor.x - bw * 0.4, 8.0, size.x - bw - 8.0)
+	var by := anchor.y - bh
+	var fade: float = clampf(float(_bubble["t"]) / 0.6, 0.0, 1.0)
+	var bg := Color(0.92, 0.96, 1.0, 0.95 * fade)
+	var rect := Rect2(bx, by, bw, bh)
+	draw_rect(rect, bg)
+	draw_rect(Rect2(bx, by, bw, 2), Color(0.4, 0.8, 1.0, fade))  # 上辺アクセント
+	# しっぽ
+	var tip := clampf(anchor.x, bx + 8, bx + bw - 8)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(tip - 6, by + bh), Vector2(tip + 6, by + bh), Vector2(tip, by + bh + 9),
+	]), bg)
+	draw_string(font, Vector2(bx + pad, by + bh - 9), line, HORIZONTAL_ALIGNMENT_LEFT,
+			int(bw - pad * 2), fs, Color(0.05, 0.08, 0.16, fade))
 
 
 func _draw_rain(sz: Vector2) -> void:
@@ -217,6 +251,13 @@ func _draw() -> void:
 
 	_draw_fx(ground)
 	_draw_rain(sz)
+
+	# セリフ吹き出し（潜行中のキャラの掛け合い）
+	if not _bubble.is_empty():
+		var bi := ds.find(String(_bubble["girl"]))
+		if bi >= 0:
+			_draw_bubble(font, Vector2(56.0 + bi * 60.0, ground - 64.0),
+					String(KuroData.GIRLS[_bubble["girl"]]["name"]), String(_bubble["text"]))
 
 	var status := "進軍中…"
 	if door_open:
