@@ -32,9 +32,11 @@ static func load_state() -> Dictionary:
 
 static func normalize(s: Dictionary) -> Dictionary:
 	for key in ["gold", "sign", "invites", "day", "checkpoint", "best_floor",
-			"rng_state", "seed", "scrap", "next_item_id", "streak"]:
+			"rng_state", "seed", "scrap", "next_item_id", "streak", "shards"]:
 		if s.has(key):
 			s[key] = int(s[key])
+	if not s.has("shards"):
+		s["shards"] = 0
 	# 素材：旧セーブ（無個性カウント）からの移行も吸収
 	if s.get("stock") is float or s.get("stock") is int:
 		s["stock"] = {"dry": int(s["stock"]), "meat": 0, "sea": 0}
@@ -64,6 +66,8 @@ static func normalize(s: Dictionary) -> Dictionary:
 			s["girls"][id]["equip"] = {"weapon": {}, "armor": {}, "trinket": {}}
 		if not s["girls"][id].has("skills_eq"):
 			s["girls"][id]["skills_eq"] = []
+		if not s["girls"][id].has("tree"):
+			s["girls"][id]["tree"] = []
 		for slot in s["girls"][id]["equip"]:
 			if not s["girls"][id]["equip"][slot].is_empty():
 				_normalize_item(s["girls"][id]["equip"][slot])

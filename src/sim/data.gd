@@ -87,6 +87,37 @@ const SKILL_DB := {
 }
 const SKILL_UNLOCK_AFF := [0, 45, 80]
 
+# 女の子ごとの育成ツリー（記憶の欠片で解放）。直線（prevが解放済みで開く）。
+# effect: 能力強化（atk/hp/crit の倍率加算）または skill（その技を習得）。
+# req_aff があるノードは好感度がそこに届かないと買えない＝攻略と育成が噛む。
+# 足すのはここに1ノード：{"id","name","cost"(欠片),"effect",任意"req_aff"}
+const GIRL_TREES := {
+	"mil": [
+		{"id": "mil_a", "name": "鍛錬", "cost": 2, "effect": {"hp": 0.12}},
+		{"id": "mil_b", "name": "技・庇い手", "cost": 5, "req_aff": 45, "effect": {"skill": "cover"}},
+		{"id": "mil_c", "name": "守護の心得", "cost": 9, "effect": {"hp": 0.16}},
+		{"id": "mil_d", "name": "技・静域", "cost": 15, "req_aff": 80, "effect": {"skill": "sanctum"}},
+	],
+	"yuzuki": [
+		{"id": "yuz_a", "name": "腕っぷし", "cost": 2, "effect": {"atk": 0.12}},
+		{"id": "yuz_b", "name": "技・中華鍋旋風", "cost": 5, "req_aff": 45, "effect": {"skill": "wok_storm"}},
+		{"id": "yuz_c", "name": "火力上げ", "cost": 9, "effect": {"atk": 0.16}},
+		{"id": "yuz_d", "name": "技・本気の一撃", "cost": 15, "req_aff": 80, "effect": {"skill": "honki"}},
+	],
+	"muu": [
+		{"id": "muu_a", "name": "手数", "cost": 2, "effect": {"atk": 0.08, "crit": 0.06}},
+		{"id": "muu_b", "name": "技・アンコール", "cost": 5, "req_aff": 45, "effect": {"skill": "encore"}},
+		{"id": "muu_c", "name": "バズ体質", "cost": 9, "effect": {"crit": 0.10}},
+		{"id": "muu_d", "name": "技・拡散", "cost": 15, "req_aff": 80, "effect": {"skill": "viral"}},
+	],
+	"kiriko": [
+		{"id": "kir_a", "name": "観測眼", "cost": 2, "effect": {"crit": 0.10}},
+		{"id": "kir_b", "name": "技・雷の仮説", "cost": 5, "req_aff": 45, "effect": {"skill": "hypothesis"}},
+		{"id": "kir_c", "name": "重撃強化", "cost": 9, "effect": {"atk": 0.16}},
+		{"id": "kir_d", "name": "技・再接続理論", "cost": 15, "req_aff": 80, "effect": {"skill": "reconnect"}},
+	],
+}
+
 # 改装ツリー（TBHのルーンツリー準拠：ゴールド消費・マップ型・隣接解放）
 # 方向別傾向: 上=宝箱系／左上=金策／左下=素材／右=戦闘／下=システム
 const RENOV_NODES := {

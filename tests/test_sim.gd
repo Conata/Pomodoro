@@ -21,6 +21,7 @@ func _initialize() -> void:
 	_test_content()
 	_test_equipment()
 	_test_renov()
+	_test_tree()
 	_test_offline()
 	_test_daily_streak()
 	_test_save_roundtrip()
@@ -273,9 +274,28 @@ func _test_renov() -> void:
 	check(sim.unlock_renov("awaken"), "覚醒")
 	check(sim.skill_slots() == 2, "覚醒でスキル枠+1")
 	check(sim.sign_total() >= 1, "改装の看板が客数に乗る")
-	check(sim.equip_skill("yuzuki", "wok_storm") == false, "♥不足のスキルは装備できない")
+
+
+func _test_tree() -> void:
+	print("[育成ツリー]")
+	var sim := _fresh(53)
+	var atk0 := sim.girl_atk("yuzuki")
+	sim.state["shards"] = 100
+	# 直線：前ノード未解放だと買えない
+	check(not sim.tree_available("yuzuki", "yuz_b"), "前ノード未解放のノードは不可")
+	check(sim.tree_unlock("yuzuki", "yuz_a"), "起点ノードは解放できる")
+	check(sim.girl_atk("yuzuki") > atk0, "育成ノードで攻撃が上がる")
+	# 技ノードは好感度条件
+	check(not sim.tree_available("yuzuki", "yuz_b"), "♥不足だと技ノード不可")
+	check(not "wok_storm" in sim.known_skills("yuzuki"), "未解放の技は未習得")
 	sim.state["girls"]["yuzuki"]["aff"] = 50
-	check(sim.equip_skill("yuzuki", "wok_storm"), "♥45で第2スキル解放")
+	check(sim.tree_unlock("yuzuki", "yuz_b"), "♥45で技ノード解放")
+	check("wok_storm" in sim.known_skills("yuzuki"), "技ノードで技を習得")
+	sim.equip_skill("yuzuki", "wok_fist")  # 枠を空ける（初期1枠）
+	check(sim.equip_skill("yuzuki", "wok_storm"), "習得した技は装備できる")
+	# 欠片不足
+	sim.state["shards"] = 0
+	check(not sim.tree_unlock("yuzuki", "yuz_c"), "欠片不足では解放できない")
 
 
 func _test_offline() -> void:

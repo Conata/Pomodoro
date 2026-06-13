@@ -33,6 +33,7 @@ static func new_state(seed_value: int) -> Dictionary:
 			"aff": 10, "seen": [],
 			"equip": {"weapon": {}, "armor": {}, "trinket": {}},
 			"skills_eq": [first_skill],
+			"tree": [],  # 解放済み育成ノードid
 		}
 	return {
 		"v": "v3",
@@ -64,6 +65,7 @@ static func new_state(seed_value: int) -> Dictionary:
 		"mobs": [],
 		"next_enc": 0.0,
 		"pending_night": {},
+		"shards": 0,
 		"scrap": 0,
 		"inventory": [],
 		"next_item_id": 1,
@@ -153,6 +155,47 @@ func _affix_party(key: String) -> float:
 	return v
 
 
+## 育成ツリーの能力ボーナス（解放ノードの effect[key] を合計）。
+func tree_bonus(id: String, key: String) -> float:
+	var v := 0.0
+	var owned: Array = state["girls"][id].get("tree", [])
+	for node in KuroData.GIRL_TREES.get(id, []):
+		if node["id"] in owned:
+			v += float(node["effect"].get(key, 0.0))
+	return v
+
+
+## ノードが解放可能か（直線：前のノードが解放済み、かつ好感度条件を満たす）。
+func tree_available(id: String, node_id: String) -> bool:
+	var nodes: Array = KuroData.GIRL_TREES.get(id, [])
+	var owned: Array = state["girls"][id].get("tree", [])
+	for i in nodes.size():
+		if nodes[i]["id"] == node_id:
+			if node_id in owned:
+				return false
+			if i > 0 and not nodes[i - 1]["id"] in owned:
+				return false
+			if aff(id) < int(nodes[i].get("req_aff", 0)):
+				return false
+			return true
+	return false
+
+
+## ノードを記憶の欠片で解放。
+func tree_unlock(id: String, node_id: String) -> bool:
+	if not tree_available(id, node_id):
+		return false
+	for node in KuroData.GIRL_TREES.get(id, []):
+		if node["id"] == node_id:
+			if int(state["shards"]) < int(node["cost"]):
+				return false
+			state["shards"] = int(state["shards"]) - int(node["cost"])
+			state["girls"][id]["tree"].append(node_id)
+			_emit("log", "%s の育成：%s を解放" % [KuroData.GIRLS[id]["name"], node["name"]])
+			return true
+	return false
+
+
 func girl_atk(id: String) -> float:
 	var base: float = float(KuroData.GIRLS[id]["atk"]) * KuroData.girl_mult(aff(id))
 	if id == "kiriko":
@@ -162,7 +205,7 @@ func girl_atk(id: String) -> float:
 		var it: Dictionary = state["girls"][id]["equip"][slot]
 		if not it.is_empty():
 			add += float(it["base"]) * float(SimItems.SLOTS[it["slot"]]["atk"])
-	var pct := renov_bonus("atk") + _affix_total(id, "atk") * 0.01
+	var pct := renov_bonus("atk") + tree_bonus(id, "atk") + _affix_total(id, "atk") * 0.01
 	return (base + add) * (1.0 + pct)
 
 
@@ -173,7 +216,7 @@ func girl_maxhp(id: String) -> float:
 		var it: Dictionary = state["girls"][id]["equip"][slot]
 		if not it.is_empty():
 			add += float(it["base"]) * float(SimItems.SLOTS[it["slot"]]["hp"])
-	var pct := renov_bonus("hp") + _affix_total(id, "hp") * 0.01
+	var pct := renov_bonus("hp") + tree_bonus(id, "hp") + _affix_total(id, "hp") * 0.01
 	return (base + add) * (1.0 + pct)
 
 
@@ -195,8 +238,15 @@ func discover_chance() -> float:
 	return 0.08 + pet_bonus("discover")
 
 
+func _tree_party(key: String) -> float:
+	var v := 0.0
+	for id in KuroData.GIRL_ORDER:
+		v += tree_bonus(id, key)
+	return v
+
+
 func crit_mult() -> float:
-	return 1.0 + renov_bonus("crit") + _affix_party("crit") * 0.01
+	return 1.0 + renov_bonus("crit") + _tree_party("crit") + _affix_party("crit") * 0.01
 
 
 func dive_speed() -> float:
@@ -211,11 +261,21 @@ func skill_slots() -> int:
 	return 1 + int(renov_bonus("skill_slot"))
 
 
+## 習得済みスキル：tier0は最初から、tier1/2は育成ツリーのノードを解放した分だけ。
+## （攻略=好感度でノードが開き、育成=記憶の欠片でノードを買う、の両輪）
 func known_skills(id: String) -> Array:
 	var out := []
+	var owned: Array = state["girls"][id].get("tree", [])
+	# ツリーで解放した技
+	var unlocked_by_tree := {}
+	for node in KuroData.GIRL_TREES.get(id, []):
+		if node["id"] in owned and node["effect"].has("skill"):
+			unlocked_by_tree[String(node["effect"]["skill"])] = true
 	for sid in KuroData.SKILL_DB:
 		var def: Dictionary = KuroData.SKILL_DB[sid]
-		if def["girl"] == id and aff(id) >= KuroData.SKILL_UNLOCK_AFF[int(def["unlock"])]:
+		if def["girl"] != id:
+			continue
+		if int(def["unlock"]) == 0 or sid in unlocked_by_tree:
 			out.append(sid)
 	return out
 
@@ -845,10 +905,10 @@ func open_box() -> Dictionary:
 		state["sign"] = int(state["sign"]) + 1
 		return {"kind": "equip", "grade": grade, "text": "設備が増えた。看板+1（客数が増える）"}
 	elif r < KuroData.DROP_RECIPE + KuroData.DROP_EQUIP + KuroData.DROP_SHARD:
-		var id2: String = KuroData.GIRL_ORDER[rng.randi(KuroData.GIRL_ORDER.size())]
-		add_aff(id2, 10)
-		return {"kind": "shard", "grade": grade, "girl": id2,
-			"text": "記憶の欠片… %s の目が少し揺れた（♥+10）" % KuroData.GIRLS[id2]["name"]}
+		var amt := 2 + grade  # 育成通貨。箱が良いほど多い
+		state["shards"] = int(state["shards"]) + amt
+		return {"kind": "shard", "grade": grade,
+			"text": "記憶の欠片 +%d（育成に使える）" % amt}
 	else:
 		state["invites"] = int(state["invites"]) + 1
 		return {"kind": "invite", "grade": grade, "text": "招待状。翌夜の客が増える（+3）"}

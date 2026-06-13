@@ -77,6 +77,7 @@ var confirm: ConfirmationDialog
 var status_overlay: Control
 var status_portrait: PortraitRect
 var status_name: Label
+var status_head: VBoxContainer
 var status_body: VBoxContainer
 var bgm: AudioStreamPlayer       # 店テーマ（Abstraction CC0）
 var bgm_dive: AudioStreamPlayer  # 潜行ドローン（手続き生成）
@@ -524,61 +525,121 @@ func _build_status_overlay() -> void:
 	var top := HBoxContainer.new()
 	top.add_theme_constant_override("separation", 14)
 	status_portrait = PortraitRect.new()
-	status_portrait.custom_minimum_size = Vector2(190, 280)
+	status_portrait.custom_minimum_size = Vector2(170, 230)
 	top.add_child(status_portrait)
 	var info := VBoxContainer.new()
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	info.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	info.add_theme_constant_override("separation", 6)
 	status_name = _label("", TYPE_HEAD, Color(0.9, 0.96, 1.0))
 	info.add_child(status_name)
-	status_body = VBoxContainer.new()
-	status_body.add_theme_constant_override("separation", 5)
-	info.add_child(status_body)
+	status_head = VBoxContainer.new()
+	status_head.add_theme_constant_override("separation", 4)
+	info.add_child(status_head)
 	top.add_child(info)
 	box.add_child(top)
-	var close := _button("閉じる", _close_status, 24)
+	# 下段：装備・スキル・育成ツリー（スクロール）
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	status_body = VBoxContainer.new()
+	status_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	status_body.add_theme_constant_override("separation", 5)
+	scroll.add_child(status_body)
+	box.add_child(scroll)
+	var close := _button("閉じる", _close_status, TYPE_SUB)
 	close.custom_minimum_size = Vector2(0, 50)
 	box.add_child(close)
 	add_child(status_overlay)
 
 
 func _open_status(id: String) -> void:
-	_sfx("ui_confirm")
+	if not status_overlay.visible:
+		_sfx("ui_confirm")
 	var s := sim.state
 	var g: Dictionary = KuroData.GIRLS[id]
 	status_portrait.girl_id = id
 	status_name.text = String(g["name"])
+	_clear(status_head)
+	status_head.add_child(_label(String(g["role"]), TYPE_BODY, COL_WARM))
+	status_head.add_child(_label("♥ 好感度 %d / 100" % sim.aff(id), TYPE_BODY, Color(1.0, 0.7, 0.85)))
+	status_head.add_child(_label("攻撃 %d　最大HP %d" % [int(sim.girl_atk(id)), int(sim.girl_maxhp(id))], TYPE_BODY))
+	var fav := _label("好物 %s ／ 店番：%s" % [g["fav"], g["synergy"]], TYPE_SMALL, COL_DIM)
+	fav.autowrap_mode = TextServer.AUTOWRAP_OFF
+	status_head.add_child(fav)
 	_clear(status_body)
-	status_body.add_child(_label(String(g["role"]), TYPE_BODY, COL_WARM))
-	status_body.add_child(_label("♥ 好感度 %d / 100" % sim.aff(id), TYPE_BODY, Color(1.0, 0.7, 0.85)))
-	status_body.add_child(_label("攻撃 %d　　最大HP %d" % [int(sim.girl_atk(id)), int(sim.girl_maxhp(id))], 20))
-	status_body.add_child(_label("好物 %s　　店番シナジー：%s（%s）" % [g["fav"], g["synergy"], g["synergy_desc"]], 16, COL_DIM))
+	# 装備（3枠）。倉庫タブで埋める
 	status_body.add_child(_section("装備"))
 	for slot in ["weapon", "armor", "trinket"]:
 		var it: Dictionary = s["girls"][id]["equip"][slot]
 		var slot_name: String = SimItems.SLOTS[slot]["name"]
 		if it.is_empty():
-			status_body.add_child(_label("%s： —" % slot_name, 17, Color(1, 1, 1, 0.45)))
+			status_body.add_child(_label("%s： —（倉庫で装着）" % slot_name, TYPE_SMALL, Color(1, 1, 1, 0.45)))
 		else:
 			status_body.add_child(_label("%s： %s %s" % [slot_name, SimItems.display_name(it), SimItems.affix_text(it)],
-					17, SimItems.GRADES[int(it["grade"])]["color"]))
-	status_body.add_child(_section("スキル（枠 %d）" % sim.skill_slots()))
-	var skill_flow := HFlowContainer.new()
-	skill_flow.add_theme_constant_override("h_separation", 5)
-	skill_flow.add_theme_constant_override("v_separation", 5)
+					TYPE_SMALL, SimItems.GRADES[int(it["grade"])]["color"]))
+	# 育成ツリー（記憶の欠片で解放）
+	status_body.add_child(_section("育成ツリー　記憶の欠片 %d" % int(s["shards"])))
+	for node in KuroData.GIRL_TREES.get(id, []):
+		var owned: bool = node["id"] in s["girls"][id].get("tree", [])
+		var avail: bool = sim.tree_available(id, String(node["id"]))
+		var line := HBoxContainer.new()
+		line.add_theme_constant_override("separation", SP_2)
+		var desc := _tree_node_desc(node)
+		var col := DS.ACCENT if owned else (COL_TEXT if avail else COL_DIM)
+		var lbl := _label(("● " if owned else "○ ") + String(node["name"]) + "  " + desc, TYPE_SMALL, col)
+		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		line.add_child(lbl)
+		if owned:
+			line.add_child(_label("解放済", TYPE_SMALL, DS.ACCENT))
+		else:
+			var buy := _button("欠片%d" % int(node["cost"]), _on_tree_buy.bind(id, String(node["id"])), TYPE_SMALL)
+			buy.disabled = not avail or int(s["shards"]) < int(node["cost"])
+			if not avail and int(node.get("req_aff", 0)) > sim.aff(id):
+				buy.text = "♥%d必要" % int(node["req_aff"])
+			line.add_child(buy)
+		status_body.add_child(line)
+	# スキル（装備/外し）。枠は覚醒で増える
+	status_body.add_child(_section("スキル（装備枠 %d）" % sim.skill_slots()))
+	var sk_flow := HFlowContainer.new()
+	sk_flow.add_theme_constant_override("h_separation", 5)
+	sk_flow.add_theme_constant_override("v_separation", 5)
 	for sid in sim.known_skills(id):
 		var def: Dictionary = KuroData.SKILL_DB[sid]
 		var equipped: bool = sid in s["girls"][id]["skills_eq"]
-		var chip := _label("%s%s(CD%d)" % ["★" if equipped else "", def["name"], int(def["cd"])],
-				16, Color(1.0, 0.9, 0.55) if equipped else COL_DIM)
-		chip.autowrap_mode = TextServer.AUTOWRAP_OFF
-		skill_flow.add_child(chip)
-	status_body.add_child(skill_flow)
-	var nxt := sim.known_skills(id).size()
-	if nxt < 3:
-		status_body.add_child(_label("次のスキルは ♥%d で習得" % KuroData.SKILL_UNLOCK_AFF[nxt], 15, Color(1, 1, 1, 0.4)))
+		var sk := _button(("★" if equipped else "") + String(def["name"]), _on_status_skill.bind(id, String(sid)), TYPE_SMALL)
+		if not equipped and s["girls"][id]["skills_eq"].size() >= sim.skill_slots():
+			sk.disabled = true
+		sk_flow.add_child(sk)
+	status_body.add_child(sk_flow)
 	status_overlay.visible = true
+
+
+func _tree_node_desc(node: Dictionary) -> String:
+	var e: Dictionary = node["effect"]
+	if e.has("skill"):
+		return "技習得"
+	var parts: Array[String] = []
+	if e.has("atk"):
+		parts.append("攻+%d%%" % int(float(e["atk"]) * 100))
+	if e.has("hp"):
+		parts.append("HP+%d%%" % int(float(e["hp"]) * 100))
+	if e.has("crit"):
+		parts.append("会心+%d%%" % int(float(e["crit"]) * 100))
+	return "／".join(parts)
+
+
+func _on_tree_buy(id: String, node_id: String) -> void:
+	if sim.tree_unlock(id, node_id):
+		_sfx("ui_equip")
+		_pump_events()
+		_save(Time.get_unix_time_from_system())
+		_refresh_header()
+		_open_status(id)  # 再描画
+
+
+func _on_status_skill(id: String, sid: String) -> void:
+	sim.equip_skill(id, sid)
+	_open_status(id)
 
 
 func _close_status() -> void:
@@ -950,6 +1011,7 @@ func _refresh_header() -> void:
 	var sp := Control.new()
 	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header_bar.add_child(sp)
+	header_bar.add_child(_badge(null, "欠片%d" % int(s["shards"]), Color(1.0, 0.7, 0.85)))
 	header_bar.add_child(_badge(null, "屑%d" % int(s["scrap"]), DS.SUCCESS))
 
 
