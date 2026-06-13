@@ -29,6 +29,14 @@
 4. 立ち絵：`assets/portraits/<id>.png`（無ければ Portrait が色シルエットで代替）
 5. 掛け合い：`Banter.LINES[<id>]`、会話：`TalkData.TALKS[<id>]`（3シーン）
 
+## 探索中のセリフ（掛け合い）を足す
+- 独り言・反応 → `src/sim/banter.gd` の `LINES[キャラ][状況]` に "セリフ" を1行。
+  状況は start/idle/combat/boss/loot/levelup/gate/wipe/door。
+  idle が「放置で愛着が湧く」核心なので多めに。
+- 二人の応酬 → 同ファイル `EXCHANGES` に
+  `{"lines": [["キャラ","…"],["相手","…"], ...]}` を1要素。話者が全員潜行中の時だけ、
+  平時に約4割の確率で発生し、bubble が順に流れる。
+
 ## イベント／チュートリアルを足す
 1. `src/sim/event_data.gd` の `EVENTS` に1エントリ（speaker/title/lines、任意で a/b 2択）
 2. 出すタイミングは `main._maybe_event("id")` を呼ぶ場所を足すだけ。

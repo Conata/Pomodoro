@@ -18,6 +18,7 @@ func _initialize() -> void:
 	_test_keeper_matters()
 	_test_recipe_star_up()
 	_test_talk()
+	_test_content()
 	_test_equipment()
 	_test_renov()
 	_test_offline()
@@ -202,6 +203,35 @@ func _test_talk() -> void:
 			check(scene.has("a") and scene.has("b") and not scene["lines"].is_empty(),
 					"%s「%s」が完全" % [girl, scene["title"]])
 	check(total == 12, "会話は4人×3=12本")
+
+
+func _test_content() -> void:
+	print("[content]")
+	# 掛け合い：話者は全員実在キャラ、行は[id,text]
+	for ex in Banter.EXCHANGES:
+		for ln in ex["lines"]:
+			check(KuroData.GIRLS.has(String(ln[0])) and String(ln[1]) != "",
+					"掛け合いの話者/行が妥当: %s" % String(ln[0]))
+	# 4人潜行なら掛け合いが引ける
+	check(not Banter.pick_exchange(["mil", "yuzuki", "muu", "kiriko"], _rng_for(1)).is_empty(),
+			"全員潜行で掛け合いが選べる")
+	# 店番1人（3人潜行）でも壊れない（空 or 妥当）
+	var ex2 := Banter.pick_exchange(["mil", "yuzuki", "muu"], _rng_for(2))
+	check(ex2.is_empty() or ex2.has("lines"), "3人潜行でも掛け合い選択が安全")
+	# イベント：speaker 実在・lines 非空
+	for id in EventData.EVENTS:
+		var ev: Dictionary = EventData.EVENTS[id]
+		check(KuroData.GIRLS.has(String(ev["speaker"])) and not ev["lines"].is_empty(),
+				"イベント「%s」が妥当" % id)
+	# 各キャラに idle セリフが複数ある（探索中の独り言）
+	for gid in KuroData.GIRL_ORDER:
+		check(Banter.LINES[gid]["idle"].size() >= 5, "%s に探索独り言が5本以上" % gid)
+
+
+func _rng_for(seedv: int) -> RandomNumberGenerator:
+	var r := RandomNumberGenerator.new()
+	r.seed = seedv
+	return r
 
 
 func _test_equipment() -> void:

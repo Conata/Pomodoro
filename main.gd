@@ -71,6 +71,8 @@ var offline_note := ""
 var banter_rng := RandomNumberGenerator.new()
 var banter_timer := 0.0
 var banter_next := 6.0
+var _ex_queue: Array = []  # 掛け合いの残り行
+var _ex_timer := 0.0
 var confirm: ConfirmationDialog
 var status_overlay: Control
 var status_portrait: PortraitRect
@@ -117,6 +119,23 @@ func _maybe_event(id: String) -> void:
 	talk_view.play(ev, String(ev["speaker"]), {"kind": "event", "id": id})
 
 
+## 物語の芯：深度・日数の節目で1本ずつ発火（休憩=夜/朝の安全な場で）。
+## 条件を足すのはこの表に1行。先頭の未読・条件成立を1つだけ出す。
+func _check_story_events() -> void:
+	var floor_reached := int(sim.state["best_floor"]) + 1
+	var day := int(sim.state["day"])
+	var milestones := [
+		["story_b3", floor_reached >= 3],
+		["story_b6", floor_reached >= 6],
+		["story_b10", floor_reached >= 10],
+		["story_day3", day >= 3],
+	]
+	for m in milestones:
+		if bool(m[1]) and not String(m[0]) in sim.state["events_seen"]:
+			_maybe_event(String(m[0]))
+			return  # 1回に1本だけ
+
+
 ## シーン（会話/イベント）完了時の共通処理。
 func _on_scene_finished(meta: Dictionary) -> void:
 	match String(meta.get("kind", "")):
@@ -141,12 +160,19 @@ func _process(delta: float) -> void:
 		if save_accum >= 20.0:
 			save_accum = 0.0
 			_save(now)
-		# 何もない時間の独り言（放置で愛着が湧くやつ）
-		banter_timer += delta
-		if banter_timer >= banter_next:
-			banter_timer = 0.0
-			banter_next = banter_rng.randf_range(8.0, 15.0)
-			_idle_banter()
+		# 掛け合い再生中はそれを優先、無ければ何もない時間の独り言
+		if not _ex_queue.is_empty():
+			_ex_timer -= delta
+			if _ex_timer <= 0.0:
+				var ln: Array = _ex_queue.pop_front()
+				_say(String(ln[0]), String(ln[1]))
+				_ex_timer = 2.4
+		else:
+			banter_timer += delta
+			if banter_timer >= banter_next:
+				banter_timer = 0.0
+				banter_next = banter_rng.randf_range(8.0, 15.0)
+				_idle_banter()
 	_update_clock(now)
 	ui_accum += delta
 	if ui_accum >= 1.0:
@@ -238,6 +264,7 @@ func _banter(cat: String) -> void:
 
 
 ## 何もない時間：戦況に応じて combat/boss/idle を喋る。
+## 平時は4割で二人の掛け合いを始める（無ければ独り言）。
 func _idle_banter() -> void:
 	if phase != Phase.DIVE:
 		return
@@ -248,6 +275,12 @@ func _idle_banter() -> void:
 			break
 	if cat == "idle" and sim.state["in_combat"]:
 		cat = "combat"
+	if cat == "idle" and banter_rng.randf() < 0.4:
+		var ex := Banter.pick_exchange(sim.divers(), banter_rng)
+		if not ex.is_empty():
+			_ex_queue = ex["lines"].duplicate()
+			_ex_timer = 0.0
+			return
 	_banter(cat)
 
 
@@ -258,6 +291,7 @@ func _say(gid: String, text: String) -> void:
 
 func _on_run_complete() -> void:
 	door_row.visible = false
+	_ex_queue.clear()
 	var disconnected: bool = result_summary.get("disconnected", false)
 	_sfx("ui_denied" if disconnected else "teleport")
 	if not disconnected and result_summary.get("mode", "") == "pomo":
@@ -295,6 +329,7 @@ func _on_depart() -> void:
 	phase = Phase.DIVE
 	log_label.clear()
 	log_count = 0
+	_ex_queue.clear()
 	banter_timer = 0.0
 	banter_next = 3.5
 	_pump_events()
@@ -320,6 +355,7 @@ func _on_close_done() -> void:
 		_sfx("thunder")
 	_apply_phase()
 	_refresh_all()
+	_check_story_events()  # 浮上後の安全な場で物語の節目を出す
 
 
 func _on_next_morning() -> void:
@@ -330,6 +366,7 @@ func _on_next_morning() -> void:
 	_save(Time.get_unix_time_from_system())
 	_apply_phase()
 	_refresh_all()
+	_check_story_events()  # 日数の節目（story_day3 等）
 
 
 func _apply_phase() -> void:
