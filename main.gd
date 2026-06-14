@@ -429,7 +429,8 @@ func _mmss(sec: float) -> String:
 
 
 func _build_ui() -> void:
-	theme = DS.theme()
+	# 画像ベース(9-patch)テーマを優先。生成テクスチャ未インポート時は DS(flat) へ。
+	theme = UIKit.theme() if UIKit.available() else DS.theme()
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST  # 生成アイコンをドットのまま拡大
 	var bgrect := ColorRect.new()

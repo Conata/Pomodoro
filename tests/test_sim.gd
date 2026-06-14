@@ -16,6 +16,7 @@ func _initialize() -> void:
 	_test_resync_during_pomo()
 	_test_close_day()
 	_test_shop()
+	_test_ui_theme()
 	_test_keeper_matters()
 	_test_recipe_star_up()
 	_test_talk()
@@ -218,6 +219,24 @@ func _test_shop() -> void:
 	sh3.open_shop()
 	_run_shop(sh3, 120.0)
 	check(sh3.served == 0 and sh3.turned_away > 0, "献立が空なら門前払い")
+
+
+func _test_ui_theme() -> void:
+	print("[ui]")
+	check(UIKit.available(), "UIキットのテクスチャが存在する")
+	var th := UIKit.theme()
+	check(th != null, "テーマが組める")
+	check(th.get_stylebox("panel", "PanelContainer") != null, "パネルstyleboxがある")
+	check(th.get_stylebox("normal", "Button") != null, "ボタンstyleboxがある")
+	check(th.get_stylebox("fill", "ProgressBar") != null, "バーfill既定がある")
+	var pb := ProgressBar.new()
+	UIKit.style_bar(pb, "bar_mint")
+	check(pb.has_theme_stylebox_override("fill"), "style_barでfillが適用される")
+	pb.free()
+	var b := Button.new()
+	UIKit.as_pomodoro(b)
+	check(b.has_theme_stylebox_override("normal"), "as_pomodoroでミントボタン化")
+	b.free()
 
 
 func _test_keeper_matters() -> void:
