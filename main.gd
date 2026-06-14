@@ -5,7 +5,7 @@ extends Control
 ## タイマーは unix 秒アンカー＋固定ステップのキャッチアップ
 ## （タブ非アクティブでも正確。壊すと製品価値が消える部分）。
 
-enum Phase { MORNING, DIVE, CLOSE, NIGHT }
+enum Phase { MORNING, DIVE, CAMP, NIGHT }  # CAMP=休憩(焚き火)。旧CLOSEを転用
 
 # デザインシステム（src/ui/ds.gd）から引く。色・型・間隔の唯一の真実は DS。
 const COL_BG := DS.BG
@@ -307,18 +307,16 @@ func _on_run_complete() -> void:
 	if not disconnected and result_summary.get("mode", "") == "pomo":
 		sim.register_completion(Time.get_date_string_from_system(), float(result_summary["minutes"]))
 		_notify("浮上。%d分の集中、おつかれさま" % int(result_summary["minutes"]))
-	# 浮上 → 暖簾を出す（接客はライブ進行）。集中の戦利品が今夜の弾になる。
+	# 浮上 → 休憩（焚き火）へ。HP回復し、店を開けるか次の集中へかを選ぶ。
 	var mats_by: Dictionary = result_summary.get("mats_by", {})
 	if not mats_by.is_empty():
 		_notify("収穫: 乾物%d 肉%d 海鮮%d" % [
 			int(mats_by.get("dry", 0)), int(mats_by.get("meat", 0)), int(mats_by.get("sea", 0))])
 	night_data = {}
-	shop = ShopSim.new(sim)
-	shop.open_shop()
-	# 会話は営業中も解放したいので、最小の pending_night を立てておく（閉店時に上書き）。
-	if sim.state["pending_night"].is_empty():
-		sim.state["pending_night"] = {"lines": [], "gold": 0, "served": 0, "story": "", "talk_done": false}
-	phase = Phase.NIGHT
+	_rest_heal()
+	var head := "【切断】早めに引き上げた。" if disconnected else "焚き火で一息。"
+	close_text.text = "%s\n戦利品が今夜の店の弾になる。" % head
+	phase = Phase.CAMP
 	_save(Time.get_unix_time_from_system())
 	_apply_phase()
 	_refresh_all()
@@ -383,13 +381,35 @@ func _on_abandon_confirmed() -> void:
 	_pump_events()
 
 
-func _on_close_done() -> void:
+## 休憩（焚き火）：パーティのHPを全回復する。
+func _rest_heal() -> void:
+	for id in KuroData.GIRL_ORDER:
+		sim.state["hp"][id] = sim.girl_maxhp(id)
+
+
+## 休憩 → 暖簾を出す（営業＝お店モードのライブ接客へ）。
+func _on_camp_open_shop() -> void:
+	shop = ShopSim.new(sim)
+	shop.open_shop()
+	# 会話は営業中も解放したいので、最小の pending_night を立てる（閉店時に上書き）。
+	if sim.state["pending_night"].is_empty():
+		sim.state["pending_night"] = {"lines": [], "gold": 0, "served": 0, "story": "", "talk_done": false}
 	phase = Phase.NIGHT
-	if night_data.get("story", "") != "":
-		_sfx("thunder")
+	_sfx("ui_confirm")
+	if bgm != null and not bgm.playing:
+		bgm.play()
+	_save(Time.get_unix_time_from_system())
 	_apply_phase()
 	_refresh_all()
-	_check_story_events()  # 浮上後の安全な場で物語の節目を出す
+	_check_story_events()
+
+
+## 休憩 → 次の集中の準備へ（店を開けずにまた潜る）。
+func _on_camp_next_dive() -> void:
+	phase = Phase.MORNING
+	_sfx("ui_confirm")
+	_apply_phase()
+	_refresh_all()
 
 
 func _on_next_morning() -> void:
@@ -412,7 +432,7 @@ func _on_next_morning() -> void:
 func _apply_phase() -> void:
 	var diving := phase == Phase.DIVE
 	dive_panel.visible = diving
-	close_panel.visible = phase == Phase.CLOSE
+	close_panel.visible = phase == Phase.CAMP
 	timer_box.visible = diving
 	# 潜行中はビューを大きく、待機中は薄い店先バナーに畳む（スマホ一画面のため）
 	if diving:
@@ -453,9 +473,9 @@ func _update_clock(now: float) -> void:
 		Phase.NIGHT:
 			timer_label.text = "営業中" if (shop != null and shop.open) else "黒猫飯店"
 			status_label.text = "灯りをつけて、皆が戻る。"
-		Phase.CLOSE:
-			timer_label.text = "帰還"
-			status_label.text = ""
+		Phase.CAMP:
+			timer_label.text = "休憩"
+			status_label.text = "焚き火を囲む。"
 	DisplayServer.window_set_title(title)
 
 
@@ -869,13 +889,19 @@ func _build_close() -> void:
 	var box := VBoxContainer.new()
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_theme_constant_override("separation", SP_3)
-	box.add_child(_section("閉店三行"))
+	box.add_child(_section("休憩 — 焚き火"))
 	close_text = _label("", TYPE_BODY)
 	close_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_child(close_text)
-	var done := _cta("閉店作業へ", _on_close_done, TYPE_SUB)
-	done.custom_minimum_size = Vector2(0, 54)
-	box.add_child(done)
+	# 店を開ける（営業＝オレンジ）／次の集中へ（ポモドーロ＝ミント）
+	var to_shop := _cta("🏮 暖簾を出す（営業へ）", _on_camp_open_shop, TYPE_SUB)
+	to_shop.custom_minimum_size = Vector2(0, 54)
+	box.add_child(to_shop)
+	var again := _button("▶ 次の集中へ（準備）", _on_camp_next_dive, TYPE_SUB)
+	again.custom_minimum_size = Vector2(0, 48)
+	if UIKit.available():
+		UIKit.as_pomodoro(again)
+	box.add_child(again)
 	card.add_child(box)
 	col.add_child(card)
 	var sp_bot := Control.new()
