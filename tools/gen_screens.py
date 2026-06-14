@@ -99,30 +99,70 @@ def topbar(buf, title_n, accent):
 	_txt(buf, W - 96, 28, 6, accent)  # 時刻/所持金
 
 
-# ── 店モード（非ポモドーロ＝70%が店・UIは極小） ──────────────────────────
+RED_NEON = (0xd2, 0x3b, 0x2e)
+
+
+def navrail(buf, active=0):
+	"""左の縦ナビ（店/探索/記憶の欠片/設定）。active を橙で点灯。"""
+	panel(buf, "panel_inset", 8, 64, 46, 470, K.MARGINS["panel_inset"])
+	cols = [C["amber"], C["mint"], C["purple"], C["ink"]]
+	for i in range(4):
+		cy = 96 + i * 70
+		if i == active:
+			panel(buf, "row", 12, cy - 20, 38, 40, K.MARGINS["row"])
+		disc(buf, 31, cy, 11, cols[i] if i == active else (0x55, 0x52, 0x4c), 0.9)
+
+
+# ── 店モード（ホーム画面：賑わう飯店＋集中を始めるCTA。接客シミュは裏で稼働） ──
 def screen_shop():
-	buf = _bg((0x16, 0x14, 0x12))
-	soft_glow(buf, W // 2, 250, 240, C["amber"], 0.10)        # 暖色照明
-	soft_glow(buf, 60, 120, 90, WINDOW_NIGHT, 0.0)
-	topbar(buf, 9, C["amber"])  # 黒猫飯店 23:41
-	# 店内（画面の主役・大きく）
-	panel(buf, "panel", 10, 64, W - 20, 540, K.MARGINS["panel"])
+	buf = _bg((0x16, 0x12, 0x10))
+	# 上部バー：ロゴ＋時刻/日付＋ポモドーロ＋ベル/メニュー
+	panel(buf, "topbar", 8, 10, W - 16, 46, K.MARGINS["topbar"])
+	disc(buf, 28, 33, 10, (0x12, 0x12, 0x12)); disc(buf, 24, 30, 3, C["amber"]); disc(buf, 32, 30, 3, C["amber"])
+	_txt(buf, 46, 28, 6, C["ink"])           # 黒猫飯店
+	_txt(buf, 150, 28, 5, C["ink"])          # 23:41 5/24
+	disc(buf, 280, 33, 9, (0, 0, 0, 0));
+	for r in (9, 6):
+		disc(buf, 280, 33, r, C["mint"], 0.25)
+	_txt(buf, 296, 30, 4, C["mint"])         # 25:00
+	disc(buf, W - 40, 33, 6, C["amber"], 0.8)  # ベル
+	_txt(buf, W - 24, 28, 2, C["ink"])         # メニュー
+	# 左ナビ
+	navrail(buf, active=0)
+	# 飯店内観（主役・赤ネオン）
+	panel(buf, "panel", 60, 64, W - 70, 470, K.MARGINS["panel"])
+	soft_glow(buf, 210, 230, 230, RED_NEON, 0.10)
+	soft_glow(buf, 210, 200, 150, C["amber"], 0.08)
+	# 赤ネオン看板「黒猫飯店」
+	panel(buf, "panel_inset", 150, 92, 150, 40, K.MARGINS["panel_inset"])
+	for gx in range(5):
+		_txt(buf, 168 + gx * 26, 104, 2, RED_NEON, cell=6, gap=2, a=0.95)
+	soft_glow(buf, 225, 112, 90, RED_NEON, 0.18)
 	# 窓（夜の青）
-	panel(buf, "panel_inset", 32, 96, 120, 80, K.MARGINS["panel_inset"])
-	soft_glow(buf, 92, 136, 60, (0x2a, 0x35, 0x50), 0.5)
-	# キャラ（ミル/キリコ/猫店長）
-	char(buf, 130, 360, 4.0, (0x33, 0x2e, 0x3a))             # ミル（暗髪）
-	char(buf, 250, 360, 4.0, C["purple"])                    # キリコ（紫）
-	disc(buf, 190, 470, 16, (0x12, 0x12, 0x12))              # 猫店長（黒猫）
-	disc(buf, 182, 458, 4, C["amber"]); disc(buf, 198, 458, 4, C["amber"])  # 目
-	# 下：来店客／評判（最小情報）
-	panel(buf, "row", 10, 612, W - 20, 60, K.MARGINS["row"])
-	_txt(buf, 26, 632, 8, C["ink"])                          # 来店客 3名
-	for k in range(5):                                       # 評判 ★★★☆☆
-		disc(buf, 250 + k * 20, 642, 7, C["amber"] if k < 3 else (0x40, 0x3a, 0x33))
-	# 大CTA（暖簾を出す＝Primary）
-	panel(buf, "button_primary", 10, 686, W - 20, 56, K.MARGINS["button"])
-	_txt(buf, 150, 708, 6, (0x23, 0x17, 0x08))
+	panel(buf, "panel_inset", 78, 150, 80, 64, K.MARGINS["panel_inset"])
+	soft_glow(buf, 118, 182, 44, WINDOW_NIGHT, 0.5)
+	# カウンター
+	for yy in range(300, 322):
+		for xx in range(80, W - 24):
+			K.blend(buf, W, xx, yy, 0x3a, 0x16, 0x12, 0.7)
+	# キャラ：店主ミル(奥)・常連・主役の赤髪・紫キリコ・黒猫たち
+	char(buf, 150, 290, 3.0, (0x33, 0x2e, 0x3a))   # ミル（カウンター内）
+	char(buf, 250, 370, 3.6, RED_NEON)             # 赤髪の主役（手前）
+	char(buf, 320, 360, 3.2, C["purple"])          # キリコ（紫）
+	disc(buf, 110, 400, 14, (0x12, 0x12, 0x12)); disc(buf, 104, 392, 3, C["amber"]); disc(buf, 116, 392, 3, C["amber"])  # 黒猫
+	disc(buf, 350, 300, 11, (0x12, 0x12, 0x12))    # 黒猫2
+	# 大CTA：集中を始める（ミント＝ポモドーロ）
+	panel(buf, "button_mint", 60, 548, W - 200, 56, K.MARGINS["button"])
+	_txt(buf, 110, 566, 8, (0x0c, 0x2a, 0x23))     # 集中を始める
+	_txt(buf, 110, 584, 6, (0x0c, 0x2a, 0x23), cell=3, gap=1, a=0.7)  # ポモドーロ 25:00
+	_txt(buf, 70, 614, 7, C["ink"], cell=3, gap=1, a=0.5)            # 長押しでクイック
+	# 右下スタッツ：評判/資金/記憶の欠片
+	panel(buf, "row", W - 132, 548, 122, 150, K.MARGINS["row"])
+	for k in range(5):
+		disc(buf, W - 116 + k * 18, 572, 6, C["amber"] if k < 3 else (0x40, 0x3a, 0x33))
+	_txt(buf, W - 120, 596, 4, C["ink"])     # 資金
+	_txt(buf, W - 120, 620, 5, C["amber"])   # 12,840G
+	_txt(buf, W - 120, 648, 4, C["purple"])  # 記憶の欠片 128
 	K.save_png(os.path.join(ROOT, "screen_shop.png"), W, H, buf)
 	print("  screen_shop.png")
 

@@ -131,6 +131,15 @@ static func as_primary(b: Button) -> void:
 	b.add_theme_color_override("font_hover_color", ON_PRIMARY)
 
 
+## 集中を始める＝ポモドーロ＝ミント（Secondary）。
+static func as_pomodoro(b: Button) -> void:
+	b.add_theme_stylebox_override("normal", _sb("button_mint", 18, 10))
+	b.add_theme_stylebox_override("hover", _sb("button_mint", 18, 10))
+	b.add_theme_stylebox_override("pressed", _sb("button_press", 18, 10))
+	b.add_theme_color_override("font_color", Color("0c2a23"))
+	b.add_theme_color_override("font_hover_color", Color("0c2a23"))
+
+
 ## 危険/撤退＝朱字。
 static func as_danger(b: Button) -> void:
 	b.add_theme_color_override("font_color", DANGER)
