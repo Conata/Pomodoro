@@ -24,7 +24,7 @@ theme/custom_font="res://assets/fonts/DotGothic16-Regular.ttf"
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
-environment/defaults/default_clear_color=Color(0.025, 0.05, 0.15, 1)
+environment/defaults/default_clear_color=Color(0.082, 0.082, 0.082, 1)
 ; Webプリセットの vram_texture_compression/for_mobile=true に必須。
 ; これが false だと「Cannot export ... configuration errors:」が
 ; 空メッセージで失敗する（Godot 4.3 はエラー文を出さない）
