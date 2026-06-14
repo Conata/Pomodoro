@@ -144,19 +144,30 @@ func _draw_rain(sz: Vector2) -> void:
 		draw_line(Vector2(px, py), Vector2(px - 5.0, py + 16.0), Color(0.65, 0.85, 1.0, a), 1.2)
 
 
-func _draw_sprite(tex: Texture2D, foot: Vector2, flip: bool = false, tint: Color = TINT) -> void:
-	var s := tex.get_size() * SCALE
+func _draw_sprite(tex: Texture2D, foot: Vector2, flip: bool = false, tint: Color = TINT, scl: float = SCALE) -> void:
+	var s := tex.get_size() * scl
 	var rect := Rect2(foot - Vector2(s.x * 0.5, s.y), s)
 	if flip:
 		rect = Rect2(rect.position + Vector2(rect.size.x, 0), Vector2(-rect.size.x, rect.size.y))
 	draw_texture_rect(tex, rect, false, tint)
 
 
+## 足元の楕円ソフトシャドウ。キャラを地面に「立たせる」ための接地感。
+func _draw_shadow(cx: float, ground: float, w: float) -> void:
+	var pts := PackedVector2Array()
+	var seg := 20
+	for k in seg:
+		var a := TAU * k / seg
+		pts.append(Vector2(cx + cos(a) * w * 0.5, ground + 5.0 + sin(a) * w * 0.16))
+	draw_colored_polygon(pts, Color(0, 0, 0, 0.30))
+
+
 ## 提供キャラの横スプライトシート（assets/generated/sprites/<id>/<anim>.png、4コマ）を
 ## 足元基準でコマ送り描画。青tintはかけず本来の色で出す。あれば true。
+## 提供キャラの横スプライトシート（4コマ）を、指定の表示高さ h・足元基準で描く。
+## 立ち絵を主役に＝画面に応じて大きく見せる。描いた幅を返す（0=未描画）。
 const CHIBI_FRAMES := 4
-const CHIBI_H := 96.0
-func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool) -> bool:
+func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool, h: float, flip: bool = false) -> float:
 	var anim := "attack" if in_combat else "walk_front"
 	var tex := _tex("res://assets/generated/sprites/%s/%s.png" % [id, anim])
 	if tex == null:
@@ -166,16 +177,18 @@ func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool) -> boo
 	if tex == null:
 		tex = _tex("res://assets/generated/sprites/yuzuki/walk_front.png")
 	if tex == null:
-		return false
+		return 0.0
 	var fw := tex.get_size().x / float(CHIBI_FRAMES)
 	var fh := tex.get_size().y
 	var f := int(pulse * ANIM_FPS) % CHIBI_FRAMES
-	var sc := CHIBI_H / fh
+	var sc := h / fh
 	var dw := fw * sc
-	var rect := Rect2(foot.x - dw * 0.5, foot.y - CHIBI_H, dw, CHIBI_H)
-	var tint := Color(1, 1, 1) if alive else Color(0.4, 0.42, 0.52)
+	var rect := Rect2(foot.x - dw * 0.5, foot.y - h, dw, h)
+	if flip:
+		rect = Rect2(rect.position + Vector2(rect.size.x, 0), Vector2(-rect.size.x, rect.size.y))
+	var tint := Color(1, 1, 1) if alive else Color(0.45, 0.47, 0.58)
 	draw_texture_rect_region(tex, rect, Rect2(f * fw, 0, fw, fh), tint)
-	return true
+	return dw
 
 
 
@@ -278,59 +291,78 @@ func _draw() -> void:
 		draw_string(font, Vector2(sz.x - 190, 36), "送付済の箱 ×%d" % int(run["banked"]),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 18, DS.ACCENT)
 
-	var ground := sz.y * 0.80
-	draw_line(Vector2(0, ground), Vector2(sz.x, ground), DS.LINE, 2.0)
+	var ground := sz.y * 0.88
+	draw_line(Vector2(0, ground), Vector2(sz.x, ground), Color(DS.LINE.r, DS.LINE.g, DS.LINE.b, 0.55), 2.0)
 
 	var in_combat: bool = sim.state["in_combat"]
 	var door_open := float(run["door_pending"]) > 0.0
 	var mode := "idle" if in_combat or door_open else "run"
 
+	# キャラの表示高さは画面に追従（立ち絵が主役＝大きく見せる）
+	var chibi_h := clampf(sz.y * 0.62, 120.0, 280.0)
+
 	# 扉（クイック決断バナー中）
 	if door_open:
 		var door_tex := _tex(FRAME_DIR + "doors_leaf_closed.png")
 		if door_tex != null:
-			_draw_sprite(door_tex, Vector2(sz.x * 0.5, ground), false, Color(0.8, 0.9, 1.3))
+			_draw_sprite(door_tex, Vector2(sz.x * 0.5, ground), false, Color(0.8, 0.9, 1.3),
+					(chibi_h * 0.9) / door_tex.get_size().y)
 
 	# 戦闘中の突進モーション（味方は右へ、敵は左へ、交互に踏み込む）
-	var lunge_party := (7.0 * maxf(0.0, sin(pulse * 5.0))) if in_combat else 0.0
-	var lunge_enemy := (7.0 * maxf(0.0, sin(pulse * 5.0 + PI))) if in_combat else 0.0
+	var lunge_party := (9.0 * maxf(0.0, sin(pulse * 5.0))) if in_combat else 0.0
+	var lunge_enemy := (9.0 * maxf(0.0, sin(pulse * 5.0 + PI))) if in_combat else 0.0
 
-	# 潜行メンバー（左）
+	# 潜行メンバー（左寄り・スロット配置）。戦闘中は左半分に寄せ右に敵の場を空ける
 	var ds: Array = sim.divers()
-	for i in ds.size():
+	var n := ds.size()
+	var party_w := sz.x * (0.54 if in_combat else 0.76)
+	var slot := party_w / float(maxi(n, 1))
+	var ch := minf(chibi_h, slot * 2.1)  # スロットに対し大きすぎる重なりを防ぐ
+	var party_x: Array = []
+	for i in n:
 		var id: String = ds[i]
-		var x := 56.0 + i * 60.0 + lunge_party
+		var x := slot * (i + 0.5) + 6.0 + lunge_party
+		party_x.append(x)
 		var alive := float(sim.state["hp"].get(id, 0.0)) > 0.0
-		# 提供チビスプライトがあれば優先（カラー）。無ければ従来の0x72（青tint）。
-		if _draw_chibi(id, Vector2(x, ground), in_combat, alive):
+		# 提供立ち絵があれば優先（カラー）。無ければ従来の0x72（青tint）。
+		var dw := _draw_chibi(id, Vector2(x, ground), in_combat, alive, ch, false)
+		if dw > 0.0:
+			_draw_shadow(x, ground, dw * 0.78)
 			if alive:
-				_draw_hp(x, ground - CHIBI_H - 10.0, float(sim.state["hp"][id]) / sim.girl_maxhp(id))
+				_draw_hp(x, ground - ch - 12.0, float(sim.state["hp"][id]) / sim.girl_maxhp(id),
+						maxf(36.0, dw * 0.7))
 		else:
 			var tex := _anim_tex(String(KuroData.GIRLS[id]["sprite"]), mode if alive else "idle")
 			if tex != null:
-				_draw_sprite(tex, Vector2(x, ground), false, TINT if alive else Color(0.25, 0.3, 0.45))
+				var scl := (ch * 0.9) / tex.get_size().y
+				_draw_shadow(x, ground, tex.get_size().x * scl * 0.7)
+				_draw_sprite(tex, Vector2(x, ground), false, TINT if alive else Color(0.25, 0.3, 0.45), scl)
 				if alive:
-					_draw_hp(x, ground - tex.get_size().y * SCALE - 10.0,
-							float(sim.state["hp"][id]) / sim.girl_maxhp(id))
+					_draw_hp(x, ground - ch - 12.0, float(sim.state["hp"][id]) / sim.girl_maxhp(id))
 			else:
 				draw_circle(Vector2(x, ground - 14), 12.0, KuroData.GIRLS[id]["color"])
 
-	# 敵（右・左向き）
+	# 敵（右・左向き）。味方の大きさに合わせて拡大（0x72はNEARESTでドット感のまま）
 	var boss_mob := {}
 	for i in sim.state["mobs"].size():
 		var m: Dictionary = sim.state["mobs"][i]
-		var x: float = sz.x - 90.0 - i * 58.0 - lunge_enemy
+		var x: float = sz.x - slot * 0.6 - i * (slot * 0.85) - lunge_enemy
 		var tex2 := _anim_tex(String(m.get("sprite", "")), "idle")
 		var ratio := clampf(float(m["hp"]) / float(m["max_hp"]), 0.0, 1.0)
 		var tint: Color = Color(1.0, 0.55, 0.6) if m["boss"] else (Color(0.9, 0.75, 1.1) if m["elite"] else TINT)
-		if m["boss"]:
-			boss_mob = m
-			# ボスは一回り大きく、脈動するオーラ
-			draw_circle(Vector2(x, ground - 30), 40.0 + 4.0 * sin(pulse * 3.0), Color(1.0, 0.3, 0.35, 0.16))
 		if tex2 != null:
-			_draw_sprite(tex2, Vector2(x, ground), true, tint)
-			_draw_hp(x, ground - tex2.get_size().y * SCALE - 10.0, ratio, 44.0 if m["boss"] else 32.0)
+			var escl := clampf((ch * 0.6) / tex2.get_size().y, SCALE, 16.0)
+			if m["boss"]:
+				escl *= 1.3
+				boss_mob = m
+				draw_circle(Vector2(x, ground - tex2.get_size().y * escl * 0.5),
+						tex2.get_size().y * escl * 0.6 + 4.0 * sin(pulse * 3.0), Color(1.0, 0.3, 0.35, 0.16))
+			_draw_shadow(x, ground, tex2.get_size().x * escl * 0.7)
+			_draw_sprite(tex2, Vector2(x, ground), true, tint, escl)
+			_draw_hp(x, ground - tex2.get_size().y * escl - 10.0, ratio, 48.0 if m["boss"] else 34.0)
 		else:
+			if m["boss"]:
+				boss_mob = m
 			draw_circle(Vector2(x, ground - 14), 16.0 if m["boss"] else 10.0, tint)
 
 	# ボス演出：上部の専用HPバー＋ラベル＋赤いふち
@@ -340,11 +372,11 @@ func _draw() -> void:
 	_draw_fx(ground)
 	_draw_rain(sz)
 
-	# セリフ吹き出し（潜行中のキャラの掛け合い）
+	# セリフ吹き出し（潜行中のキャラの掛け合い）。立ち絵の頭上に出す
 	if not _bubble.is_empty():
 		var bi := ds.find(String(_bubble["girl"]))
-		if bi >= 0:
-			_draw_bubble(font, Vector2(56.0 + bi * 60.0, ground - 64.0),
+		if bi >= 0 and bi < party_x.size():
+			_draw_bubble(font, Vector2(float(party_x[bi]), ground - ch - 8.0),
 					String(KuroData.GIRLS[_bubble["girl"]]["name"]), String(_bubble["text"]))
 
 	var status := "進軍中…"
@@ -354,5 +386,6 @@ func _draw() -> void:
 		status = "戦闘中（再同期 %d 回目）" % int(run["resyncs"])
 	elif in_combat:
 		status = "戦闘中"
-	draw_string(font, Vector2(14, ground + 30), status, HORIZONTAL_ALIGNMENT_LEFT, -1, 20,
+	draw_string(font, Vector2(14, minf(ground + 26.0, sz.y - 8.0)), status,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 20,
 			Color(0.95, 0.75, 0.8) if in_combat else Color(0.7, 0.85, 1.0, 0.6))

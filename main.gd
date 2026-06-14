@@ -446,7 +446,7 @@ func _apply_phase() -> void:
 	timer_box.visible = diving
 	# 潜行中はビューを大きく、待機中は薄い店先バナーに畳む（スマホ一画面のため）
 	if diving:
-		dive.custom_minimum_size = Vector2(0, 230)
+		dive.custom_minimum_size = Vector2(0, 300)
 		dive_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	else:
 		dive.custom_minimum_size = Vector2(0, 92)
@@ -610,11 +610,13 @@ func _relayout() -> void:
 		panel_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		panel_col.size_flags_stretch_ratio = 1.0
 	else:
-		# 縦：潜行中はステージ(潜行ビュー)を拡張、待機中はパネル(タブ)を拡張＝従来挙動
+		# 縦：潜行中はステージ(立ち絵)を主役に大きく、待機中はパネル(タブ)を拡張＝従来挙動
 		stage_col.size_flags_horizontal = Control.SIZE_FILL
 		stage_col.size_flags_vertical = Control.SIZE_EXPAND_FILL if phase == Phase.DIVE else Control.SIZE_SHRINK_BEGIN
+		stage_col.size_flags_stretch_ratio = 1.9 if phase == Phase.DIVE else 1.0
 		panel_col.size_flags_horizontal = Control.SIZE_FILL
 		panel_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		panel_col.size_flags_stretch_ratio = 1.0
 
 
 ## TBH の英雄画面のような、高解像度キャラ＋装備＋スキルの詳細。
