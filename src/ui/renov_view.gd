@@ -1,12 +1,14 @@
 class_name RenovView
 extends Control
-## 改装ツリー（TBHルーンツリー準拠：マップ型・隣接解放）の描画とタップ判定。
-## 解放済み=シアン塗り、解放可能=明滅する縁、未到達=沈んだ青。
+## 改装ツリー（TBHルーンツリー準拠：マップ型グリッド・隣接解放）の描画とタップ判定。
+## 解放済み=紫塗り、解放可能=明滅する縁、未到達=沈んだ暗色（オカルト＝紫で識別）。
 
 signal node_tapped(node_id: String)
 
 const CELL := 86.0
 const RADIUS := 27.0
+const RUNE := Color("8e6bc7")       # 紫＝オカルト/精神世界（UIKit.ACCENT と一致）
+const RUNE_DIM := Color("3a2f4a")   # 未到達の沈んだ縁
 
 var sim: KuroSim = null
 var pulse := 0.0
@@ -35,7 +37,7 @@ func _draw() -> void:
 		for p in KuroData.RENOV_NODES[id]["prev"]:
 			var owned: bool = id in sim.state["renov"]
 			draw_line(_node_center(String(p)), _node_center(id),
-					Color(DS.ACCENT.r, DS.ACCENT.g, DS.ACCENT.b, 0.5) if owned else DS.LINE, 3.0)
+					Color(RUNE.r, RUNE.g, RUNE.b, 0.5) if owned else RUNE_DIM, 3.0)
 	for id in KuroData.RENOV_NODES:
 		var node: Dictionary = KuroData.RENOV_NODES[id]
 		var c := _node_center(id)
@@ -44,21 +46,21 @@ func _draw() -> void:
 		var affordable: bool = avail and int(sim.state["gold"]) >= int(node["cost"])
 		if owned:
 			draw_circle(c, RADIUS, DS.SURFACE_2)
-			draw_arc(c, RADIUS, 0, TAU, 32, DS.ACCENT, 3.0)
+			draw_arc(c, RADIUS, 0, TAU, 32, RUNE, 3.0)
 		elif avail:
 			var a: float = (0.5 + 0.3 * sin(pulse * 3.0)) if affordable else 0.35
 			draw_circle(c, RADIUS, DS.SURFACE)
-			draw_arc(c, RADIUS, 0, TAU, 32, Color(DS.ACCENT.r, DS.ACCENT.g, DS.ACCENT.b, a + 0.3), 3.0)
+			draw_arc(c, RADIUS, 0, TAU, 32, Color(RUNE.r, RUNE.g, RUNE.b, a + 0.3), 3.0)
 		else:
-			draw_circle(c, RADIUS, Color(0.05, 0.08, 0.16))
-			draw_arc(c, RADIUS, 0, TAU, 32, DS.LINE, 2.0)
+			draw_circle(c, RADIUS, Color(0.08, 0.07, 0.10))
+			draw_arc(c, RADIUS, 0, TAU, 32, RUNE_DIM, 2.0)
 		var label_color := DS.TEXT if owned or avail else DS.TEXT_MUTE
 		var nm: String = node["name"]
 		var w := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_CENTER, -1, 15).x
 		draw_string(font, c + Vector2(-w * 0.5, RADIUS + 19), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, label_color)
 		if owned:
 			var mw := font.get_string_size("●", HORIZONTAL_ALIGNMENT_CENTER, -1, 18).x
-			draw_string(font, c + Vector2(-mw * 0.5, 7), "●", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, DS.ACCENT)
+			draw_string(font, c + Vector2(-mw * 0.5, 7), "●", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, RUNE)
 		else:
 			var cost := "%dG" % int(node["cost"])
 			var cw := font.get_string_size(cost, HORIZONTAL_ALIGNMENT_CENTER, -1, 13).x

@@ -697,27 +697,15 @@ func _open_status(id: String) -> void:
 		else:
 			status_body.add_child(_label("%s： %s %s" % [slot_name, SimItems.display_name(it), SimItems.affix_text(it)],
 					TYPE_SMALL, SimItems.GRADES[int(it["grade"])]["color"]))
-	# 育成ツリー（記憶の欠片で解放）
-	status_body.add_child(_section("育成ツリー　記憶の欠片 %d" % int(s["shards"])))
+	# スキルツリー（記憶の欠片で解放）＝グリッドのノードカード
+	status_body.add_child(_section("スキルツリー　記憶の欠片 %d" % int(s["shards"])))
+	var tree_grid := GridContainer.new()
+	tree_grid.columns = 2
+	tree_grid.add_theme_constant_override("h_separation", SP_2)
+	tree_grid.add_theme_constant_override("v_separation", SP_2)
 	for node in KuroData.GIRL_TREES.get(id, []):
-		var owned: bool = node["id"] in s["girls"][id].get("tree", [])
-		var avail: bool = sim.tree_available(id, String(node["id"]))
-		var line := HBoxContainer.new()
-		line.add_theme_constant_override("separation", SP_2)
-		var desc := _tree_node_desc(node)
-		var col := DS.ACCENT if owned else (COL_TEXT if avail else COL_DIM)
-		var lbl := _label(("● " if owned else "○ ") + String(node["name"]) + "  " + desc, TYPE_SMALL, col)
-		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		line.add_child(lbl)
-		if owned:
-			line.add_child(_label("解放済", TYPE_SMALL, DS.ACCENT))
-		else:
-			var buy := _button("欠片%d" % int(node["cost"]), _on_tree_buy.bind(id, String(node["id"])), TYPE_SMALL)
-			buy.disabled = not avail or int(s["shards"]) < int(node["cost"])
-			if not avail and int(node.get("req_aff", 0)) > sim.aff(id):
-				buy.text = "♥%d必要" % int(node["req_aff"])
-			line.add_child(buy)
-		status_body.add_child(line)
+		tree_grid.add_child(_skill_node_card(id, node))
+	status_body.add_child(tree_grid)
 	# スキル（装備/外し）。枠は覚醒で増える
 	status_body.add_child(_section("スキル（装備枠 %d）" % sim.skill_slots()))
 	var sk_flow := HFlowContainer.new()
@@ -732,6 +720,31 @@ func _open_status(id: String) -> void:
 		sk_flow.add_child(sk)
 	status_body.add_child(sk_flow)
 	status_overlay.visible = true
+
+
+## スキルツリーの1ノードをカードで（精神世界＝紫。解放済/可能/ロックで色分け）。
+func _skill_node_card(id: String, node: Dictionary) -> PanelContainer:
+	var s := sim.state
+	var owned: bool = node["id"] in s["girls"][id].get("tree", [])
+	var avail: bool = sim.tree_available(id, String(node["id"]))
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", _card_sb())
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", SP_1)
+	var head_col := (UIKit.ACCENT if UIKit.available() else DS.ACCENT) if owned else (COL_TEXT if avail else COL_DIM)
+	box.add_child(_label(("● " if owned else "○ ") + String(node["name"]), TYPE_BODY, head_col))
+	box.add_child(_label(_tree_node_desc(node), TYPE_SMALL, COL_DIM))
+	if owned:
+		box.add_child(_label("解放済", TYPE_SMALL, UIKit.ACCENT if UIKit.available() else DS.ACCENT))
+	else:
+		var buy := _button("欠片 %d" % int(node["cost"]), _on_tree_buy.bind(id, String(node["id"])), TYPE_SMALL)
+		buy.disabled = not avail or int(s["shards"]) < int(node["cost"])
+		if not avail and int(node.get("req_aff", 0)) > sim.aff(id):
+			buy.text = "♥%d必要" % int(node["req_aff"])
+		box.add_child(buy)
+	card.add_child(box)
+	return card
 
 
 func _tree_node_desc(node: Dictionary) -> String:
