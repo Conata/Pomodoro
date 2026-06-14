@@ -1521,8 +1521,11 @@ func _build_kiriko_request() -> PanelContainer:
 func _refresh_night() -> void:
 	_clear(night_box)
 	var s := sim.state
-	# 店モードの主役：皆が戻った店内＋営業ライブ＋評判＋本日の献立（額縁思想）
-	night_box.add_child(_build_shop_scene())
+	# 営業中も店内イラストを主役に（背景）＋営業ライブの一行
+	night_box.add_child(_build_home_hero())
+	var live := _shop_line() if (shop != null and shop.open) else "暖簾は仕舞われている。"
+	shop_status = _label(live, TYPE_SUB, COL_WARM)
+	night_box.add_child(shop_status)
 	night_box.add_child(_build_menu_cards())
 	night_box.add_child(_build_kiriko_request())
 	if night_data.get("lines", []).size() > 0:
