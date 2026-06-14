@@ -49,6 +49,7 @@ var timer_label: Label
 var status_label: Label
 var morning_panel: ScrollContainer
 var morning_box: VBoxContainer
+var home_scene: VBoxContainer      # ホームの主役＝店内シーン（キャラ）
 var girls_box: VBoxContainer
 var menu_box: VBoxContainer
 var menu_title: Label
@@ -831,36 +832,27 @@ func _badge(tex: Texture2D, value: String, color := COL_TEXT) -> HBoxContainer:
 
 func _build_morning(parent: Control) -> void:
 	morning_panel = ScrollContainer.new()
-	morning_panel.name = "準備"
+	morning_panel.name = "ホーム"
 	morning_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	morning_panel.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	morning_box = VBoxContainer.new()
 	morning_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	morning_box.add_theme_constant_override("separation", 6)
+	morning_box.add_theme_constant_override("separation", 8)
 	morning_panel.add_child(morning_box)
 
-	forecast_label = _label("", 19, Color(1.0, 0.85, 0.5))
-	morning_box.add_child(forecast_label)
-	stock_row = HBoxContainer.new()
-	stock_row.add_theme_constant_override("separation", 2)
-	morning_box.add_child(stock_row)
+	# ① ホームの主役：店内シーン（キャラが居る。_refresh_morning で埋める）
+	home_scene = VBoxContainer.new()
+	morning_box.add_child(home_scene)
 
-	girls_box = VBoxContainer.new()
-	girls_box.add_theme_constant_override("separation", 5)
-	morning_box.add_child(girls_box)
-
-	menu_title = _label("献立", 15, COL_DIM)
-	morning_box.add_child(menu_title)
-	menu_box = VBoxContainer.new()
-	morning_box.add_child(menu_box)
-
-	# 下部アクション帯：扉方針＋同期時間＋タスク＋潜る
+	# ② 集中を始める（主役CTA＝ミント）＋同期時間＋タスク
+	var start := _cta("▶ 集中を始める", _on_depart, TYPE_HEAD)
+	start.custom_minimum_size = Vector2(0, 64)
+	if UIKit.available():
+		UIKit.as_pomodoro(start)
+	morning_box.add_child(start)
 	var ctrl := HBoxContainer.new()
 	ctrl.add_theme_constant_override("separation", 6)
-	door_btn = _button("", _on_door_policy, 17)
-	door_btn.custom_minimum_size = Vector2(150, 0)
-	ctrl.add_child(door_btn)
-	for opt in [["速80s", "quick", 0.0], ["15", "pomo", 15.0], ["25", "pomo", 25.0], ["50", "pomo", 50.0]]:
+	for opt in [["速80s", "quick", 0.0], ["15分", "pomo", 15.0], ["25分", "pomo", 25.0], ["50分", "pomo", 50.0]]:
 		var b := Button.new()
 		b.toggle_mode = true
 		b.button_group = mode_group
@@ -877,9 +869,22 @@ func _build_morning(parent: Control) -> void:
 	task_edit.add_theme_font_size_override("font_size", 19)
 	morning_box.add_child(task_edit)
 
-	var depart := _cta("☂ 潜る", _on_depart, TYPE_SUB)
-	depart.custom_minimum_size = Vector2(0, 56)
-	morning_box.add_child(depart)
+	# ③ 編成・献立（二次：たたんでおける詳細）
+	morning_box.add_child(_section("編成・献立"))
+	forecast_label = _label("", 19, Color(1.0, 0.85, 0.5))
+	morning_box.add_child(forecast_label)
+	stock_row = HBoxContainer.new()
+	stock_row.add_theme_constant_override("separation", 2)
+	morning_box.add_child(stock_row)
+	door_btn = _button("", _on_door_policy, 17)
+	morning_box.add_child(door_btn)
+	girls_box = VBoxContainer.new()
+	girls_box.add_theme_constant_override("separation", 5)
+	morning_box.add_child(girls_box)
+	menu_title = _label("献立", 15, COL_DIM)
+	morning_box.add_child(menu_title)
+	menu_box = VBoxContainer.new()
+	morning_box.add_child(menu_box)
 	parent.add_child(morning_panel)
 
 
@@ -1277,6 +1282,9 @@ func _refresh_header() -> void:
 
 func _refresh_morning() -> void:
 	var s := sim.state
+	# ホームの主役＝店内シーン（キャラが並ぶ／タップで詳細・育成）
+	_clear(home_scene)
+	home_scene.add_child(_build_shop_scene())
 	forecast_label.text = "%s予報『%s』の客が多い夜" % [offline_note, s["forecast"]]
 	# 素材在庫をアイコン付きで
 	_clear(stock_row)
