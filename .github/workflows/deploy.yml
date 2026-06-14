@@ -50,6 +50,17 @@ jobs:
           godot --headless --export-release "Web" build/web/index.html
           ls -la build/web
 
+      - name: Cache-bust (.pck)
+        # Godot Web は .pck（ゲーム本体）を同名で出すため、ブラウザが強くキャッシュし
+        # デプロイしても古い版が表示され続ける。GODOT_CONFIG に mainPack を注入し
+        # index.pck?v=<sha> で取得させる（Pagesはクエリ無視で実体を返す＝URL別で更新）。
+        # 失敗してもデプロイは壊さない（追記のみ・|| true）。
+        run: |
+          SHA="${GITHUB_SHA::8}"
+          sed -i "s#const GODOT_CONFIG = {#const GODOT_CONFIG = {\"mainPack\":\"index.pck?v=${SHA}\",#" build/web/index.html || true
+          echo "--- mainPack injection check ---"
+          grep -o 'mainPack[^,]*' build/web/index.html || echo "（マーカー未検出：従来どおり配信＝壊れはしない）"
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
