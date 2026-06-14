@@ -679,7 +679,9 @@ func _open_status(id: String) -> void:
 	status_name.text = String(g["name"])
 	_clear(status_head)
 	status_head.add_child(_label(String(g["role"]), TYPE_BODY, COL_WARM))
-	status_head.add_child(_label("♥ 好感度 %d / 100" % sim.aff(id), TYPE_BODY, Color(1.0, 0.7, 0.85)))
+	var hearts: int = clampi(int(round(sim.aff(id) / 20.0)), 0, 5)
+	status_head.add_child(_label("♥".repeat(hearts) + "♡".repeat(5 - hearts) + "  好感度 %d/100" % sim.aff(id),
+			TYPE_BODY, Color("e88fb0")))
 	status_head.add_child(_label("攻撃 %d　最大HP %d" % [int(sim.girl_atk(id)), int(sim.girl_maxhp(id))], TYPE_BODY))
 	var fav := _label("好物 %s ／ 店番：%s" % [g["fav"], g["synergy"]], TYPE_SMALL, COL_DIM)
 	fav.autowrap_mode = TextServer.AUTOWRAP_OFF
