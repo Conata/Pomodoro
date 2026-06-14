@@ -504,7 +504,7 @@ func _combat_step(dt: float) -> void:
 	for id in alive:
 		dps += girl_atk(id)
 	dps *= crit_mult()
-	# ムゥの歌（たまに全体回復）
+	# ムュウの歌（たまに全体回復）
 	if "muu" in alive and rng.chance(0.06 * dt / 0.2):
 		for id in alive:
 			state["hp"][id] = minf(girl_maxhp(id), float(state["hp"][id]) + girl_maxhp(id) * 0.18)
@@ -857,12 +857,12 @@ func _flavor_line(keeper: String) -> String:
 			"ユズキが「food は逃げない、座れって」と常連を叱っていた。",
 		],
 		"muu": [
-			"ムゥの鼻歌で、客の箸が一瞬止まった。悪くない夜。",
-			"ムゥが「これ配信していい？」と聞き、全員に断られていた。",
+			"ムュウの鼻歌で、客の箸が一瞬止まった。悪くない夜。",
+			"ムュウが「これ配信していい？」と聞き、全員に断られていた。",
 		],
 		"kiriko": [
-			"キリコがレシートの裏に数式を書いていた。たぶん大丈夫。",
-			"キリコ曰く、今夜の換気扇は「良い周波数」らしい。",
+			"レイカがレシートの裏に数式を書いていた。たぶん大丈夫。",
+			"レイカ曰く、今夜の換気扇は「良い周波数」らしい。",
 		],
 	}
 	var pool: Array = pools[keeper]

@@ -54,7 +54,7 @@ const GIRLS := {
 		"color": Color(0.8, 0.9, 1.0),
 	},
 	"yuzuki": {
-		"name": "フズキ", "order": 1, "role": "近接火力", "sprite": "elf_f",
+		"name": "ユズキ", "order": 1, "role": "近接火力", "sprite": "elf_f",
 		"hp": 110.0, "atk": 13.0, "fav": "旨",
 		"keeper_apt": 1.35, "synergy": "解析いらずの仕込み", "synergy_desc": "仕込み数+35%",
 		"color": Color(1.0, 0.75, 0.55),

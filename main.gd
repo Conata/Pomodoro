@@ -1383,12 +1383,30 @@ func _build_menu_cards() -> VBoxContainer:
 	return box
 
 
+## 依頼人キリコ（NPC）の常設依頼パネル。物語の核：無理難題「私を殺してほしい」。
+## 紫＝精神世界/キリコの識別色。応える手段は店の心の奥（今後の物語）にある。
+func _build_kiriko_request() -> PanelContainer:
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", _card_sb())
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", SP_1)
+	var kr := UIKit.KIRIKO if UIKit.available() else Color("cdb4db")
+	var kr_d := UIKit.KIRIKO_DANGER if UIKit.available() else Color("9d4edd")
+	box.add_child(_label("依頼 — キリコ", TYPE_SUB, kr))
+	box.add_child(_label("「私を殺してほしい」", TYPE_HEAD, kr_d))
+	box.add_child(_label("無理難題。けれど、彼女は本気だ。\n答えは、この店の心の奥にあるのかもしれない。", TYPE_SMALL, COL_DIM))
+	box.add_child(_label("― まだ応えられない ―", TYPE_SMALL, kr))
+	card.add_child(box)
+	return card
+
+
 func _refresh_night() -> void:
 	_clear(night_box)
 	var s := sim.state
 	# 店モードの主役：皆が戻った店内＋営業ライブ＋評判＋本日の献立（額縁思想）
 	night_box.add_child(_build_shop_scene())
 	night_box.add_child(_build_menu_cards())
+	night_box.add_child(_build_kiriko_request())
 	if night_data.get("lines", []).size() > 0:
 		var panel := PanelContainer.new()
 		var box := VBoxContainer.new()
