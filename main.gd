@@ -670,6 +670,14 @@ func _build_status_overlay() -> void:
 	add_child(status_overlay)
 
 
+## 店モードの立ち絵タップ → そのキャラの詳細・スキルツリーを開く（導線）。
+func _on_portrait_input(event: InputEvent, id: String) -> void:
+	var tapped: bool = (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT) \
+			or (event is InputEventScreenTouch and event.pressed)
+	if tapped:
+		_open_status(id)
+
+
 func _open_status(id: String) -> void:
 	if not status_overlay.visible:
 		_sfx("ui_confirm")
@@ -1290,8 +1298,12 @@ func _build_shop_scene() -> PanelContainer:
 		pr.girl_id = id
 		pr.custom_minimum_size = Vector2(64, 96)
 		pr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		pr.mouse_filter = Control.MOUSE_FILTER_STOP  # タップで詳細/スキルツリーへ
+		pr.tooltip_text = "%s の詳細・スキルツリー" % String(KuroData.GIRLS[id]["name"])
+		pr.gui_input.connect(_on_portrait_input.bind(id))
 		cast.add_child(pr)
 	box.add_child(cast)
+	box.add_child(_label("▲ キャラをタップで詳細・スキルツリー", TYPE_SMALL, COL_DIM))
 	# 営業ライブの一行（毎秒 _process が更新）
 	var live := _shop_line() if (shop != null and shop.open) else "暖簾は仕舞われている。"
 	shop_status = _label(live, TYPE_SUB, COL_WARM)

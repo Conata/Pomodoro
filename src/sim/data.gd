@@ -54,19 +54,19 @@ const GIRLS := {
 		"color": Color(0.8, 0.9, 1.0),
 	},
 	"yuzuki": {
-		"name": "ユズキ", "order": 1, "role": "近接火力", "sprite": "elf_f",
+		"name": "フズキ", "order": 1, "role": "近接火力", "sprite": "elf_f",
 		"hp": 110.0, "atk": 13.0, "fav": "旨",
 		"keeper_apt": 1.35, "synergy": "解析いらずの仕込み", "synergy_desc": "仕込み数+35%",
 		"color": Color(1.0, 0.75, 0.55),
 	},
 	"muu": {
-		"name": "ムゥ", "order": 2, "role": "手数・歌", "sprite": "wizzard_f",
+		"name": "ムュウ", "order": 2, "role": "手数・歌", "sprite": "wizzard_f",
 		"hp": 95.0, "atk": 9.0, "fav": "甘",
 		"keeper_apt": 0.9, "synergy": "店内ライブ", "synergy_desc": "客数+4",
 		"color": Color(1.0, 0.7, 0.9),
 	},
 	"kiriko": {
-		"name": "キリコ", "order": 3, "role": "後衛重撃・高クリ", "sprite": "necromancer",
+		"name": "レイカ", "order": 3, "role": "オカルトサイエンティスト・後衛重撃", "sprite": "necromancer",
 		"hp": 85.0, "atk": 16.0, "fav": "辛",
 		"keeper_apt": 1.0, "synergy": "解析仕込み", "synergy_desc": "予報外れの皿も売れる",
 		"color": Color(0.75, 0.65, 1.0),
