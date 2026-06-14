@@ -37,6 +37,7 @@ var night_data := {}
 var shop: ShopSim = null          # お店モードのライブ接客（NIGHT中に稼働）
 var shop_status: Label            # 「営業中 …」のライブ表示
 
+var header_panel: PanelContainer
 var header_bar: HBoxContainer
 var dive: DiveView
 var dive_frame: PanelContainer
@@ -443,8 +444,12 @@ func _apply_phase() -> void:
 	var diving := phase == Phase.DIVE
 	dive_panel.visible = diving
 	close_panel.visible = phase == Phase.CAMP
-	timer_box.visible = diving
-	# 潜行中はビューを大きく、待機中は薄い店先バナーに畳む（スマホ一画面のため）
+	# 潜行中は「都市伝説LIVE」配信ビューを全画面に。ヘッダ／大タイマーは畳み、
+	# 探索率・残り時間・掛け合いはビュー内のチロップで描く（モック準拠）。
+	header_panel.visible = not diving
+	timer_box.visible = false
+	dive_info.visible = not diving
+	log_label.visible = not diving
 	if diving:
 		dive.custom_minimum_size = Vector2(0, 300)
 		dive_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -477,6 +482,7 @@ func _update_clock(now: float) -> void:
 		Phase.DIVE:
 			var rem := maxf(0.0, float(run["duration"]) - (now - float(run["anchor"])))
 			timer_label.text = _mmss(rem)
+			dive.remaining = rem  # 配信タイマー（ビュー内チロップ）
 			if dive_info != null:
 				dive_info.text = _dive_info_text()
 			if run["mode"] == "pomo":
@@ -522,7 +528,7 @@ func _build_ui() -> void:
 	main_box.add_theme_constant_override("separation", 8)
 	root.add_child(main_box)
 
-	var header_panel := PanelContainer.new()
+	header_panel = PanelContainer.new()
 	header_panel.add_theme_stylebox_override("panel", UIKit.topbar_box(DS.SP_2) if UIKit.available() else DS._sb(DS.SURFACE, DS.LINE, DS.R_MD, DS.SP_2))
 	header_bar = HBoxContainer.new()
 	header_bar.add_theme_constant_override("separation", DS.SP_4)
@@ -610,12 +616,12 @@ func _relayout() -> void:
 		panel_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
 		panel_col.size_flags_stretch_ratio = 1.0
 	else:
-		# 縦：潜行中はステージ(立ち絵)を主役に大きく、待機中はパネル(タブ)を拡張＝従来挙動
+		# 縦：潜行中はステージ(配信ビュー)を全画面に、操作列だけ下に。待機中はパネル拡張。
 		stage_col.size_flags_horizontal = Control.SIZE_FILL
 		stage_col.size_flags_vertical = Control.SIZE_EXPAND_FILL if phase == Phase.DIVE else Control.SIZE_SHRINK_BEGIN
-		stage_col.size_flags_stretch_ratio = 1.9 if phase == Phase.DIVE else 1.0
+		stage_col.size_flags_stretch_ratio = 1.0
 		panel_col.size_flags_horizontal = Control.SIZE_FILL
-		panel_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		panel_col.size_flags_vertical = Control.SIZE_SHRINK_END if phase == Phase.DIVE else Control.SIZE_EXPAND_FILL
 		panel_col.size_flags_stretch_ratio = 1.0
 
 

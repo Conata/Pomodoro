@@ -17,9 +17,18 @@ const FX_DEFS := FxData.FX
 
 var sim: KuroSim = null
 var pulse := 0.0
+var remaining := -1.0  # 集中の残り秒（main から供給・配信タイマー表示用）
 var _tex_cache := {}
 var _fx_active: Array = []
 var _bubble := {}  # {girl, text, t}
+var _dialog: Array = []  # 直近の掛け合いログ {who,text,col}
+# 疑似Camera2D（ノード化せず draw_set_transform で表現＝決定論を崩さず軽い）
+var _cam_zoom := 1.04
+var _cam_zoom_target := 1.04
+var _cam_shake := 0.0
+var _was_combat := false
+const BASE_ZOOM := 1.04
+const VIEWERS_BASE := 8200
 
 
 func _ready() -> void:
@@ -27,9 +36,15 @@ func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
 
-## キャラのセリフ吹き出しを数秒表示。
+## キャラのセリフ吹き出しを数秒表示。掛け合いログにも積む（下部の配信ログ）。
 func say(girl_id: String, text: String) -> void:
 	_bubble = {"girl": girl_id, "text": text, "t": 3.6}
+	var col := Color(0.7, 0.85, 1.0)
+	if KuroData.GIRLS.has(girl_id):
+		col = KuroData.GIRLS[girl_id]["color"]
+	_dialog.append({"who": girl_id, "text": text, "col": col})
+	while _dialog.size() > 4:
+		_dialog.pop_front()
 
 
 func _process(delta: float) -> void:
@@ -47,6 +62,16 @@ func _process(delta: float) -> void:
 			_fx_active.remove_at(i)
 		else:
 			i += 1
+	# カメラ（疑似Camera2D）：戦闘突入でズームイン、被弾でシェイク、平時は緩く戻す
+	if sim != null and sim.state["run"]["active"]:
+		var c: bool = sim.state["in_combat"]
+		if c and not _was_combat:
+			_cam_zoom_target = 1.2
+			_cam_shake = maxf(_cam_shake, 7.0)
+		_was_combat = c
+	_cam_zoom_target = lerpf(_cam_zoom_target, BASE_ZOOM, delta * 1.4)
+	_cam_zoom = lerpf(_cam_zoom, _cam_zoom_target, delta * 7.0)
+	_cam_shake = maxf(0.0, _cam_shake - delta * 26.0)
 	if visible:
 		queue_redraw()
 
@@ -55,6 +80,11 @@ func spawn_fx(kind: String, at: String = "enemy") -> void:
 	if not FX_DEFS.has(kind) or _fx_active.size() >= FX_MAX:
 		return
 	_fx_active.append({"kind": kind, "at": at, "t": 0.0})
+	# 被弾/衝撃でカメラを揺らす（味方側は強め）
+	var mag := 10.0 if at == "party" else 6.0
+	if kind == "lightning" or kind == "explosion":
+		mag += 3.0
+	_cam_shake = maxf(_cam_shake, mag)
 
 
 func _tex(path: String) -> Texture2D:
@@ -270,36 +300,28 @@ func _draw() -> void:
 
 	var fl := sim.current_floor()
 	var biome: Dictionary = KuroData.BIOMES[fl % KuroData.BIOMES.size()]
-	var bg: Color = biome["color"]
-	# 背景：深い青の縦グラデーション
-	draw_rect(Rect2(Vector2.ZERO, sz), Color(bg.r * 0.4, bg.g * 0.4, bg.b * 0.55))
-	# 電脳深層の摩天楼（視差スクロール）。バイオーム色で淡く染める
 	var dist := float(sim.state["dist"])
-	var city_tint := Color(bg.r * 1.6 + 0.4, bg.g * 1.6 + 0.5, bg.b * 1.6 + 0.6, 0.9)
-	_draw_parallax("bg/city_far.png", dist * 0.10, sz.y * 0.40, city_tint)
-	_draw_parallax("bg/city_mid.png", dist * 0.22, sz.y * 0.46, Color(city_tint.r, city_tint.g, city_tint.b, 1.0))
-	draw_rect(Rect2(0, sz.y * 0.6, sz.x, sz.y * 0.4), Color(0.02, 0.04, 0.10, 0.4))
-	_draw_lightshaft(sz)
-
-	var progress := fmod(dist, KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN
-	draw_rect(Rect2(0, 0, sz.x, 5), Color(0, 0, 0, 0.5))
-	draw_rect(Rect2(0, 0, sz.x * progress, 5), DS.ACCENT)
-
-	var head := "B%dF %s  %dm" % [fl + 1, biome["name"], int(dist)]
-	draw_string(font, Vector2(14, 36), head, HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_SUB, DS.TEXT)
-	if int(run.get("banked", 0)) > 0:
-		draw_string(font, Vector2(sz.x - 190, 36), "送付済の箱 ×%d" % int(run["banked"]),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 18, DS.ACCENT)
-
-	var ground := sz.y * 0.88
-	draw_line(Vector2(0, ground), Vector2(sz.x, ground), Color(DS.LINE.r, DS.LINE.g, DS.LINE.b, 0.55), 2.0)
-
 	var in_combat: bool = sim.state["in_combat"]
 	var door_open := float(run["door_pending"]) > 0.0
-	var mode := "idle" if in_combat or door_open else "run"
+	var ground := sz.y * 0.58           # 立ち絵の足元（モックに合わせ画面中段）
+	var chibi_h := clampf(sz.y * 0.26, 140.0, 240.0)
 
-	# キャラの表示高さは画面に追従（立ち絵が主役＝大きく見せる）
-	var chibi_h := clampf(sz.y * 0.62, 120.0, 280.0)
+	# ====== ワールド層（疑似カメラ：ズーム/緩いパン/被弾シェイク）======
+	var zoom := _cam_zoom
+	var focus := Vector2(
+		sz.x * 0.5 + sin(pulse * 0.22) * sz.x * 0.02 + (sz.x * 0.06 if in_combat else 0.0),
+		ground)
+	var shake := Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * _cam_shake
+	draw_set_transform(focus * (1.0 - zoom) + shake, 0.0, Vector2(zoom, zoom))
+
+	_draw_explore_bg(sz, biome, dist)
+	draw_line(Vector2(0, ground), Vector2(sz.x, ground),
+			Color(DS.LINE.r, DS.LINE.g, DS.LINE.b, 0.30), 2.0)
+
+	# 突進モーション＆歩行のゆれ（自動歩行感）
+	var lunge_party := (9.0 * maxf(0.0, sin(pulse * 5.0))) if in_combat else 0.0
+	var lunge_enemy := (9.0 * maxf(0.0, sin(pulse * 5.0 + PI))) if in_combat else 0.0
+	var bob := 0.0 if in_combat else sin(pulse * 3.0) * 3.0
 
 	# 扉（クイック決断バナー中）
 	if door_open:
@@ -308,84 +330,230 @@ func _draw() -> void:
 			_draw_sprite(door_tex, Vector2(sz.x * 0.5, ground), false, Color(0.8, 0.9, 1.3),
 					(chibi_h * 0.9) / door_tex.get_size().y)
 
-	# 戦闘中の突進モーション（味方は右へ、敵は左へ、交互に踏み込む）
-	var lunge_party := (9.0 * maxf(0.0, sin(pulse * 5.0))) if in_combat else 0.0
-	var lunge_enemy := (9.0 * maxf(0.0, sin(pulse * 5.0 + PI))) if in_combat else 0.0
-
-	# 潜行メンバー（左寄り・スロット配置）。戦闘中は左半分に寄せ右に敵の場を空ける
+	# 潜行メンバー（左クラスタ・自動歩行）
 	var ds: Array = sim.divers()
 	var n := ds.size()
-	var party_w := sz.x * (0.54 if in_combat else 0.76)
+	var party_w := sz.x * (0.46 if in_combat else 0.52)
 	var slot := party_w / float(maxi(n, 1))
-	var ch := minf(chibi_h, slot * 2.1)  # スロットに対し大きすぎる重なりを防ぐ
+	var ch := minf(chibi_h, slot * 2.2)
 	var party_x: Array = []
 	for i in n:
 		var id: String = ds[i]
-		var x := slot * (i + 0.5) + 6.0 + lunge_party
+		var x := sz.x * 0.05 + slot * (i + 0.5) + lunge_party
 		party_x.append(x)
 		var alive := float(sim.state["hp"].get(id, 0.0)) > 0.0
-		# 提供立ち絵があれば優先（カラー）。無ければ従来の0x72（青tint）。
-		var dw := _draw_chibi(id, Vector2(x, ground), in_combat, alive, ch, false)
+		var foot := Vector2(x, ground + (bob if alive else 0.0))
+		var dw := _draw_chibi(id, foot, in_combat, alive, ch, false)
 		if dw > 0.0:
-			_draw_shadow(x, ground, dw * 0.78)
+			_draw_shadow(x, ground + 2.0, dw * 0.74)
 			if alive:
-				_draw_hp(x, ground - ch - 12.0, float(sim.state["hp"][id]) / sim.girl_maxhp(id),
+				_draw_hp(x, foot.y - ch - 12.0, float(sim.state["hp"][id]) / sim.girl_maxhp(id),
 						maxf(36.0, dw * 0.7))
 		else:
-			var tex := _anim_tex(String(KuroData.GIRLS[id]["sprite"]), mode if alive else "idle")
+			var tex := _anim_tex(String(KuroData.GIRLS[id]["sprite"]), "run" if alive else "idle")
 			if tex != null:
 				var scl := (ch * 0.9) / tex.get_size().y
-				_draw_shadow(x, ground, tex.get_size().x * scl * 0.7)
-				_draw_sprite(tex, Vector2(x, ground), false, TINT if alive else Color(0.25, 0.3, 0.45), scl)
+				_draw_shadow(x, ground + 2.0, tex.get_size().x * scl * 0.7)
+				_draw_sprite(tex, foot, false, TINT if alive else Color(0.25, 0.3, 0.45), scl)
 				if alive:
-					_draw_hp(x, ground - ch - 12.0, float(sim.state["hp"][id]) / sim.girl_maxhp(id))
+					_draw_hp(x, foot.y - ch - 12.0, float(sim.state["hp"][id]) / sim.girl_maxhp(id))
 			else:
 				draw_circle(Vector2(x, ground - 14), 12.0, KuroData.GIRLS[id]["color"])
 
-	# 敵（右・左向き）。味方の大きさに合わせて拡大（0x72はNEARESTでドット感のまま）
+	# 敵（右・前景）：通常はスプライト。戦闘中は赤い✕のうずを重ねる（モック準拠）
 	var boss_mob := {}
+	var enemy_cx := sz.x * 0.8
 	for i in sim.state["mobs"].size():
 		var m: Dictionary = sim.state["mobs"][i]
-		var x: float = sz.x - slot * 0.6 - i * (slot * 0.85) - lunge_enemy
+		var x: float = enemy_cx - i * (slot * 0.7) - lunge_enemy
 		var tex2 := _anim_tex(String(m.get("sprite", "")), "idle")
 		var ratio := clampf(float(m["hp"]) / float(m["max_hp"]), 0.0, 1.0)
 		var tint: Color = Color(1.0, 0.55, 0.6) if m["boss"] else (Color(0.9, 0.75, 1.1) if m["elite"] else TINT)
+		if m["boss"]:
+			boss_mob = m
 		if tex2 != null:
-			var escl := clampf((ch * 0.6) / tex2.get_size().y, SCALE, 16.0)
+			var escl := clampf((ch * 0.62) / tex2.get_size().y, SCALE, 16.0)
 			if m["boss"]:
 				escl *= 1.3
-				boss_mob = m
-				draw_circle(Vector2(x, ground - tex2.get_size().y * escl * 0.5),
-						tex2.get_size().y * escl * 0.6 + 4.0 * sin(pulse * 3.0), Color(1.0, 0.3, 0.35, 0.16))
-			_draw_shadow(x, ground, tex2.get_size().x * escl * 0.7)
+			_draw_shadow(x, ground + 2.0, tex2.get_size().x * escl * 0.7)
 			_draw_sprite(tex2, Vector2(x, ground), true, tint, escl)
 			_draw_hp(x, ground - tex2.get_size().y * escl - 10.0, ratio, 48.0 if m["boss"] else 34.0)
 		else:
-			if m["boss"]:
-				boss_mob = m
 			draw_circle(Vector2(x, ground - 14), 16.0 if m["boss"] else 10.0, tint)
-
-	# ボス演出：上部の専用HPバー＋ラベル＋赤いふち
-	if not boss_mob.is_empty():
-		_draw_boss_stage(sz, font, boss_mob)
+	if in_combat:
+		var rr := chibi_h * (0.78 if not boss_mob.is_empty() else 0.5)
+		_draw_redx(Vector2(enemy_cx, ground - ch * 0.45), rr, not boss_mob.is_empty())
 
 	_draw_fx(ground)
-	_draw_rain(sz)
 
-	# セリフ吹き出し（潜行中のキャラの掛け合い）。立ち絵の頭上に出す
+	# セリフ吹き出し（頭上・ワールド層）
 	if not _bubble.is_empty():
 		var bi := ds.find(String(_bubble["girl"]))
 		if bi >= 0 and bi < party_x.size():
-			_draw_bubble(font, Vector2(float(party_x[bi]), ground - ch - 8.0),
+			_draw_bubble(font, Vector2(float(party_x[bi]), ground - ch - 6.0),
 					String(KuroData.GIRLS[_bubble["girl"]]["name"]), String(_bubble["text"]))
 
-	var status := "進軍中…"
-	if door_open:
-		status = "増築された扉の前で足が止まる（%d秒）" % int(ceil(float(run["door_pending"])))
-	elif int(run["resyncs"]) > 0 and in_combat:
-		status = "戦闘中（再同期 %d 回目）" % int(run["resyncs"])
-	elif in_combat:
-		status = "戦闘中"
-	draw_string(font, Vector2(14, minf(ground + 26.0, sz.y - 8.0)), status,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 20,
-			Color(0.95, 0.75, 0.8) if in_combat else Color(0.7, 0.85, 1.0, 0.6))
+	# ====== スクリーン層（カメラの影響を受けない配信UI）======
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_draw_rain(sz)
+	_draw_stream_chrome(sz, font, fl, biome, dist, in_combat)
+	_draw_minimap(sz, font, fl, dist)
+	_draw_dialog_log(sz, font)
+
+
+## 探索の背景。提供イラスト（assets/art/explore_bg.png）を COVERED で敷き、
+## 立ち絵/UIを前景として際立たせるため全体を沈める。無ければプロシージャル都市。
+func _draw_explore_bg(sz: Vector2, biome: Dictionary, dist: float) -> void:
+	var tex := _tex("res://assets/art/explore_bg.png")
+	if tex != null:
+		var ts := tex.get_size()
+		var sc := maxf(sz.x / ts.x, sz.y / ts.y)
+		var dw := ts.x * sc
+		var dh := ts.y * sc
+		var drift := sin(pulse * 0.15) * 8.0  # 緩い縦ドリフト＝生命感
+		draw_texture_rect(tex, Rect2((sz.x - dw) * 0.5, (sz.y - dh) * 0.5 + drift, dw, dh), false)
+		draw_rect(Rect2(0, 0, sz.x, sz.y), Color(0.03, 0.03, 0.07, 0.42))
+		draw_rect(Rect2(0, sz.y * 0.6, sz.x, sz.y * 0.4), Color(0.01, 0.01, 0.03, 0.42))
+		return
+	# フォールバック：従来のプロシージャル都市（視差スクロール）
+	var bg: Color = biome["color"]
+	draw_rect(Rect2(Vector2.ZERO, sz), Color(bg.r * 0.4, bg.g * 0.4, bg.b * 0.55))
+	var city_tint := Color(bg.r * 1.6 + 0.4, bg.g * 1.6 + 0.5, bg.b * 1.6 + 0.6, 0.9)
+	_draw_parallax("bg/city_far.png", dist * 0.10, sz.y * 0.30, city_tint)
+	_draw_parallax("bg/city_mid.png", dist * 0.22, sz.y * 0.36, Color(city_tint.r, city_tint.g, city_tint.b, 1.0))
+	draw_rect(Rect2(0, sz.y * 0.5, sz.x, sz.y * 0.5), Color(0.02, 0.04, 0.10, 0.4))
+	_draw_lightshaft(sz)
+
+
+## 敵遭遇のサイン：赤く脈動する✕のうず（ボスは大きく＋外周リング）。
+func _draw_redx(center: Vector2, r: float, big: bool) -> void:
+	var p := 0.5 + 0.5 * sin(pulse * 3.0)
+	draw_circle(center, r * (1.15 + 0.06 * p), Color(0.95, 0.15, 0.2, 0.10 + 0.06 * p))
+	draw_circle(center, r * 0.8, Color(0.7, 0.05, 0.12, 0.16))
+	var a := r * 0.62
+	var w := maxf(4.0, r * 0.12)
+	var col := Color(1.0, 0.25, 0.3, 0.85 + 0.15 * p)
+	draw_line(center + Vector2(-a, -a), center + Vector2(a, a), col, w)
+	draw_line(center + Vector2(-a, a), center + Vector2(a, -a), col, w)
+	if big:
+		draw_arc(center, r, 0.0, TAU, 48, Color(1.0, 0.3, 0.35, 0.5), 2.0)
+
+
+## 配信チロップ：左上=階層/探索率、右上=LIVE+配信名+視聴/いいね、
+## 中央上=残り時間（配信タイマー）、左下=REC。
+func _draw_stream_chrome(sz: Vector2, font: Font, fl: int, biome: Dictionary,
+		dist: float, in_combat: bool) -> void:
+	var pad := 12.0
+	# 左上：階層・区画・探索率
+	var pct := int(fmod(dist, KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN * 100.0)
+	draw_string(font, Vector2(pad, 26), "B%dF %s" % [fl + 1, String(biome["name"])],
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 18, DS.TEXT)
+	draw_string(font, Vector2(pad, 46), "探索率 %d%%" % pct,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.7, 0.85, 1.0, 0.85))
+	# 右上：LIVE バッジ＋配信タイトル
+	var streamer := "ムュウ"
+	var ds := sim.divers()
+	if not ds.is_empty() and KuroData.GIRLS.has(ds[0]):
+		streamer = String(KuroData.GIRLS[ds[0]]["name"])
+	var title := "%sの都市伝説LIVE" % streamer
+	var tw := font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+	if fposmod(pulse, 1.4) < 1.1:
+		draw_circle(Vector2(sz.x - pad - tw - 50.0, 22), 5.0, Color(1.0, 0.2, 0.25))
+	draw_string(font, Vector2(sz.x - pad - tw - 40.0, 27), "LIVE",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1.0, 0.35, 0.4))
+	draw_string(font, Vector2(sz.x - pad - tw, 27), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, DS.TEXT)
+	# 視聴者数・いいね（distベースで緩く増える＋ゆらぎ）
+	var viewers := VIEWERS_BASE + int(dist * 1.1) + int(40.0 * sin(pulse * 0.7))
+	var likes := viewers * 26 / 10
+	var stat := "視聴 %s ・ いいね %s" % [_fmt_comma(viewers), _fmt_k(likes)]
+	var sw := font.get_string_size(stat, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+	draw_string(font, Vector2(sz.x - pad - sw, 48), stat,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.9, 1.0, 0.85))
+	# 中央上：残り時間（配信タイマー）
+	if remaining >= 0.0:
+		var t := _mmss(remaining)
+		var tsz := font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 32)
+		draw_string(font, Vector2((sz.x - tsz.x) * 0.5 + 1, 43), t,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color(0, 0, 0, 0.5))
+		draw_string(font, Vector2((sz.x - tsz.x) * 0.5, 42), t,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 32, DS.ACCENT)
+	# 左下：REC（掛け合いログの上に重ねない位置）
+	var ry := sz.y - 124.0
+	if fposmod(pulse, 1.2) < 0.9:
+		draw_circle(Vector2(pad + 6, ry - 5), 5.0, Color(1.0, 0.2, 0.25))
+	draw_string(font, Vector2(pad + 16, ry), "REC", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1.0, 0.5, 0.55))
+	if in_combat:
+		draw_string(font, Vector2(pad + 64, ry), "交戦中", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1.0, 0.6, 0.65))
+
+
+## 左上のミニマップ（10%大）。階層の進行をノード列で表す。
+func _draw_minimap(sz: Vector2, font: Font, fl: int, dist: float) -> void:
+	var w := sz.x * 0.28
+	var h := maxf(46.0, sz.y * 0.11)
+	var x := 12.0
+	var y := 64.0
+	draw_rect(Rect2(x, y, w, h), Color(0.03, 0.04, 0.08, 0.55))
+	draw_rect(Rect2(x, y, w, h), Color(0.4, 0.85, 1.0, 0.25), false, 1.0)
+	var cells := 6
+	var prog := fmod(dist, KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN
+	var cur := clampi(int(prog * cells), 0, cells - 1)
+	var cw := w / float(cells + 1)
+	var cy := y + h * 0.46
+	for k in cells:
+		var cx := x + cw * (k + 1)
+		if k > 0:
+			draw_line(Vector2(x + cw * k, cy), Vector2(cx, cy), Color(0.4, 0.7, 1.0, 0.4), 1.5)
+		if k == cur:
+			draw_circle(Vector2(cx, cy), 4.5 + 1.5 * sin(pulse * 4.0), Color(0.4, 1.0, 0.85))
+		elif k < cur:
+			draw_circle(Vector2(cx, cy), 3.5, Color(0.5, 0.8, 1.0, 0.7))
+		else:
+			draw_circle(Vector2(cx, cy), 3.0, Color(0.4, 0.5, 0.7, 0.4))
+	draw_string(font, Vector2(x + 6, y + h - 6), "MAP B%dF" % (fl + 1),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.6, 0.8, 1.0, 0.7))
+
+
+## 左下の掛け合いログ（直近4行・下ほど新しく濃い）。
+func _draw_dialog_log(sz: Vector2, font: Font) -> void:
+	var pad := 12.0
+	var fs := 16
+	var lh := 22.0
+	var n := _dialog.size()
+	if n == 0:
+		return
+	var y0 := sz.y - 16.0 - n * lh
+	draw_rect(Rect2(0, y0 - 8, sz.x * 0.64, n * lh + 12), Color(0.02, 0.02, 0.05, 0.5))
+	for i in n:
+		var d: Dictionary = _dialog[i]
+		var who := String(d["who"])
+		if KuroData.GIRLS.has(d["who"]):
+			who = String(KuroData.GIRLS[d["who"]]["name"])
+		var y := y0 + i * lh + 16.0
+		var alpha := lerpf(0.55, 1.0, float(i + 1) / float(n))
+		var col: Color = d["col"]
+		draw_string(font, Vector2(pad + 2, y), who, HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
+				Color(col.r, col.g, col.b, alpha))
+		var nw := font.get_string_size(who, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		draw_string(font, Vector2(pad + 2 + nw, y), "「%s」" % String(d["text"]),
+				HORIZONTAL_ALIGNMENT_LEFT, int(sz.x * 0.60 - nw), fs, Color(0.92, 0.95, 1.0, alpha))
+
+
+func _fmt_comma(v: int) -> String:
+	var s := str(v)
+	var out := ""
+	var c := 0
+	for i in range(s.length() - 1, -1, -1):
+		out = s[i] + out
+		c += 1
+		if c % 3 == 0 and i > 0:
+			out = "," + out
+	return out
+
+
+func _fmt_k(v: int) -> String:
+	return ("%.1fK" % (v / 1000.0)) if v >= 1000 else str(v)
+
+
+func _mmss(sec: float) -> String:
+	var s := int(ceil(sec))
+	return "%02d:%02d" % [int(s / 60.0), s % 60]
