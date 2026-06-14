@@ -54,6 +54,7 @@ static func new_state(seed_value: int) -> Dictionary:
 		"dist": 0.0,
 		"checkpoint": 0,
 		"best_floor": 0,
+		"memories": [],  # 道中で拾ったメモリ（短文小説）id の収集
 		"doors_done": [],
 		"run": {
 			"active": false, "mode": "quick", "task": "", "duration": 0.0, "elapsed": 0.0,
@@ -98,6 +99,15 @@ func _emit(kind: String, msg: String, data: Dictionary = {}) -> void:
 	var e := {"kind": kind, "msg": msg}
 	e.merge(data)
 	events.append(e)
+
+
+## 到達深度で未収集のメモリ（短文小説）を1つ拾う。決定論（深度ドリブン）。
+func _maybe_drop_memory(floor: int) -> void:
+	var m := KuroMemories.next_for(floor, state["memories"])
+	if m.is_empty():
+		return
+	state["memories"].append(m["id"])
+	_emit("memory", "記憶のかけらを拾った：『%s』" % String(m["title"]), {"id": String(m["id"])})
 
 
 # --- 派生値 ------------------------------------------------------------------
@@ -644,6 +654,7 @@ func _end_combat() -> void:
 		state["checkpoint"] = fl + 1
 		state["best_floor"] = maxi(int(state["best_floor"]), fl + 1)
 		_emit("gate", "欠落を埋めた。B%dFへ——ボス箱は送付済み" % (fl + 2))
+		_maybe_drop_memory(int(state["best_floor"]))
 	for id in divers():
 		if float(state["hp"].get(id, 0.0)) <= 0.0:
 			state["hp"][id] = girl_maxhp(id) * 0.35

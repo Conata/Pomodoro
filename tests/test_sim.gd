@@ -17,6 +17,7 @@ func _initialize() -> void:
 	_test_resync_during_pomo()
 	_test_close_day()
 	_test_shop()
+	_test_memory()
 	_test_ui_theme()
 	_test_keeper_matters()
 	_test_recipe_star_up()
@@ -61,7 +62,8 @@ func _test_scripts_compile() -> void:
 	# （CI の import は || true なので、ここで GDScript の解析エラーを確実に捕える）
 	print("[compile]")
 	for path in ["res://main.gd", "res://src/ui/ui_theme.gd", "res://src/ui/ds.gd",
-			"res://src/ui/dive_view.gd", "res://src/sim/shop.gd", "res://src/sim/sim.gd"]:
+			"res://src/ui/dive_view.gd", "res://src/sim/shop.gd", "res://src/sim/sim.gd",
+			"res://src/sim/memory_data.gd"]:
 		check(load(path) != null, "%s がコンパイルできる" % path)
 
 
@@ -229,6 +231,25 @@ func _test_shop() -> void:
 	sh3.open_shop()
 	_run_shop(sh3, 120.0)
 	check(sh3.served == 0 and sh3.turned_away > 0, "献立が空なら門前払い")
+
+
+func _test_memory() -> void:
+	print("[memory]")
+	check(not KuroMemories.next_for(1, []).is_empty(), "B1で拾える記憶がある")
+	check(KuroMemories.next_for(0, []).is_empty(), "B0では拾えない")
+	check(KuroMemories.next_for(10, ["m_kanban"]).get("id", "") != "m_kanban", "収集済みは再取得しない")
+	var sim := _fresh(71)
+	sim.start_run("pomo", 60.0, 0.0, "deep")
+	_run_for(sim, 1800.0)  # 深く潜れば道中でメモリを拾う
+	check(sim.state["memories"].size() > 0, "潜行でメモリを拾う (%d種)" % sim.state["memories"].size())
+	# 決定論（同シードで同じ記憶）
+	var a := _fresh(73)
+	var b := _fresh(73)
+	a.start_run("pomo", 60.0, 0.0, "d")
+	b.start_run("pomo", 60.0, 0.0, "d")
+	_run_for(a, 1200.0)
+	_run_for(b, 1200.0)
+	check(a.state["memories"] == b.state["memories"], "同シードで同じ記憶列")
 
 
 func _test_ui_theme() -> void:

@@ -69,6 +69,7 @@ var night_box: VBoxContainer
 var tabs: TabContainer
 var inv_box: VBoxContainer
 var member_box: VBoxContainer     # メンバー一覧（各キャラの詳細・育成への導線）
+var memo_box: VBoxContainer        # 記憶（道中で拾うメモリ＝短文小説）
 var renov_view: RenovView
 var renov_info: Label
 var stats_box: VBoxContainer
@@ -271,6 +272,11 @@ func _pump_events() -> void:
 			"fx":
 				var fxn := String(e.get("fx", ""))
 				dive.spawn_fx(fxn, FxData.side_of(fxn))  # 出す側もFxData定義に従う
+			"memory":
+				# 拾うのは軽く（表層はカジュアル）。読むのは「記憶」タブで任意。
+				_sfx("teleport")
+				_log("[color=#cdb4db]%s[/color]" % String(e["msg"]))
+				_notify(String(e["msg"]))
 			_:
 				_log(e["msg"])
 
@@ -584,6 +590,7 @@ func _build_ui() -> void:
 	_build_morning(tabs)
 	_build_night(tabs)
 	_build_member_tab()
+	_build_memory_tab()
 	_build_inventory_tab()
 	_build_renov_tab()
 	_build_stats_tab()
@@ -978,6 +985,38 @@ func _refresh_member() -> void:
 		member_box.add_child(card)
 
 
+func _build_memory_tab() -> void:
+	memo_box = _scroll_tab("記憶")
+
+
+## 記憶アーカイブ：道中で拾ったメモリ（短文小説）を読む。未収集は ？？？。
+## 表層はカジュアル、裏に不穏さ——掘る人だけが読む。
+func _refresh_memory_archive() -> void:
+	if memo_box == null:
+		return
+	_clear(memo_box)
+	var got: Array = sim.state.get("memories", [])
+	memo_box.add_child(_label("記憶のかけら %d / %d　― 潜るほど見つかる ―"
+			% [got.size(), KuroMemories.MEMORIES.size()], TYPE_SMALL, COL_DIM))
+	var purple := UIKit.ACCENT if UIKit.available() else DS.ACCENT
+	for m in KuroMemories.MEMORIES:
+		var owned: bool = m["id"] in got
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _card_sb())
+		var box := VBoxContainer.new()
+		box.add_theme_constant_override("separation", SP_1)
+		if owned:
+			box.add_child(_label(String(m["title"]), TYPE_SUB, purple))
+			var body := _label(String(m["text"]), TYPE_BODY, COL_TEXT)
+			body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			box.add_child(body)
+		else:
+			box.add_child(_label("？？？", TYPE_SUB, COL_DIM))
+			box.add_child(_label("（B%dF 付近で見つかる）" % int(m["floor"]), TYPE_SMALL, COL_DIM))
+		card.add_child(box)
+		memo_box.add_child(card)
+
+
 func _build_inventory_tab() -> void:
 	inv_box = _scroll_tab("倉庫")
 
@@ -1210,6 +1249,7 @@ func _refresh_all() -> void:
 		_refresh_night()
 	if tabs.visible:
 		_refresh_member()
+		_refresh_memory_archive()
 		_refresh_inventory()
 		_refresh_stats()
 		renov_view.queue_redraw()
