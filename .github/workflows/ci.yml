@@ -1,0 +1,59 @@
+name: CI (import + unit tests)
+
+# 開発ブランチと PR で、Godot のインポートとヘッドレス単体テストを回す。
+# deploy.yml（main の Pages 配信）とは別に、feature ブランチでも GDScript の
+# パースエラーや sim/接客ロジックの退行をすぐ検出するための軽量 CI。
+on:
+  push:
+    branches: ["claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Import assets
+        # 生成テクスチャ/音声などの .import を生成（初回は警告が出ても続行）
+        run: godot --headless --import || true
+
+      - name: Run unit tests
+        # 失敗時は test_sim.gd が exit 1 で返すのでジョブも落ちる
+        run: godot --headless -s tests/test_sim.gd
+
+  # feature ブランチの「見た目」を確認できるよう、Web ビルドを成果物として上げる。
+  # （Godot 非搭載のこの開発環境では描画確認できないため。Pages 配信は main の deploy.yml）
+  web-build:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup export templates
+        run: |
+          mkdir -p "$HOME/.local/share/godot/export_templates"
+          cp -r /root/.local/share/godot/export_templates/4.3.stable "$HOME/.local/share/godot/export_templates/" || true
+
+      - name: Import assets
+        run: godot --headless --import || true
+
+      - name: Export Web
+        run: |
+          mkdir -p build/web
+          godot --headless --export-release "Web" build/web/index.html
+          ls -la build/web
+
+      - name: Upload web build
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: build/web
+          retention-days: 14

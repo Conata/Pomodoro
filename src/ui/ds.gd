@@ -6,19 +6,21 @@ extends RefCounted
 ## UI スクリプトはすべてここから色・型・間隔・スタイルを引く。
 ## docs/DESIGN_SYSTEM.md と対で維持すること。
 
-# ── 色（識別色＝シアン。暖色は店/看板。色は「意味」を持つ） ──────────────
-const BG := Color(0.027, 0.039, 0.071)        # 画面の地（ほぼ黒の紺）
-const SURFACE := Color(0.063, 0.094, 0.157)   # 面（カード）
-const SURFACE_2 := Color(0.094, 0.137, 0.227) # 面・押下/選択
-const LINE := Color(0.36, 0.62, 0.85, 0.22)   # 罫・縁
-const TEXT := Color(0.92, 0.96, 1.0)          # 本文
-const TEXT_2 := Color(0.6, 0.74, 0.9, 0.85)   # 副文
-const TEXT_MUTE := Color(0.62, 0.74, 0.9, 0.4)# 注記
-const ACCENT := Color(0.4, 0.82, 1.0)         # 識別色（この店）
-const ACCENT_DIM := Color(0.4, 0.82, 1.0, 0.5)
-const WARM := Color(1.0, 0.76, 0.42)          # 店番・ネオン看板
-const DANGER := Color(1.0, 0.45, 0.5)         # 切断・撤退
-const SUCCESS := Color(0.5, 0.9, 0.66)        # 収穫・廃材
+# ── 色（深夜喫茶×オカルト×温かい居場所。識別色＝暖炉オレンジ） ──────────
+# 指定パレット。3軸＝オレンジ(店)/ミント(ポモドーロ)/紫(キリコ)。
+# 詳細・モード差し色・キリコ専用色は src/ui/ui_theme.gd(UIKit) を参照。
+const BG := Color("151515")          # 画面の地（深夜の黒）
+const SURFACE := Color("222222")     # 面（店内の影）
+const SURFACE_2 := Color("2e2e2e")   # 面・押下/選択
+const LINE := Color("3a2a20b3")      # 罫・縁（木製家具・α0.7）
+const TEXT := Color("f5f3ee")        # 本文（真っ白を避ける）
+const TEXT_2 := Color("b8b8b8")      # 副文
+const TEXT_MUTE := Color("707070")   # 注記/無効
+const ACCENT := Color("e6a15a")      # 識別色（暖炉オレンジ＝店）
+const ACCENT_DIM := Color("e6a15a80")
+const WARM := Color("e6a15a")        # 店番・看板の暖色
+const DANGER := Color("e05a5a")      # 切断・撤退
+const SUCCESS := Color("6fd37d")     # 収穫・廃材
 
 # ── 型（5段。見出し≒2×本文。これ以上増やさない） ──────────────────────
 const T_MICRO := 14
@@ -111,13 +113,13 @@ static func theme() -> Theme:
 # ── ボタン3系統のスタイルを個別ノードへ適用 ──────────────────────────
 static func as_primary(b: Button) -> Button:
 	var n := _sb(ACCENT, Color(1, 1, 1, 0.0), R_SM, SP_3)
-	var h := _sb(Color(0.55, 0.88, 1.0), Color(1, 1, 1, 0.0), R_SM, SP_3)
+	var h := _sb(Color("f4b86e"), Color(1, 1, 1, 0.0), R_SM, SP_3)  # 明るい暖炉オレンジ
 	b.add_theme_stylebox_override("normal", n)
 	b.add_theme_stylebox_override("hover", h)
 	b.add_theme_stylebox_override("pressed", h)
-	b.add_theme_color_override("font_color", Color(0.02, 0.06, 0.12))
-	b.add_theme_color_override("font_hover_color", Color(0.02, 0.06, 0.12))
-	b.add_theme_color_override("font_pressed_color", Color(0.0, 0.03, 0.08))
+	b.add_theme_color_override("font_color", Color("231708"))       # オレンジ面の上の暗色
+	b.add_theme_color_override("font_hover_color", Color("231708"))
+	b.add_theme_color_override("font_pressed_color", Color("160f05"))
 	return b
 
 

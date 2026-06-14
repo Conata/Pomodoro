@@ -8,6 +8,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_scripts_compile()
 	_test_rng()
 	_test_determinism()
 	_test_quick_completes()
@@ -15,6 +16,8 @@ func _initialize() -> void:
 	_test_boss_bank_survives_disconnect()
 	_test_resync_during_pomo()
 	_test_close_day()
+	_test_shop()
+	_test_ui_theme()
 	_test_keeper_matters()
 	_test_recipe_star_up()
 	_test_talk()
@@ -51,6 +54,15 @@ func _run_for(sim: KuroSim, seconds: float) -> void:
 		sim.step(KuroData.SIM_DT)
 		if not sim.state["run"]["active"]:
 			return
+
+
+func _test_scripts_compile() -> void:
+	# test_sim.gd は main.gd を読まないため、主要スクリプトの読込でコンパイル検証する。
+	# （CI の import は || true なので、ここで GDScript の解析エラーを確実に捕える）
+	print("[compile]")
+	for path in ["res://main.gd", "res://src/ui/ui_theme.gd", "res://src/ui/ds.gd",
+			"res://src/ui/dive_view.gd", "res://src/sim/shop.gd", "res://src/sim/sim.gd"]:
+		check(load(path) != null, "%s がコンパイルできる" % path)
 
 
 func _test_rng() -> void:
@@ -153,6 +165,88 @@ func _test_close_day() -> void:
 	sim2.state["pending_night"] = {}
 	var night3 := sim2.close_day()
 	check(int(night3["served"]) == 6, "海鮮6つなら6皿（素材で打ち止め）")
+
+
+func _run_shop(shop: ShopSim, seconds: float) -> void:
+	var steps := int(seconds / KuroData.SIM_DT)
+	for i in steps:
+		shop.step(KuroData.SIM_DT)
+
+
+func _test_shop() -> void:
+	print("[shop]")
+	var sim := _fresh(61)
+	sim.set_keeper("mil")
+	sim.state["recipes"]["tantan"] = 1
+	sim.state["morning"]["menu"] = ["tantan"]
+	sim.state["stock"] = {"dry": 30, "meat": 30, "sea": 30}
+	var g0 := int(sim.state["gold"])
+	var aff0 := sim.aff("yuzuki")
+	var shop := ShopSim.new(sim)
+	shop.open_shop()
+	check(shop.open, "暖簾を出すと開店する")
+	_run_shop(shop, 300.0)
+	check(shop.served > 0, "客が来て捌ける (%d皿)" % shop.served)
+	check(shop.gold_earned > 0, "売上が出る (+%dG)" % shop.gold_earned)
+	check(int(sim.state["gold"]) == g0 + shop.gold_earned, "ゴールドに加算される")
+	check(sim.stock_total() < 90, "素材を消費する")
+	var night := shop.close_shop()
+	check(night["lines"].size() == 3, "閉店サマリは三行")
+	check(not shop.open, "暖簾を下ろすと閉店")
+	check(sim.aff("yuzuki") > aff0, "同行/店番で好感度が動く")
+
+	# 決定論：同シードなら同じ結果（セーブ/リプレイの再現性）
+	var a := _fresh(63)
+	var b := _fresh(63)
+	for s in [a, b]:
+		s.set_keeper("mil")
+		s.state["recipes"]["tantan"] = 1
+		s.state["morning"]["menu"] = ["tantan"]
+		s.state["stock"] = {"dry": 30, "meat": 30, "sea": 30}
+	var sa := ShopSim.new(a)
+	var sb := ShopSim.new(b)
+	sa.open_shop(); sb.open_shop()
+	_run_shop(sa, 200.0); _run_shop(sb, 200.0)
+	check(sa.gold_earned == sb.gold_earned and sa.served == sb.served, "同シードで一致")
+	check(a.rng.state == b.rng.state, "RNG状態も一致")
+
+	# 素材が無ければ1皿も出ず、客は待ちきれず帰る（Dave the Diver の縛り）
+	var s2 := _fresh(65)
+	s2.state["recipes"]["tantan"] = 1
+	s2.state["morning"]["menu"] = ["tantan"]
+	s2.state["stock"] = {"dry": 0, "meat": 0, "sea": 0}
+	var sh2 := ShopSim.new(s2)
+	sh2.open_shop()
+	_run_shop(sh2, 300.0)
+	check(sh2.served == 0, "素材ゼロでは出せない")
+	check(sh2.left_angry > 0, "待ちきれず帰る客が出る")
+
+	# 献立が空なら門前払い
+	var s3 := _fresh(67)
+	s3.state["morning"]["menu"] = []
+	s3.state["stock"] = {"dry": 30, "meat": 30, "sea": 30}
+	var sh3 := ShopSim.new(s3)
+	sh3.open_shop()
+	_run_shop(sh3, 120.0)
+	check(sh3.served == 0 and sh3.turned_away > 0, "献立が空なら門前払い")
+
+
+func _test_ui_theme() -> void:
+	print("[ui]")
+	check(UIKit.available(), "UIキットのテクスチャが存在する")
+	var th := UIKit.theme()
+	check(th != null, "テーマが組める")
+	check(th.get_stylebox("panel", "PanelContainer") != null, "パネルstyleboxがある")
+	check(th.get_stylebox("normal", "Button") != null, "ボタンstyleboxがある")
+	check(th.get_stylebox("fill", "ProgressBar") != null, "バーfill既定がある")
+	var pb := ProgressBar.new()
+	UIKit.style_bar(pb, "bar_mint")
+	check(pb.has_theme_stylebox_override("fill"), "style_barでfillが適用される")
+	pb.free()
+	var b := Button.new()
+	UIKit.as_pomodoro(b)
+	check(b.has_theme_stylebox_override("normal"), "as_pomodoroでミントボタン化")
+	b.free()
 
 
 func _test_keeper_matters() -> void:
