@@ -526,7 +526,7 @@ func _build_ui() -> void:
 	root.add_child(main_box)
 
 	var header_panel := PanelContainer.new()
-	header_panel.add_theme_stylebox_override("panel", DS._sb(DS.SURFACE, DS.LINE, DS.R_MD, DS.SP_2))
+	header_panel.add_theme_stylebox_override("panel", UIKit.topbar_box(DS.SP_2) if UIKit.available() else DS._sb(DS.SURFACE, DS.LINE, DS.R_MD, DS.SP_2))
 	header_bar = HBoxContainer.new()
 	header_bar.add_theme_constant_override("separation", DS.SP_4)
 	header_panel.add_child(header_bar)
@@ -1111,6 +1111,11 @@ func _icon_rect(tex: Texture2D, sz: int) -> TextureRect:
 	return tr
 
 
+## サブ画面のカード/行パネル。UIキットがあれば9-patch、無ければDSフラット。
+func _card_sb() -> StyleBox:
+	return UIKit.row_box(DS.SP_2) if UIKit.available() else DS._sb(DS.SURFACE, DS.LINE, DS.R_SM, DS.SP_2)
+
+
 func _girl_icon(id: String) -> TextureRect:
 	var tr := TextureRect.new()
 	var sprite: String = KuroData.GIRLS[id]["sprite"]
@@ -1398,7 +1403,7 @@ func _refresh_night() -> void:
 func _list_row(title: String, action_text: String, cb: Callable, enabled: bool,
 		icon: Texture2D = null, title_color := COL_TEXT) -> PanelContainer:
 	var panel := PanelContainer.new()
-	panel.add_theme_stylebox_override("panel", DS._sb(DS.SURFACE, DS.LINE, DS.R_SM, DS.SP_2))
+	panel.add_theme_stylebox_override("panel", _card_sb())
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", DS.SP_2)
 	if icon != null:
@@ -1455,7 +1460,7 @@ func _refresh_inventory() -> void:
 		var diff := float(it["score"]) - float(target["cur_score"])
 		var badge := ("▲+%d" % int(diff)) if diff > 0.0 else ("▼%d" % int(diff))
 		var panel := PanelContainer.new()
-		panel.add_theme_stylebox_override("panel", DS._sb(DS.SURFACE, DS.LINE, DS.R_SM, DS.SP_2))
+		panel.add_theme_stylebox_override("panel", _card_sb())
 		var line := HBoxContainer.new()
 		line.add_theme_constant_override("separation", SP_1)
 		var name_label := _label("%s %s %s" % [SimItems.display_name(it), SimItems.affix_text(it), badge],
