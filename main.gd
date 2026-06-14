@@ -49,7 +49,9 @@ var timer_label: Label
 var status_label: Label
 var morning_panel: ScrollContainer
 var morning_box: VBoxContainer
-var home_scene: VBoxContainer      # ホームの主役＝店内シーン（キャラ）
+var home_scene: VBoxContainer      # 店の主役＝店内シーン（イラスト）
+var store_top: VBoxContainer       # 営業ライブ＋依頼＋本日の献立（動的）
+var ops_box: VBoxContainer         # 経営：箱/会話/闇市/交易船/好感度（動的）
 var girls_box: VBoxContainer
 var menu_box: VBoxContainer
 var menu_title: Label
@@ -65,8 +67,6 @@ var door_row: HBoxContainer
 var abandon_btn: Button
 var close_panel: Control
 var close_text: Label
-var night_panel: ScrollContainer
-var night_box: VBoxContainer
 var tabs: TabContainer
 var inv_box: VBoxContainer
 var member_box: VBoxContainer     # メンバー一覧（各キャラの詳細・育成への導線）
@@ -109,10 +109,8 @@ func _ready() -> void:
 	sim.maybe_rotate_ship(now0)
 	if sim.state["run"]["active"]:
 		phase = Phase.DIVE  # 集中中に閉じても復帰できる
-	elif not sim.state["pending_night"].is_empty():
-		night_data = sim.state["pending_night"]
-		phase = Phase.NIGHT
-		_refresh_night()
+	else:
+		_open_store(false)  # 起動時は店モード（店は常時営業）
 	_pump_events()
 	_apply_phase()
 	_refresh_all()
@@ -160,7 +158,6 @@ func _on_scene_finished(meta: Dictionary) -> void:
 			sim.complete_talk(String(meta["girl"]), int(meta["tier"]))
 			_sfx("ui_equip")
 			_save(Time.get_unix_time_from_system())
-			_refresh_night()
 			_refresh_all()
 		"event":
 			if not meta["id"] in sim.state["events_seen"]:
@@ -193,8 +190,8 @@ func _process(delta: float) -> void:
 				banter_timer = 0.0
 				banter_next = banter_rng.randf_range(5.0, 9.0)
 				_idle_banter()
-	# お店モード：接客をライブ進行（客が時間とともに来店→注文→会計）
-	if phase == Phase.NIGHT and shop != null and shop.open:
+	# 店モード：接客をライブ進行（客が時間とともに来店→注文→会計）
+	if phase == Phase.MORNING and shop != null and shop.open:
 		shop.step(delta)
 		for e in shop.drain_events():
 			_on_shop_event(e)
@@ -203,13 +200,13 @@ func _process(delta: float) -> void:
 	if ui_accum >= 1.0:
 		ui_accum = 0.0
 		_refresh_header()
-		if phase == Phase.NIGHT:
+		if phase == Phase.MORNING:
 			if shop != null and shop.open and shop_status != null and is_instance_valid(shop_status):
 				shop_status.text = _shop_line()
 			var before := float(sim.state["ship"]["rotated"])
 			sim.maybe_rotate_ship(now)
 			if float(sim.state["ship"]["rotated"]) != before:
-				_refresh_night()
+				_refresh_morning()
 			elif ship_label != null and is_instance_valid(ship_label):
 				ship_label.text = _ship_head(now)
 
@@ -378,6 +375,10 @@ func _on_depart() -> void:
 	_sfx("ui_confirm")
 	if bgm != null and not bgm.playing:
 		bgm.play()
+	# 集中へ＝店を一旦締める（営業を確定して好感度・住民ストーリーを反映）
+	if shop != null and shop.open:
+		shop.close_shop()
+		shop = null
 	var task := task_edit.text.strip_edges()
 	sim.start_run(dive_mode, dive_minutes, now, task if task != "" else "集中セッション")
 	phase = Phase.DIVE
@@ -409,46 +410,34 @@ func _rest_heal() -> void:
 		sim.state["hp"][id] = sim.girl_maxhp(id)
 
 
-## 休憩 → 暖簾を出す（営業＝お店モードのライブ接客へ）。
-func _on_camp_open_shop() -> void:
-	shop = ShopSim.new(sim)
-	shop.open_shop()
-	# 会話は営業中も解放したいので、最小の pending_night を立てる（閉店時に上書き）。
+## 店モードに入る（店は常時営業＝ShopSim を開く）。
+## advance_day=true で前営業を締めて翌日へ（好感度・住民ストーリー確定）。
+func _open_store(advance_day: bool) -> void:
+	if advance_day:
+		if shop != null and shop.open:
+			var summary := shop.close_shop()
+			if not summary["lines"].is_empty():
+				_notify(String(summary["lines"][0]))
+		sim.next_morning()
+		night_data = {}
+	if shop == null or not shop.open:
+		shop = ShopSim.new(sim)
+		shop.open_shop()
 	if sim.state["pending_night"].is_empty():
 		sim.state["pending_night"] = {"lines": [], "gold": 0, "served": 0, "story": "", "talk_done": false}
-	phase = Phase.NIGHT
+	phase = Phase.MORNING
+
+
+## 休憩（焚き火）→ 店に戻る（翌日へ＝営業を締めて再開）。
+func _on_return_to_store() -> void:
+	_open_store(true)
 	_sfx("ui_confirm")
 	if bgm != null and not bgm.playing:
 		bgm.play()
 	_save(Time.get_unix_time_from_system())
 	_apply_phase()
 	_refresh_all()
-	_check_story_events()
-
-
-## 休憩 → 次の集中の準備へ（店を開けずにまた潜る）。
-func _on_camp_next_dive() -> void:
-	phase = Phase.MORNING
-	_sfx("ui_confirm")
-	_apply_phase()
-	_refresh_all()
-
-
-func _on_next_morning() -> void:
-	# 暖簾を下ろす（営業中なら締めて好感度・住民ストーリーを確定）。
-	if shop != null and shop.open:
-		var summary := shop.close_shop()
-		shop = null
-		if not summary["lines"].is_empty():
-			_notify(String(summary["lines"][0]))
-	sim.next_morning()
-	night_data = {}
-	phase = Phase.MORNING
-	_sfx("ui_confirm")
-	_save(Time.get_unix_time_from_system())
-	_apply_phase()
-	_refresh_all()
-	_check_story_events()  # 日数の節目（story_day3 等）
+	_check_story_events()  # 節目の物語
 
 
 func _apply_phase() -> void:
@@ -463,14 +452,8 @@ func _apply_phase() -> void:
 	else:
 		dive.custom_minimum_size = Vector2(0, 92)
 		dive_frame.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	tabs.visible = phase == Phase.MORNING or phase == Phase.NIGHT
-	if tabs.visible:
-		# 準備(0)と閉店後(1)はフェーズ排他。該当タブを明示選択してから他方を隠す
-		tabs.set_tab_hidden(0, false)
-		tabs.set_tab_hidden(1, false)
-		tabs.current_tab = 0 if phase == Phase.MORNING else 1
-		tabs.set_tab_hidden(0, phase != Phase.MORNING)
-		tabs.set_tab_hidden(1, phase != Phase.NIGHT)
+	# 店モード(MORNING)だけタブを表示。探索/休憩中は隠す（店は1タブに統合）。
+	tabs.visible = phase == Phase.MORNING
 	if phase != Phase.DIVE:
 		door_row.visible = false
 	_relayout()  # 縦のステージ/パネル拡張をフェーズに追従
@@ -505,11 +488,8 @@ func _update_clock(now: float) -> void:
 				title = "%s ▼ クイック" % _mmss(rem)
 			abandon_btn.visible = run["mode"] == "pomo"
 		Phase.MORNING:
-			timer_label.text = "Day %d" % int(sim.state["day"])
-			status_label.text = "開店前。雨。"
-		Phase.NIGHT:
 			timer_label.text = "営業中" if (shop != null and shop.open) else "黒猫飯店"
-			status_label.text = "灯りをつけて、皆が戻る。"
+			status_label.text = "Day %d ｜ 灯りをつけて、皆が戻る。" % int(sim.state["day"])
 		Phase.CAMP:
 			timer_label.text = "休憩"
 			status_label.text = "焚き火を囲む。"
@@ -591,8 +571,7 @@ func _build_ui() -> void:
 	tabs = TabContainer.new()
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	panel_col.add_child(tabs)
-	_build_morning(tabs)
-	_build_night(tabs)
+	_build_morning(tabs)  # 「店」タブ（ホーム＋営業中を統合）
 	_build_member_tab()
 	_build_memory_tab()
 	_build_inventory_tab()
@@ -832,7 +811,7 @@ func _badge(tex: Texture2D, value: String, color := COL_TEXT) -> HBoxContainer:
 
 func _build_morning(parent: Control) -> void:
 	morning_panel = ScrollContainer.new()
-	morning_panel.name = "ホーム"
+	morning_panel.name = "店"
 	morning_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	morning_panel.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	morning_box = VBoxContainer.new()
@@ -840,9 +819,13 @@ func _build_morning(parent: Control) -> void:
 	morning_box.add_theme_constant_override("separation", 8)
 	morning_panel.add_child(morning_box)
 
-	# ① ホームの主役：店内シーン（キャラが居る。_refresh_morning で埋める）
+	# ① 店の主役：店内シーン（イラスト。_refresh_morning で埋める）
 	home_scene = VBoxContainer.new()
 	morning_box.add_child(home_scene)
+	# 営業ライブ＋依頼＋本日の献立（動的）
+	store_top = VBoxContainer.new()
+	store_top.add_theme_constant_override("separation", SP_2)
+	morning_box.add_child(store_top)
 
 	# ② 集中を始める（主役CTA＝ミント）＋同期時間＋タスク
 	var start := _cta("▶ 集中を始める", _on_depart, TYPE_HEAD)
@@ -885,6 +868,10 @@ func _build_morning(parent: Control) -> void:
 	morning_box.add_child(menu_title)
 	menu_box = VBoxContainer.new()
 	morning_box.add_child(menu_box)
+	# ④ 経営（箱/会話/闇市/交易船/好感度）＝動的
+	ops_box = VBoxContainer.new()
+	ops_box.add_theme_constant_override("separation", 6)
+	morning_box.add_child(ops_box)
 	parent.add_child(morning_panel)
 
 
@@ -928,18 +915,6 @@ func _build_dive_panel(parent: Control) -> void:
 		dbg.add_child(b)
 	dive_panel.add_child(dbg)
 	parent.add_child(dive_panel)
-
-
-func _build_night(parent: Control) -> void:
-	night_panel = ScrollContainer.new()
-	night_panel.name = "営業中"
-	night_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	night_panel.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	night_box = VBoxContainer.new()
-	night_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	night_box.add_theme_constant_override("separation", 8)
-	night_panel.add_child(night_box)
-	parent.add_child(night_panel)
 
 
 func _scroll_tab(title: String) -> VBoxContainer:
@@ -1072,15 +1047,10 @@ func _build_close() -> void:
 	close_text = _label("", TYPE_BODY)
 	close_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_child(close_text)
-	# 店を開ける（営業＝オレンジ）／次の集中へ（ポモドーロ＝ミント）
-	var to_shop := _cta("🏮 暖簾を出す（営業へ）", _on_camp_open_shop, TYPE_SUB)
+	# 焚き火で一息 → 店に戻る（店は常時営業。次の集中は店の「集中を始める」から）
+	var to_shop := _cta("🏮 店に戻る", _on_return_to_store, TYPE_SUB)
 	to_shop.custom_minimum_size = Vector2(0, 54)
 	box.add_child(to_shop)
-	var again := _button("▶ 次の集中へ（準備）", _on_camp_next_dive, TYPE_SUB)
-	again.custom_minimum_size = Vector2(0, 48)
-	if UIKit.available():
-		UIKit.as_pomodoro(again)
-	box.add_child(again)
 	card.add_child(box)
 	col.add_child(card)
 	var sp_bot := Control.new()
@@ -1253,8 +1223,6 @@ func _refresh_all() -> void:
 	_refresh_header()
 	if phase == Phase.MORNING:
 		_refresh_morning()
-	elif phase == Phase.NIGHT:
-		_refresh_night()
 	if tabs.visible:
 		_refresh_member()
 		_refresh_memory_archive()
@@ -1282,9 +1250,15 @@ func _refresh_header() -> void:
 
 func _refresh_morning() -> void:
 	var s := sim.state
-	# ホームの主役＝店内イラスト（提供アート）
+	# 店の主役＝店内イラスト（提供アート）
 	_clear(home_scene)
 	home_scene.add_child(_build_home_hero())
+	# 営業ライブ（毎秒更新）＋依頼（キリコ）
+	_clear(store_top)
+	var live := _shop_line() if (shop != null and shop.open) else "暖簾は仕舞われている。"
+	shop_status = _label(live, TYPE_SUB, COL_WARM)
+	store_top.add_child(shop_status)
+	store_top.add_child(_build_kiriko_request())
 	forecast_label.text = "%s予報『%s』の客が多い夜" % [offline_note, s["forecast"]]
 	# 素材在庫をアイコン付きで
 	_clear(stock_row)
@@ -1329,6 +1303,70 @@ func _refresh_morning() -> void:
 		flow.add_child(_juice(b2))
 	menu_box.add_child(flow)
 	door_btn.text = "扉方針：%s" % ("開ける" if s["morning"]["door"] == "open" else "無視する")
+	# 経営（箱/会話/闇市/交易船/好感度）
+	_clear(ops_box)
+	_fill_ops(ops_box)
+
+
+## 店の運用UI（箱を開ける・会話・闇市・交易船・好感度）を box に充填。
+func _fill_ops(box: VBoxContainer) -> void:
+	var s := sim.state
+	var open_b := _button("箱を開ける（残り %d）" % s["boxes"].size(), _on_open_box, 24)
+	open_b.disabled = s["boxes"].is_empty()
+	if not s["boxes"].is_empty():
+		var bi := _box_icon(int(s["boxes"][0]))
+		if bi != null:
+			open_b.icon = bi
+			open_b.add_theme_constant_override("icon_max_width", 30)
+	box.add_child(open_b)
+	var talk := sim.available_talk()
+	if not talk.is_empty():
+		var g: Dictionary = KuroData.GIRLS[talk["girl"]]
+		var scene: Dictionary = TalkData.TALKS[talk["girl"]][talk["tier"]]
+		var tb := _button("会話：%s —「%s」" % [g["name"], scene["title"]],
+				_on_talk_start.bind(String(talk["girl"]), int(talk["tier"])), 24)
+		tb.modulate = Color(1.0, 0.85, 0.95)
+		box.add_child(tb)
+	box.add_child(_section("闇市"))
+	for i in KuroData.MARKET.size():
+		var item: Dictionary = KuroData.MARKET[i]
+		var icon: Texture2D = null
+		if String(item["id"]) == "mats":
+			icon = _ing_icon("meat")
+		elif String(item["id"]) == "recipe":
+			icon = _food_icon("chashu")
+		box.add_child(_list_row(String(item["name"]), "%dG" % int(item["price"]),
+				_on_buy.bind(i), int(s["gold"]) >= int(item["price"]), icon))
+	ship_label = _label(_ship_head(Time.get_unix_time_from_system()), TYPE_SMALL, COL_ACCENT)
+	ship_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+	box.add_child(ship_label)
+	var ship_rule := ColorRect.new()
+	ship_rule.color = DS.ACCENT_DIM
+	ship_rule.custom_minimum_size = Vector2(0, 2)
+	box.add_child(ship_rule)
+	var stock: Array = s["ship"]["stock"]
+	if stock.is_empty():
+		box.add_child(_label("（船は出払っている。次の入荷を待とう）", TYPE_SMALL, COL_DIM))
+	for i in stock.size():
+		var entry: Dictionary = stock[i]
+		var text := ""
+		var tcol := COL_TEXT
+		if entry["type"] == "pet":
+			var pet: Dictionary = KuroData.PETS[entry["pet"]]
+			text = "ペット：%s — %s" % [pet["name"], pet["desc"]]
+			tcol = COL_WARM
+		else:
+			var it: Dictionary = entry["item"]
+			text = "%s %s" % [SimItems.display_name(it), SimItems.affix_text(it)]
+			tcol = SimItems.GRADES[int(entry["item"]["grade"])]["color"]
+		box.add_child(_list_row(text, "%dG" % int(entry["price"]),
+				_on_ship_buy.bind(i), int(s["gold"]) >= int(entry["price"]), null, tcol))
+	if not s["pets"].is_empty():
+		var pet_names: Array[String] = []
+		for pid in s["pets"]:
+			pet_names.append(KuroData.PETS[pid]["name"])
+		box.add_child(_label("店の住人: " + "、".join(pet_names), 16, COL_DIM))
+	box.add_child(_label("好感度：%s" % "  ".join(_aff_summary()), 16, COL_DIM))
 
 
 ## コンパクトな編成カード（小型立ち絵＋2行＋店番トグル）。
@@ -1516,91 +1554,6 @@ func _build_kiriko_request() -> PanelContainer:
 	box.add_child(_label("― まだ応えられない ―", TYPE_SMALL, kr))
 	card.add_child(box)
 	return card
-
-
-func _refresh_night() -> void:
-	_clear(night_box)
-	var s := sim.state
-	# 営業中も店内イラストを主役に（背景）＋営業ライブの一行
-	night_box.add_child(_build_home_hero())
-	var live := _shop_line() if (shop != null and shop.open) else "暖簾は仕舞われている。"
-	shop_status = _label(live, TYPE_SUB, COL_WARM)
-	night_box.add_child(shop_status)
-	night_box.add_child(_build_menu_cards())
-	night_box.add_child(_build_kiriko_request())
-	if night_data.get("lines", []).size() > 0:
-		var panel := PanelContainer.new()
-		var box := VBoxContainer.new()
-		for line in night_data["lines"]:
-			box.add_child(_label(String(line), 20))
-		panel.add_child(box)
-		night_box.add_child(panel)
-		if night_data.get("story", "") != "":
-			var sp := PanelContainer.new()
-			var sl := _label("【住民の物語】\n" + String(night_data["story"]), 19, Color(1.0, 0.9, 0.6))
-			sp.add_child(sl)
-			night_box.add_child(sp)
-	var open_b := _button("箱を開ける（残り %d）" % s["boxes"].size(), _on_open_box, 24)
-	open_b.disabled = s["boxes"].is_empty()
-	if not s["boxes"].is_empty():
-		var bi := _box_icon(int(s["boxes"][0]))
-		if bi != null:
-			open_b.icon = bi
-			open_b.add_theme_constant_override("icon_max_width", 30)
-	night_box.add_child(open_b)
-	var talk := sim.available_talk()
-	if not talk.is_empty():
-		var g: Dictionary = KuroData.GIRLS[talk["girl"]]
-		var scene: Dictionary = TalkData.TALKS[talk["girl"]][talk["tier"]]
-		var tb := _button("会話：%s —「%s」" % [g["name"], scene["title"]],
-				_on_talk_start.bind(String(talk["girl"]), int(talk["tier"])), 24)
-		tb.modulate = Color(1.0, 0.85, 0.95)
-		night_box.add_child(tb)
-	night_box.add_child(_section("闇市"))
-	for i in KuroData.MARKET.size():
-		var item: Dictionary = KuroData.MARKET[i]
-		var icon: Texture2D = null
-		if String(item["id"]) == "mats":
-			icon = _ing_icon("meat")
-		elif String(item["id"]) == "recipe":
-			icon = _food_icon("chashu")
-		night_box.add_child(_list_row(String(item["name"]), "%dG" % int(item["price"]),
-				_on_buy.bind(i), int(s["gold"]) >= int(item["price"]), icon))
-	# 交易船（10分毎に在庫入替）
-	ship_label = _label(_ship_head(Time.get_unix_time_from_system()), TYPE_SMALL, COL_ACCENT)
-	ship_label.autowrap_mode = TextServer.AUTOWRAP_OFF
-	night_box.add_child(ship_label)
-	var ship_rule := ColorRect.new()
-	ship_rule.color = DS.ACCENT_DIM
-	ship_rule.custom_minimum_size = Vector2(0, 2)
-	night_box.add_child(ship_rule)
-	var stock: Array = s["ship"]["stock"]
-	if stock.is_empty():
-		night_box.add_child(_label("（船は出払っている。次の入荷を待とう）", TYPE_SMALL, COL_DIM))
-	for i in stock.size():
-		var entry: Dictionary = stock[i]
-		var text := ""
-		var tcol := COL_TEXT
-		if entry["type"] == "pet":
-			var pet: Dictionary = KuroData.PETS[entry["pet"]]
-			text = "ペット：%s — %s" % [pet["name"], pet["desc"]]
-			tcol = COL_WARM
-		else:
-			var it: Dictionary = entry["item"]
-			text = "%s %s" % [SimItems.display_name(it), SimItems.affix_text(it)]
-			tcol = SimItems.GRADES[int(entry["item"]["grade"])]["color"]
-		night_box.add_child(_list_row(text, "%dG" % int(entry["price"]),
-				_on_ship_buy.bind(i), int(s["gold"]) >= int(entry["price"]), null, tcol))
-	if not s["pets"].is_empty():
-		var pet_names: Array[String] = []
-		for pid in s["pets"]:
-			pet_names.append(KuroData.PETS[pid]["name"])
-		night_box.add_child(_label("店の住人: " + "、".join(pet_names), 16, COL_DIM))
-	night_box.add_child(_label("好感度：%s" % "  ".join(_aff_summary()), 16, COL_DIM))
-	var next_label := "🏮 暖簾を下ろして翌朝へ" if (shop != null and shop.open) else "☀ 翌朝へ"
-	var next := _cta(next_label, _on_next_morning, TYPE_SUB)
-	next.custom_minimum_size = Vector2(0, 56)
-	night_box.add_child(next)
 
 
 ## リスト行コンポーネント：[アイコン] 見出し（伸長）[末尾アクション]。
@@ -1792,20 +1745,9 @@ func _on_open_box() -> void:
 	if r.is_empty():
 		return
 	_sfx("chest_open")
-	var panel := PanelContainer.new()
-	var hb := HBoxContainer.new()
-	hb.add_theme_constant_override("separation", 8)
-	var bi := _box_icon(int(r["grade"]))
-	if bi != null:
-		hb.add_child(_icon_rect(bi, 30))
-	var rl := _label("%s → %s" % [KuroData.BOX_NAMES[int(r["grade"])], r["text"]], 20, DS.SUCCESS)
-	rl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	hb.add_child(rl)
-	panel.add_child(hb)
-	night_box.add_child(panel)
-	night_box.move_child(panel, 1)
+	_notify("%s → %s" % [KuroData.BOX_NAMES[int(r["grade"])], r["text"]])
 	_save(Time.get_unix_time_from_system())
-	_refresh_night()
+	_refresh_morning()
 
 
 func _on_buy(idx: int) -> void:
@@ -1814,7 +1756,7 @@ func _on_buy(idx: int) -> void:
 		return
 	_sfx("ui_buy")
 	_save(Time.get_unix_time_from_system())
-	_refresh_night()
+	_refresh_morning()
 
 
 func _on_skill_toggle(girl_id: String, skill_id: String) -> void:
