@@ -1168,13 +1168,66 @@ func _girl_card(id: String) -> PanelContainer:
 	return panel
 
 
+## 店モードの"額縁"：皆が戻った店内の立ち絵＋営業ライブ＋評判。
+func _build_shop_scene() -> PanelContainer:
+	var panel := PanelContainer.new()
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", SP_2)
+	# 店内：パーティの立ち絵が並ぶ（営業中は皆が戻っている）
+	var cast := HBoxContainer.new()
+	cast.add_theme_constant_override("separation", SP_1)
+	cast.alignment = BoxContainer.ALIGNMENT_CENTER
+	for id in KuroData.GIRL_ORDER:
+		var pr := PortraitRect.new()
+		pr.girl_id = id
+		pr.custom_minimum_size = Vector2(64, 96)
+		pr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cast.add_child(pr)
+	box.add_child(cast)
+	# 営業ライブの一行（毎秒 _process が更新）
+	var live := _shop_line() if (shop != null and shop.open) else "暖簾は仕舞われている。"
+	shop_status = _label(live, TYPE_SUB, COL_WARM)
+	box.add_child(shop_status)
+	# 評判（看板＝sign_total を 0..5 の星に）
+	var rep: int = clampi(sim.sign_total(), 0, 5)
+	box.add_child(_label("評判 " + "★".repeat(rep) + "☆".repeat(5 - rep), TYPE_BODY, COL_WARM))
+	panel.add_child(box)
+	return panel
+
+
+## 本日の献立カード（食アイコン＋名前）。
+func _build_menu_cards() -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", SP_1)
+	box.add_child(_section("本日の献立"))
+	var menu: Array = sim.state["morning"]["menu"]
+	if menu.is_empty():
+		box.add_child(_label("献立が空。準備で一品入れて。", TYPE_SMALL, COL_DIM))
+		return box
+	var flow := HFlowContainer.new()
+	flow.add_theme_constant_override("h_separation", 6)
+	flow.add_theme_constant_override("v_separation", 6)
+	for id in menu:
+		var r: Dictionary = KuroData.RECIPES[id]
+		var card := PanelContainer.new()
+		var cb := VBoxContainer.new()
+		cb.alignment = BoxContainer.ALIGNMENT_CENTER
+		var fi := _food_icon(String(id))
+		if fi != null:
+			cb.add_child(_icon_rect(fi, 40))
+		cb.add_child(_label(String(r["name"]), TYPE_SMALL, COL_TEXT))
+		card.add_child(cb)
+		flow.add_child(card)
+	box.add_child(flow)
+	return box
+
+
 func _refresh_night() -> void:
 	_clear(night_box)
 	var s := sim.state
-	# 営業中：ライブの一行を最上部に（客数・皿・売上・待ち）
-	if shop != null and shop.open:
-		shop_status = _label(_shop_line(), 22, COL_WARM)
-		night_box.add_child(shop_status)
+	# 店モードの主役：皆が戻った店内＋営業ライブ＋評判＋本日の献立（額縁思想）
+	night_box.add_child(_build_shop_scene())
+	night_box.add_child(_build_menu_cards())
 	if night_data.get("lines", []).size() > 0:
 		var panel := PanelContainer.new()
 		var box := VBoxContainer.new()
