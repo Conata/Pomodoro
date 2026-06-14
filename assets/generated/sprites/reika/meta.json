@@ -1,0 +1,10 @@
+{
+ "frame_w": 600,
+ "frame_h": 1294,
+ "anims": {
+  "walk_front": 4,
+  "walk_back": 4,
+  "attack": 4,
+  "jump": 4
+ }
+}
