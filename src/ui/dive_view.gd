@@ -152,6 +152,29 @@ func _draw_sprite(tex: Texture2D, foot: Vector2, flip: bool = false, tint: Color
 	draw_texture_rect(tex, rect, false, tint)
 
 
+## 提供キャラの横スプライトシート（assets/generated/sprites/<id>/<anim>.png、4コマ）を
+## 足元基準でコマ送り描画。青tintはかけず本来の色で出す。あれば true。
+const CHIBI_FRAMES := 4
+const CHIBI_H := 96.0
+func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool) -> bool:
+	var anim := "attack" if in_combat else "walk_front"
+	var tex := _tex("res://assets/generated/sprites/%s/%s.png" % [id, anim])
+	if tex == null:
+		tex = _tex("res://assets/generated/sprites/%s/walk_front.png" % id)
+	if tex == null:
+		return false
+	var fw := tex.get_size().x / float(CHIBI_FRAMES)
+	var fh := tex.get_size().y
+	var f := int(pulse * ANIM_FPS) % CHIBI_FRAMES
+	var sc := CHIBI_H / fh
+	var dw := fw * sc
+	var rect := Rect2(foot.x - dw * 0.5, foot.y - CHIBI_H, dw, CHIBI_H)
+	var tint := Color(1, 1, 1) if alive else Color(0.4, 0.42, 0.52)
+	draw_texture_rect_region(tex, rect, Rect2(f * fw, 0, fw, fh), tint)
+	return true
+
+
+
 ## 視差スクロールの背景レイヤー（横タイル）。
 func _draw_parallax(path: String, scroll: float, top_y: float, tint: Color) -> void:
 	var tex := _tex("res://assets/generated/" + path)
@@ -274,14 +297,19 @@ func _draw() -> void:
 		var id: String = ds[i]
 		var x := 56.0 + i * 60.0 + lunge_party
 		var alive := float(sim.state["hp"].get(id, 0.0)) > 0.0
-		var tex := _anim_tex(String(KuroData.GIRLS[id]["sprite"]), mode if alive else "idle")
-		if tex != null:
-			_draw_sprite(tex, Vector2(x, ground), false, TINT if alive else Color(0.25, 0.3, 0.45))
+		# 提供チビスプライトがあれば優先（カラー）。無ければ従来の0x72（青tint）。
+		if _draw_chibi(id, Vector2(x, ground), in_combat, alive):
 			if alive:
-				_draw_hp(x, ground - tex.get_size().y * SCALE - 10.0,
-						float(sim.state["hp"][id]) / sim.girl_maxhp(id))
+				_draw_hp(x, ground - CHIBI_H - 10.0, float(sim.state["hp"][id]) / sim.girl_maxhp(id))
 		else:
-			draw_circle(Vector2(x, ground - 14), 12.0, KuroData.GIRLS[id]["color"])
+			var tex := _anim_tex(String(KuroData.GIRLS[id]["sprite"]), mode if alive else "idle")
+			if tex != null:
+				_draw_sprite(tex, Vector2(x, ground), false, TINT if alive else Color(0.25, 0.3, 0.45))
+				if alive:
+					_draw_hp(x, ground - tex.get_size().y * SCALE - 10.0,
+							float(sim.state["hp"][id]) / sim.girl_maxhp(id))
+			else:
+				draw_circle(Vector2(x, ground - 14), 12.0, KuroData.GIRLS[id]["color"])
 
 	# 敵（右・左向き）
 	var boss_mob := {}
