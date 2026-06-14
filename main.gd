@@ -1391,14 +1391,18 @@ func _build_home_hero() -> Control:
 	if ResourceLoader.exists(bg):
 		var tr := TextureRect.new()
 		tr.texture = load(bg)
-		tr.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
-		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+		# COVERED＋明示高さ＋clip で確実に大きく表示（FIT_WIDTH_PROPORTIONAL は
+		# VBox内で高さ0に潰れて表示されないことがあるため使わない）。
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		tr.custom_minimum_size = Vector2(0, 760)
 		tr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		tr.clip_contents = true
 		box.add_child(tr)
 	else:
 		box.add_child(_build_shop_scene())
 	var rep: int = clampi(sim.sign_total(), 0, 5)
-	box.add_child(_label("評判 " + "★".repeat(rep) + "☆".repeat(5 - rep), TYPE_BODY, COL_WARM))
+	box.add_child(_label("評判 " + "★".repeat(rep) + "☆".repeat(5 - rep), TYPE_SMALL, COL_WARM))
 	return box
 
 
