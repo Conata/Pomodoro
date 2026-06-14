@@ -40,6 +40,9 @@ var shop_status: Label            # 「営業中 …」のライブ表示
 var header_bar: HBoxContainer
 var dive: DiveView
 var dive_frame: PanelContainer
+var content_box: BoxContainer     # 縦(モバイル)/横(PC)で並びを切替える responsive 容器
+var stage_col: VBoxContainer      # 左：店先/潜行ビュー＋タイマー
+var panel_col: VBoxContainer      # 右：操作パネル＋タブ
 var talk_view: TalkView
 var timer_box: VBoxContainer
 var timer_label: Label
@@ -452,6 +455,7 @@ func _apply_phase() -> void:
 		tabs.set_tab_hidden(1, phase != Phase.NIGHT)
 	if phase != Phase.DIVE:
 		door_row.visible = false
+	_relayout()  # 縦のステージ/パネル拡張をフェーズに追従
 
 
 ## 探索の最小情報（探索率／現在地＝バイオーム・階／遭遇＝人格名）。
@@ -528,6 +532,21 @@ func _build_ui() -> void:
 	header_panel.add_child(header_bar)
 	main_box.add_child(header_panel)
 
+	# 縦(モバイル)/横(PC)で並びを切替える responsive コンテナ。
+	# 縦＝ステージの下にパネルを積む。横＝ステージ(左)とパネル(右)を並べる。
+	content_box = BoxContainer.new()
+	content_box.vertical = true
+	content_box.add_theme_constant_override("separation", 8)
+	content_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_box.add_child(content_box)
+	stage_col = VBoxContainer.new()
+	stage_col.add_theme_constant_override("separation", 8)
+	content_box.add_child(stage_col)
+	panel_col = VBoxContainer.new()
+	panel_col.add_theme_constant_override("separation", 8)
+	panel_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content_box.add_child(panel_col)
+
 	# 店先バナー（待機中）／潜行画面（ダイブ中）。高さはフェーズで可変
 	dive = DiveView.new()
 	dive.sim = sim
@@ -537,7 +556,7 @@ func _build_ui() -> void:
 	dive_frame.add_theme_stylebox_override("panel", _banner_style())
 	dive_frame.add_child(dive)
 	dive_frame.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	main_box.add_child(dive_frame)
+	stage_col.add_child(dive_frame)
 
 	# タイマー帯（潜行中のみ表示）
 	timer_box = VBoxContainer.new()
@@ -548,12 +567,12 @@ func _build_ui() -> void:
 	status_label = _label("", TYPE_BODY, COL_DIM)
 	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	timer_box.add_child(status_label)
-	main_box.add_child(timer_box)
+	stage_col.add_child(timer_box)
 
-	_build_dive_panel(main_box)
+	_build_dive_panel(panel_col)
 	tabs = TabContainer.new()
 	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	main_box.add_child(tabs)
+	panel_col.add_child(tabs)
 	_build_morning(tabs)
 	_build_night(tabs)
 	_build_inventory_tab()
@@ -574,6 +593,30 @@ func _build_ui() -> void:
 	add_child(confirm)
 	_build_status_overlay()
 	_build_audio()
+	get_viewport().size_changed.connect(_relayout)
+	_relayout()
+
+
+## 画面比で縦(モバイル)/横(PC)を切替える。横ならステージとパネルを左右に。
+func _relayout() -> void:
+	if content_box == null:
+		return
+	var sz := get_viewport_rect().size
+	var landscape := sz.x > sz.y * 1.25
+	content_box.vertical = not landscape
+	if landscape:
+		stage_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		stage_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		stage_col.size_flags_stretch_ratio = 1.4
+		panel_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		panel_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		panel_col.size_flags_stretch_ratio = 1.0
+	else:
+		# 縦：潜行中はステージ(潜行ビュー)を拡張、待機中はパネル(タブ)を拡張＝従来挙動
+		stage_col.size_flags_horizontal = Control.SIZE_FILL
+		stage_col.size_flags_vertical = Control.SIZE_EXPAND_FILL if phase == Phase.DIVE else Control.SIZE_SHRINK_BEGIN
+		panel_col.size_flags_horizontal = Control.SIZE_FILL
+		panel_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 
 ## TBH の英雄画面のような、高解像度キャラ＋装備＋スキルの詳細。
