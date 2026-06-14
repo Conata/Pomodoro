@@ -68,6 +68,7 @@ var night_panel: ScrollContainer
 var night_box: VBoxContainer
 var tabs: TabContainer
 var inv_box: VBoxContainer
+var member_box: VBoxContainer     # メンバー一覧（各キャラの詳細・育成への導線）
 var renov_view: RenovView
 var renov_info: Label
 var stats_box: VBoxContainer
@@ -575,6 +576,7 @@ func _build_ui() -> void:
 	panel_col.add_child(tabs)
 	_build_morning(tabs)
 	_build_night(tabs)
+	_build_member_tab()
 	_build_inventory_tab()
 	_build_renov_tab()
 	_build_stats_tab()
@@ -931,6 +933,44 @@ func _scroll_tab(title: String) -> VBoxContainer:
 	return box
 
 
+func _build_member_tab() -> void:
+	member_box = _scroll_tab("メンバー")
+
+
+## メンバー一覧：各キャラのカード→詳細・スキルツリーへの明確な導線。
+func _refresh_member() -> void:
+	if member_box == null:
+		return
+	_clear(member_box)
+	member_box.add_child(_label("仲間をタップで詳細・スキルツリー（育成）", TYPE_SMALL, COL_DIM))
+	for id in KuroData.GIRL_ORDER:
+		var g: Dictionary = KuroData.GIRLS[id]
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _card_sb())
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", SP_3)
+		var pr := PortraitRect.new()
+		pr.girl_id = id
+		pr.custom_minimum_size = Vector2(56, 80)
+		row.add_child(pr)
+		var info := VBoxContainer.new()
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		info.add_theme_constant_override("separation", SP_1)
+		info.add_child(_label(String(g["name"]), TYPE_SUB, g["color"]))
+		info.add_child(_label(String(g["role"]), TYPE_SMALL, COL_DIM))
+		var hearts: int = clampi(int(round(sim.aff(id) / 20.0)), 0, 5)
+		info.add_child(_label("♥".repeat(hearts) + "♡".repeat(5 - hearts)
+				+ "  攻%d HP%d" % [int(sim.girl_atk(id)), int(sim.girl_maxhp(id))],
+				TYPE_SMALL, Color("e88fb0")))
+		row.add_child(info)
+		var btn := _button("詳細・育成", _open_status.bind(id), TYPE_SMALL)
+		if UIKit.available():
+			UIKit.as_primary(btn)
+		row.add_child(btn)
+		card.add_child(row)
+		member_box.add_child(card)
+
+
 func _build_inventory_tab() -> void:
 	inv_box = _scroll_tab("倉庫")
 
@@ -1162,6 +1202,7 @@ func _refresh_all() -> void:
 	elif phase == Phase.NIGHT:
 		_refresh_night()
 	if tabs.visible:
+		_refresh_member()
 		_refresh_inventory()
 		_refresh_stats()
 		renov_view.queue_redraw()
