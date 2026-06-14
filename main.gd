@@ -326,16 +326,15 @@ func _on_run_complete() -> void:
 	if not disconnected and result_summary.get("mode", "") == "pomo":
 		sim.register_completion(Time.get_date_string_from_system(), float(result_summary["minutes"]))
 		_notify("浮上。%d分の集中、おつかれさま" % int(result_summary["minutes"]))
-	# 浮上 → 休憩（焚き火）へ。HP回復し、店を開けるか次の集中へかを選ぶ。
+	# 浮上 → そのまま開店（店モードへ直行）。HP回復し、戦利品が店の弾になる。
 	var mats_by: Dictionary = result_summary.get("mats_by", {})
 	if not mats_by.is_empty():
 		_notify("収穫: 乾物%d 肉%d 海鮮%d" % [
 			int(mats_by.get("dry", 0)), int(mats_by.get("meat", 0)), int(mats_by.get("sea", 0))])
-	night_data = {}
 	_rest_heal()
-	var head := "【切断】早めに引き上げた。" if disconnected else "焚き火で一息。"
-	close_text.text = "%s\n戦利品が今夜の店の弾になる。" % head
-	phase = Phase.CAMP
+	_open_store(true)  # 翌日へ＝店を開け直す（探索後は開店へ）
+	if bgm != null and not bgm.playing:
+		bgm.play()
 	_save(Time.get_unix_time_from_system())
 	_apply_phase()
 	_refresh_all()
