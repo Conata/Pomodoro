@@ -190,7 +190,7 @@ func _process(delta: float) -> void:
 			banter_timer += delta
 			if banter_timer >= banter_next:
 				banter_timer = 0.0
-				banter_next = banter_rng.randf_range(8.0, 15.0)
+				banter_next = banter_rng.randf_range(5.0, 9.0)
 				_idle_banter()
 	# お店モード：接客をライブ進行（客が時間とともに来店→注文→会計）
 	if phase == Phase.NIGHT and shop != null and shop.open:
@@ -306,7 +306,7 @@ func _idle_banter() -> void:
 			break
 	if cat == "idle" and sim.state["in_combat"]:
 		cat = "combat"
-	if cat == "idle" and banter_rng.randf() < 0.4:
+	if cat == "idle" and banter_rng.randf() < 0.55:
 		var ex := Banter.pick_exchange(sim.divers(), banter_rng)
 		if not ex.is_empty():
 			_ex_queue = ex["lines"].duplicate()
@@ -1393,8 +1393,17 @@ func _build_shop_scene() -> PanelContainer:
 		pr.tooltip_text = "%s の詳細・スキルツリー" % String(KuroData.GIRLS[id]["name"])
 		pr.gui_input.connect(_on_portrait_input.bind(id))
 		cast.add_child(pr)
+	# 依頼人キリコ（NPC・紫）も在席。タップで彼女のひとこと。
+	var kp := PortraitRect.new()
+	kp.girl_id = "kiriko_npc"
+	kp.custom_minimum_size = Vector2(64, 96)
+	kp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	kp.mouse_filter = Control.MOUSE_FILTER_STOP
+	kp.tooltip_text = "キリコ（依頼人）"
+	kp.gui_input.connect(_on_kiriko_tap)
+	cast.add_child(kp)
 	box.add_child(cast)
-	box.add_child(_label("▲ キャラをタップで詳細・スキルツリー", TYPE_SMALL, COL_DIM))
+	box.add_child(_label("▲ 仲間をタップで詳細・スキルツリー（紫＝依頼人キリコ）", TYPE_SMALL, COL_DIM))
 	# 営業ライブの一行（毎秒 _process が更新）
 	var live := _shop_line() if (shop != null and shop.open) else "暖簾は仕舞われている。"
 	shop_status = _label(live, TYPE_SUB, COL_WARM)
@@ -1402,8 +1411,36 @@ func _build_shop_scene() -> PanelContainer:
 	# 評判（看板＝sign_total を 0..5 の星に）
 	var rep: int = clampi(sim.sign_total(), 0, 5)
 	box.add_child(_label("評判 " + "★".repeat(rep) + "☆".repeat(5 - rep), TYPE_BODY, COL_WARM))
+	# 在席：黒猫店長＋来店客（営業中は席が埋まって賑わう）
+	var seats := HBoxContainer.new()
+	seats.add_theme_constant_override("separation", SP_1)
+	seats.alignment = BoxContainer.ALIGNMENT_CENTER
+	var guests := 0
+	if shop != null and shop.open:
+		for c in shop.queue:
+			if c["state"] == "wait" or c["state"] == "cook":
+				guests += 1
+	for i in mini(guests, 8):
+		var gp := PortraitRect.new()
+		gp.girl_id = "guest"
+		gp.custom_minimum_size = Vector2(34, 50)
+		seats.add_child(gp)
+	seats.add_child(_label("・黒猫店長（カウンターの端）", TYPE_SMALL, COL_DIM))
+	box.add_child(seats)
 	panel.add_child(box)
 	return panel
+
+
+## 依頼人キリコの立ち絵タップ → ひとこと（軽く）。
+func _on_kiriko_tap(event: InputEvent) -> void:
+	var tapped: bool = (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT) \
+			or (event is InputEventScreenTouch and event.pressed)
+	if not tapped:
+		return
+	var lines := ["…今日も、暖簾を出してくれたんだ", "まだ、考えてくれてる?",
+			"あったかいの、おいしかった", "急がなくていいよ。ここにいるから"]
+	_sfx("ui_confirm")
+	_notify("キリコ「%s」" % lines[randi() % lines.size()])
 
 
 ## 本日の献立カード（食アイコン＋名前）。
