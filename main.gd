@@ -41,6 +41,10 @@ var header_panel: PanelContainer
 var header_bar: HBoxContainer
 var dive: DiveView
 var dive_frame: PanelContainer
+var dive_chrome: DiveChrome        # ポスト処理の上に重ねる配信UI（常にクッキリ）
+var post_bbc: BackBufferCopy       # 探索ステージのスクリーンコピー
+var post_fx: ColorRect             # カラグレ/ブルーム/DoFのポスト処理オーバーレイ
+var post_mat: ShaderMaterial
 var content_box: BoxContainer     # 縦(モバイル)/横(PC)で並びを切替える responsive 容器
 var stage_col: VBoxContainer      # 左：店先/潜行ビュー＋タイマー
 var panel_col: VBoxContainer      # 右：操作パネル＋タブ
@@ -197,6 +201,7 @@ func _process(delta: float) -> void:
 		for e in shop.drain_events():
 			_on_shop_event(e)
 	_update_clock(now)
+	_update_overlays()
 	ui_accum += delta
 	if ui_accum >= 1.0:
 		ui_accum = 0.0
@@ -450,6 +455,12 @@ func _apply_phase() -> void:
 	timer_box.visible = false
 	dive_info.visible = not diving
 	log_label.visible = not diving
+	# 探索のポスト処理＋配信UI（潜行中のみ）。シェイダ未ロード時はチロップのみ。
+	if post_bbc != null:
+		post_bbc.visible = diving and post_mat != null
+		post_fx.visible = diving and post_mat != null
+	if dive_chrome != null:
+		dive_chrome.visible = diving
 	if diving:
 		dive.custom_minimum_size = Vector2(0, 300)
 		dive_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -597,8 +608,53 @@ func _build_ui() -> void:
 	add_child(confirm)
 	_build_status_overlay()
 	_build_audio()
+	_build_post_fx()
 	get_viewport().size_changed.connect(_relayout)
 	_relayout()
+
+
+## 探索ステージ専用のポスト処理（カラグレ/ブルーム/擬似DoF）＋その上の配信UI。
+## BackBufferCopy → ColorRect(shader) → DiveChrome の順で全UIの最前面に積む。
+func _build_post_fx() -> void:
+	post_bbc = BackBufferCopy.new()
+	post_bbc.copy_mode = BackBufferCopy.COPY_MODE_VIEWPORT
+	post_bbc.visible = false
+	add_child(post_bbc)
+	post_fx = ColorRect.new()
+	post_fx.set_anchors_preset(Control.PRESET_FULL_RECT)
+	post_fx.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	post_fx.visible = false
+	var sh: Shader = load("res://src/ui/dive_post.gdshader")
+	if sh != null:
+		post_mat = ShaderMaterial.new()
+		post_mat.shader = sh
+		post_fx.material = post_mat
+	add_child(post_fx)
+	dive_chrome = DiveChrome.new()
+	dive_chrome.sim = sim
+	dive_chrome.dive = dive
+	dive_chrome.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	dive_chrome.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	dive_chrome.visible = false
+	add_child(dive_chrome)
+
+
+## 探索ステージの矩形にポスト処理／配信UIを合わせる（毎フレーム）。
+func _update_overlays() -> void:
+	if dive_frame == null:
+		return
+	var r := dive_frame.get_global_rect()
+	if dive_chrome != null and dive_chrome.visible:
+		dive_chrome.position = r.position
+		dive_chrome.size = r.size
+	if post_mat != null and post_fx != null and post_fx.visible:
+		var vp := get_viewport_rect().size
+		if vp.x > 0.0 and vp.y > 0.0:
+			var amin := r.position / vp
+			var amax := (r.position + r.size) / vp
+			post_mat.set_shader_parameter("area", Vector4(amin.x, amin.y, amax.x, amax.y))
+			post_mat.set_shader_parameter("focus_y", amin.y + (amax.y - amin.y) * 0.46)
+			post_mat.set_shader_parameter("focus_band", (amax.y - amin.y) * 0.17)
 
 
 ## 画面比で縦(モバイル)/横(PC)を切替える。横ならステージとパネルを左右に。
