@@ -161,6 +161,10 @@ func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool) -> boo
 	var tex := _tex("res://assets/generated/sprites/%s/%s.png" % [id, anim])
 	if tex == null:
 		tex = _tex("res://assets/generated/sprites/%s/walk_front.png" % id)
+	if tex == null:  # 暫定：自前シートが無いキャラは全員ユズキで代用
+		tex = _tex("res://assets/generated/sprites/yuzuki/%s.png" % anim)
+	if tex == null:
+		tex = _tex("res://assets/generated/sprites/yuzuki/walk_front.png")
 	if tex == null:
 		return false
 	var fw := tex.get_size().x / float(CHIBI_FRAMES)
