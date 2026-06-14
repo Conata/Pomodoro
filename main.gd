@@ -56,6 +56,7 @@ var mode_group := ButtonGroup.new()
 var forecast_label: Label
 var dive_panel: VBoxContainer
 var log_label: RichTextLabel
+var dive_info: Label              # 探索の最小情報HUD（探索率/現在地/遭遇）
 var door_row: HBoxContainer
 var abandon_btn: Button
 var close_panel: Control
@@ -453,6 +454,18 @@ func _apply_phase() -> void:
 		door_row.visible = false
 
 
+## 探索の最小情報（探索率／現在地＝バイオーム・階／遭遇＝人格名）。
+func _dive_info_text() -> String:
+	var s := sim.state
+	var fl: int = sim.current_floor()
+	var biome: Dictionary = KuroData.BIOMES[fl % KuroData.BIOMES.size()]
+	var pct: int = int(fmod(float(s["dist"]), KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN * 100.0)
+	var enc := "道中"
+	if s["in_combat"] and not s["mobs"].is_empty():
+		enc = String(s["mobs"][0]["name"])
+	return "探索率 %d%%　｜　現在地：%s B%dF　｜　遭遇：%s" % [pct, String(biome["name"]), fl + 1, enc]
+
+
 func _update_clock(now: float) -> void:
 	var run: Dictionary = sim.state["run"]
 	var title := "黒猫飯店"
@@ -460,6 +473,8 @@ func _update_clock(now: float) -> void:
 		Phase.DIVE:
 			var rem := maxf(0.0, float(run["duration"]) - (now - float(run["anchor"])))
 			timer_label.text = _mmss(rem)
+			if dive_info != null:
+				dive_info.text = _dive_info_text()
 			if run["mode"] == "pomo":
 				status_label.text = String(run["task"])
 				title = "%s ▼ %s" % [_mmss(rem), run["task"]]
@@ -797,6 +812,10 @@ func _build_dive_panel(parent: Control) -> void:
 	skip_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	door_row.add_child(skip_b)
 	dive_panel.add_child(door_row)
+	# 最小情報HUD（戦闘ログのスパムではなく、探索率・現在地・遭遇だけ）
+	dive_info = _label("", TYPE_BODY, UIKit.SECONDARY)
+	dive_info.autowrap_mode = TextServer.AUTOWRAP_OFF
+	dive_panel.add_child(dive_info)
 	log_label = RichTextLabel.new()
 	log_label.bbcode_enabled = true
 	log_label.scroll_following = true
