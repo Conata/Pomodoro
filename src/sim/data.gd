@@ -75,6 +75,23 @@ const GIRLS := {
 
 const GIRL_ORDER := ["mil", "yuzuki", "muu", "kiriko"]
 
+# NPC（操作不可・会話/イベントの話者になれる）。プレイアブルとは別。
+# キリコ＝依頼人「私を殺してほしい」。物語の核（人格コピーの残り）。
+const NPCS := {
+	"kiriko_npc": {
+		"name": "キリコ", "role": "依頼人", "color": Color("cdb4db"),
+	},
+}
+
+# 会話/イベントの話者を引く（プレイアブル GIRLS か NPC のどちらでも）。
+static func actor(id: String) -> Dictionary:
+	if GIRLS.has(id):
+		return GIRLS[id]
+	if NPCS.has(id):
+		return NPCS[id]
+	return {"name": "？？？", "color": Color(0.8, 0.8, 0.8)}
+
+
 # 会話解放閾値（好感度）
 const TALK_THRESHOLDS := [15, 45, 80]
 

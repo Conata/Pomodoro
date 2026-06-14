@@ -135,7 +135,7 @@ func _draw() -> void:
 				Color(0.6, 0.82, 1.0, 0.08 + fposmod(i * 0.11, 0.1)), 1.2)
 	# 立ち絵（等身の高いキャラ。ピクセルではなくポートレート）。
 	# res://assets/portraits/<id>.png があればそれ、無ければシルエット。
-	var g: Dictionary = KuroData.GIRLS[girl]
+	var g: Dictionary = KuroData.actor(girl)  # GIRLS か NPC のどちらでも
 	var pw := sz.x * 0.62
 	var ph := sz.y * 0.62
 	Portrait.draw_into(self, girl, Rect2(sz.x - pw - 20.0, 10.0, pw, ph), pulse)

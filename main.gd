@@ -114,7 +114,11 @@ func _ready() -> void:
 	_pump_events()
 	_apply_phase()
 	_refresh_all()
-	_maybe_event("tutorial")  # 初回だけチュートリアルを出す
+	# 初回：コールドオープン（キリコの依頼）→ 終わったらチュートリアルへ連結。
+	if not "intro_kiriko" in sim.state["events_seen"]:
+		_maybe_event("intro_kiriko")
+	else:
+		_maybe_event("tutorial")
 
 
 ## 未読イベントなら再生する。発火条件を増やすのはここに1行。
@@ -157,6 +161,9 @@ func _on_scene_finished(meta: Dictionary) -> void:
 			if not meta["id"] in sim.state["events_seen"]:
 				sim.state["events_seen"].append(meta["id"])
 				_save(Time.get_unix_time_from_system())
+			# コールドオープンが終わったら、続けて操作チュートリアルへ。
+			if String(meta["id"]) == "intro_kiriko":
+				_maybe_event("tutorial")
 
 
 func _process(delta: float) -> void:

@@ -316,7 +316,8 @@ func _test_content() -> void:
 	# イベント：speaker 実在・lines 非空
 	for id in EventData.EVENTS:
 		var ev: Dictionary = EventData.EVENTS[id]
-		check(KuroData.GIRLS.has(String(ev["speaker"])) and not ev["lines"].is_empty(),
+		var sp := String(ev["speaker"])
+		check((KuroData.GIRLS.has(sp) or KuroData.NPCS.has(sp)) and not ev["lines"].is_empty(),
 				"イベント「%s」が妥当" % id)
 	# 各キャラに idle セリフが複数ある（探索中の独り言）
 	for gid in KuroData.GIRL_ORDER:
