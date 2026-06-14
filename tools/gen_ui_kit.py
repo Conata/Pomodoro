@@ -23,21 +23,28 @@ import struct
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "assets", "generated", "ui")
 
-# 黒猫飯店パレット（モックアップの暗地＋朱/琥珀ネオン）
+# 黒猫飯店パレット（指定値：深夜喫茶×オカルト×温かい居場所）。
+# 3軸＝オレンジ(店)/ミント(ポモドーロ)/紫(キリコ・精神世界)。src/ui/ui_theme.gd と一致。
 COL = {
-    "bg":        (0x0d, 0x0b, 0x09),
-    "panel_top": (0x24, 0x1d, 0x16),
-    "panel_bot": (0x17, 0x12, 0x0d),
-    "inset_top": (0x12, 0x0e, 0x0a),
-    "inset_bot": (0x0c, 0x09, 0x07),
-    "border":    (0x4a, 0x3a, 0x29),
-    "border_hi": (0x6b, 0x55, 0x3b),
-    "amber":     (0xe8, 0xa1, 0x3a),
-    "amber_dk":  (0xb8, 0x7c, 0x24),
-    "red":       (0xd2, 0x3b, 0x2e),
-    "red_dk":    (0x9a, 0x29, 0x20),
-    "ink":       (0xa8, 0x9a, 0x86),
-    "ep":        (0x4a, 0x9d, 0xd6),
+    "bg":        (0x15, 0x15, 0x15),  # Background 深夜の黒
+    "panel_top": (0x26, 0x26, 0x26),  # Panel 店内の影
+    "panel_bot": (0x1d, 0x1d, 0x1d),
+    "inset_top": (0x1a, 0x1a, 0x1a),
+    "inset_bot": (0x12, 0x12, 0x12),
+    "border":    (0x3a, 0x2a, 0x20),  # Border 木製家具
+    "border_hi": (0x55, 0x3e, 0x2d),
+    "amber":     (0xe6, 0xa1, 0x5a),  # Primary 暖炉オレンジ（店/選択中/焚き火）
+    "amber_dk":  (0xc4, 0x84, 0x42),
+    "mint":      (0x69, 0xd2, 0xb0),  # Secondary ミント（ポモドーロ/回復/成功）
+    "mint_dk":   (0x46, 0x9d, 0x84),
+    "purple":    (0x8e, 0x6b, 0xc7),  # Accent 紫（オカルト/精神世界/キリコ）
+    "purple_dk": (0x5a, 0x18, 0x9a),
+    "red":       (0xe0, 0x5a, 0x5a),  # Danger
+    "red_dk":    (0xa8, 0x3c, 0x3c),
+    "btn":       (0x2f, 0x2f, 0x2f),  # ボタン通常
+    "btn_hi":    (0x3d, 0x3d, 0x3d),  # ホバー
+    "ink":       (0xf5, 0xf3, 0xee),  # Text（真っ白を避ける）
+    "ep":        (0x69, 0xd2, 0xb0),  # （ミント）
 }
 
 # StyleBoxTexture の texture_margin（px）。ui_theme.gd と必ず一致させる。
@@ -173,22 +180,25 @@ def gen_textures():
         "panel":           (64, 64, 18, 2, COL["panel_top"], COL["panel_bot"], COL["border"], COL["border_hi"]),
         "panel_inset":     (64, 64, 14, 2, COL["inset_top"], COL["inset_bot"], COL["border"], None),
         "row":             (44, 44, 10, 1, COL["panel_top"], COL["panel_bot"], COL["border"], None),
-        "bubble":          (60, 60, 16, 2, (0x20, 0x19, 0x12), (0x18, 0x12, 0x0c), COL["border_hi"], COL["border_hi"]),
+        "bubble":          (60, 60, 16, 2, (0x24, 0x22, 0x1e), (0x1a, 0x18, 0x15), COL["border_hi"], COL["border_hi"]),
         "topbar":          (60, 60, 4, 2, COL["panel_top"], COL["panel_bot"], COL["border"], COL["border_hi"]),
-        "button":          (56, 56, 14, 2, COL["amber"], COL["amber_dk"], (0x7a, 0x52, 0x16), (0xff, 0xcf, 0x6a)),
-        "button_hover":    (56, 56, 14, 2, (0xf4, 0xb4, 0x4e), COL["amber"], (0x7a, 0x52, 0x16), (0xff, 0xe0, 0x86)),
-        "button_press":    (56, 56, 14, 2, COL["amber_dk"], (0x8c, 0x5d, 0x18), (0x5a, 0x3c, 0x10), None),
-        "button_disabled": (56, 56, 14, 2, (0x35, 0x30, 0x29), (0x26, 0x22, 0x1c), (0x44, 0x3d, 0x32), None),
+        # 既定ボタンはダークグレー（UIは控えめ＝額縁）。Primary だけ暖炉オレンジ。
+        "button":          (56, 56, 14, 2, (0x37, 0x37, 0x37), COL["btn"], COL["border"], (0x4a, 0x4a, 0x4a)),
+        "button_hover":    (56, 56, 14, 2, (0x47, 0x47, 0x47), COL["btn_hi"], COL["border"], (0x5a, 0x5a, 0x5a)),
+        "button_press":    (56, 56, 14, 2, (0x24, 0x24, 0x24), (0x1d, 0x1d, 0x1d), COL["border"], None),
+        "button_primary":  (56, 56, 14, 2, (0xee, 0xae, 0x6a), COL["amber"], (0x9a, 0x6a, 0x2e), (0xff, 0xcf, 0x8a)),
+        "button_disabled": (56, 56, 14, 2, (0x26, 0x26, 0x26), (0x20, 0x20, 0x20), (0x33, 0x2a, 0x24), None),
     }
     for name, (w, h, r, bw, top, bot, bc, bhi) in specs.items():
         buf = render_box(w, h, r, bw, top, bot, bc, bhi)
         save_png(os.path.join(ROOT, name + ".png"), w, h, buf)
         print("  UI  %-16s %dx%d" % (name, w, h))
-    # バー（横 9-patch）：bg と amber/red/ep fill
+    # バー（横 9-patch）：bg ＋ オレンジ/ミント/紫/朱の fill
     for name, top, bot in (("bar_bg", COL["inset_top"], COL["inset_bot"]),
-                           ("bar_hp", COL["red"], COL["red_dk"]),
-                           ("bar_ep", COL["ep"], (0x2c, 0x66, 0x92)),
-                           ("bar_amber", COL["amber"], COL["amber_dk"])):
+                           ("bar_danger", COL["red"], COL["red_dk"]),
+                           ("bar_mint", COL["mint"], COL["mint_dk"]),
+                           ("bar_primary", COL["amber"], COL["amber_dk"]),
+                           ("bar_purple", COL["purple"], COL["purple_dk"])):
         buf = render_box(24, 16, 7, 1, top, bot, COL["border"], None)
         save_png(os.path.join(ROOT, name + ".png"), 24, 16, buf)
         print("  UI  %-16s %dx%d" % (name, 24, 16))
@@ -233,9 +243,9 @@ def gen_preview():
     # 大パネル（お店モード内観の枠）
     panel("panel", 10, 66, W - 20, 220, MARGINS["panel"])
     _text_blocks(bg, W, 26, 80, 6, COL["amber"])
-    # HP/EP バー
-    panel("bar_bg", 26, 110, 150, 14, 7); panel("bar_hp", 26, 110, 110, 14, 7)
-    panel("bar_bg", 26, 130, 150, 14, 7); panel("bar_ep", 26, 130, 80, 14, 7)
+    # HP(朱) / ポモドーロ(ミント) バー
+    panel("bar_bg", 26, 110, 150, 14, 7); panel("bar_danger", 26, 110, 110, 14, 7)
+    panel("bar_bg", 26, 130, 150, 14, 7); panel("bar_mint", 26, 130, 80, 14, 7)
     # 吹き出し（注文/会話）
     panel("bubble", 30, 170, 220, 70, MARGINS["bubble"])
     _text_blocks(bg, W, 44, 188, 9, COL["ink"])
@@ -248,13 +258,16 @@ def gen_preview():
     for k in range(3):
         panel("row", 10, 410 + k * 52, W - 20, 46, MARGINS["row"])
         _text_blocks(bg, W, 24, 426 + k * 52, 10, COL["ink"])
-    # ボタン群
+    # ボタン群（既定＝ダークグレー、無効）
     panel("button", 10, 580, (W - 30) // 2, 56, MARGINS["button"])
-    _text_blocks(bg, W, 60, 602, 5, (0x20, 0x16, 0x08))
+    _text_blocks(bg, W, 60, 602, 5, COL["ink"])
     panel("button_disabled", 20 + (W - 30) // 2, 580, (W - 30) // 2, 56, MARGINS["button"])
-    # 大 CTA（暖簾を出す）
-    panel("button_hover", 10, 648, W - 20, 56, MARGINS["button"])
+    # 大 CTA（暖簾を出す）＝Primary オレンジ
+    panel("button_primary", 10, 648, W - 20, 56, MARGINS["button"])
     _text_blocks(bg, W, 150, 670, 6, (0x20, 0x16, 0x08))
+    # モード3軸カラーの見本（オレンジ=店 / ミント=ポモドーロ / 紫=キリコ）
+    for k, name in enumerate(("bar_primary", "bar_mint", "bar_purple")):
+        panel(name, 14 + k * 118, 300 - 14, 100, 8, 7)
 
     save_png(os.path.join(ROOT, "preview.png"), W, H, bg)
     print("  preview.png %dx%d" % (W, H))
