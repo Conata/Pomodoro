@@ -56,7 +56,8 @@ jobs:
         # index.pck?v=<sha> で取得させる（Pagesはクエリ無視で実体を返す＝URL別で更新）。
         # 失敗してもデプロイは壊さない（追記のみ・|| true）。
         run: |
-          SHA="${GITHUB_SHA::8}"
+          # シェルは sh(dash) のため bash 専用の ${VAR::N} は使わない（POSIX cut）
+          SHA=$(printf '%s' "$GITHUB_SHA" | cut -c1-8)
           sed -i "s#const GODOT_CONFIG = {#const GODOT_CONFIG = {\"mainPack\":\"index.pck?v=${SHA}\",#" build/web/index.html || true
           echo "--- mainPack injection check ---"
           grep -o 'mainPack[^,]*' build/web/index.html || echo "（マーカー未検出：従来どおり配信＝壊れはしない）"
