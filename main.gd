@@ -1282,9 +1282,9 @@ func _refresh_header() -> void:
 
 func _refresh_morning() -> void:
 	var s := sim.state
-	# ホームの主役＝店内シーン（キャラが並ぶ／タップで詳細・育成）
+	# ホームの主役＝店内イラスト（提供アート）
 	_clear(home_scene)
-	home_scene.add_child(_build_shop_scene())
+	home_scene.add_child(_build_home_hero())
 	forecast_label.text = "%s予報『%s』の客が多い夜" % [offline_note, s["forecast"]]
 	# 素材在庫をアイコン付きで
 	_clear(stock_row)
@@ -1381,6 +1381,25 @@ func _girl_card(id: String) -> PanelContainer:
 	row.add_child(b)
 	panel.add_child(row)
 	return panel
+
+
+## ホームの主役：店内イラスト（提供アート）。無ければ立ち絵シーンにフォールバック。
+func _build_home_hero() -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", SP_2)
+	var bg := "res://assets/art/home_bg.png"
+	if ResourceLoader.exists(bg):
+		var tr := TextureRect.new()
+		tr.texture = load(bg)
+		tr.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+		tr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		box.add_child(tr)
+	else:
+		box.add_child(_build_shop_scene())
+	var rep: int = clampi(sim.sign_total(), 0, 5)
+	box.add_child(_label("評判 " + "★".repeat(rep) + "☆".repeat(5 - rep), TYPE_BODY, COL_WARM))
+	return box
 
 
 ## 店モードの"額縁"：皆が戻った店内の立ち絵＋営業ライブ＋評判。
