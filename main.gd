@@ -507,7 +507,7 @@ func _build_status_overlay() -> void:
 	status_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	status_overlay.visible = false
 	var backdrop := ColorRect.new()
-	backdrop.color = Color(0.01, 0.02, 0.06, 0.88)
+	backdrop.color = Color(0.05, 0.04, 0.03, 0.88)
 	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
 	backdrop.mouse_filter = Control.MOUSE_FILTER_STOP
 	status_overlay.add_child(backdrop)
@@ -530,7 +530,7 @@ func _build_status_overlay() -> void:
 	var info := VBoxContainer.new()
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info.add_theme_constant_override("separation", 6)
-	status_name = _label("", TYPE_HEAD, Color(0.9, 0.96, 1.0))
+	status_name = _label("", TYPE_HEAD, COL_TEXT)
 	info.add_child(status_name)
 	status_head = VBoxContainer.new()
 	status_head.add_theme_constant_override("separation", 4)
@@ -810,7 +810,7 @@ func _build_close() -> void:
 	close_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
 	close_panel.visible = false
 	var backdrop := ColorRect.new()
-	backdrop.color = Color(0.01, 0.02, 0.06, 0.82)
+	backdrop.color = Color(0.05, 0.04, 0.03, 0.82)
 	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
 	close_panel.add_child(backdrop)
 	var margin := MarginContainer.new()
@@ -992,7 +992,7 @@ func _girl_icon(id: String) -> TextureRect:
 	tr.custom_minimum_size = Vector2(52, 78)
 	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	tr.modulate = Color(0.7, 0.85, 1.15)
+	tr.modulate = Color(1.08, 1.0, 0.9)  # わずかに暖色へ寄せる
 	return tr
 
 
@@ -1400,7 +1400,7 @@ func _on_open_box() -> void:
 	var bi := _box_icon(int(r["grade"]))
 	if bi != null:
 		hb.add_child(_icon_rect(bi, 30))
-	var rl := _label("%s → %s" % [KuroData.BOX_NAMES[int(r["grade"])], r["text"]], 20, Color(0.7, 1.0, 0.85))
+	var rl := _label("%s → %s" % [KuroData.BOX_NAMES[int(r["grade"])], r["text"]], 20, DS.SUCCESS)
 	rl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hb.add_child(rl)
 	panel.add_child(hb)
@@ -1451,7 +1451,7 @@ func _on_bulk_salvage() -> void:
 	_sfx("ui_buy")
 	_refresh_inventory()
 	_refresh_header()
-	inv_box.add_child(_label("一括分解: %d品 → 廃材+%d" % [int(r["count"]), int(r["dust"])], 16, Color(0.7, 1.0, 0.85)))
+	inv_box.add_child(_label("一括分解: %d品 → 廃材+%d" % [int(r["count"]), int(r["dust"])], 16, DS.SUCCESS))
 
 
 func _on_synthesize() -> void:
