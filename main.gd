@@ -34,6 +34,8 @@ var log_count := 0
 var pending_confirm := Callable()
 var result_summary := {}
 var night_data := {}
+var shop: ShopSim = null          # お店モードのライブ接客（NIGHT中に稼働）
+var shop_status: Label            # 「営業中 …」のライブ表示
 
 var header_bar: HBoxContainer
 var dive: DiveView
@@ -174,12 +176,19 @@ func _process(delta: float) -> void:
 				banter_timer = 0.0
 				banter_next = banter_rng.randf_range(8.0, 15.0)
 				_idle_banter()
+	# お店モード：接客をライブ進行（客が時間とともに来店→注文→会計）
+	if phase == Phase.NIGHT and shop != null and shop.open:
+		shop.step(delta)
+		for e in shop.drain_events():
+			_on_shop_event(e)
 	_update_clock(now)
 	ui_accum += delta
 	if ui_accum >= 1.0:
 		ui_accum = 0.0
 		_refresh_header()
 		if phase == Phase.NIGHT:
+			if shop != null and shop.open and shop_status != null and is_instance_valid(shop_status):
+				shop_status.text = _shop_line()
 			var before := float(sim.state["ship"]["rotated"])
 			sim.maybe_rotate_ship(now)
 			if float(sim.state["ship"]["rotated"]) != before:
@@ -298,19 +307,43 @@ func _on_run_complete() -> void:
 	if not disconnected and result_summary.get("mode", "") == "pomo":
 		sim.register_completion(Time.get_date_string_from_system(), float(result_summary["minutes"]))
 		_notify("浮上。%d分の集中、おつかれさま" % int(result_summary["minutes"]))
-	# 浮上と同時に夜営業を即時精算（三行）
-	night_data = sim.close_day()
-	phase = Phase.CLOSE
-	var lines: Array = night_data["lines"]
-	var head := "【切断】素材半減・未送付の箱を失った\n" if disconnected else ""
+	# 浮上 → 暖簾を出す（接客はライブ進行）。集中の戦利品が今夜の弾になる。
 	var mats_by: Dictionary = result_summary.get("mats_by", {})
 	if not mats_by.is_empty():
-		head += "収穫: 乾物%d 肉%d 海鮮%d\n\n" % [
-			int(mats_by.get("dry", 0)), int(mats_by.get("meat", 0)), int(mats_by.get("sea", 0))]
-	close_text.text = head + "%s\n%s\n%s" % [lines[0], lines[1], lines[2]]
+		_notify("収穫: 乾物%d 肉%d 海鮮%d" % [
+			int(mats_by.get("dry", 0)), int(mats_by.get("meat", 0)), int(mats_by.get("sea", 0))])
+	night_data = {}
+	shop = ShopSim.new(sim)
+	shop.open_shop()
+	# 会話は営業中も解放したいので、最小の pending_night を立てておく（閉店時に上書き）。
+	if sim.state["pending_night"].is_empty():
+		sim.state["pending_night"] = {"lines": [], "gold": 0, "served": 0, "story": "", "talk_done": false}
+	phase = Phase.NIGHT
 	_save(Time.get_unix_time_from_system())
 	_apply_phase()
 	_refresh_all()
+	_check_story_events()
+
+
+## 営業中のライブ表示用の一行。
+func _shop_line() -> String:
+	if shop == null:
+		return ""
+	var waiting := 0
+	for c in shop.queue:
+		if c["state"] == "wait":
+			waiting += 1
+	var came: int = shop.served + shop.left_angry + shop.turned_away
+	return "営業中 — 客%d・%d皿・+%dG（待ち%d）" % [came, shop.served, shop.gold_earned, waiting]
+
+
+## 接客イベントを音で返す（提供＝会計音／離脱＝不満音）。
+func _on_shop_event(e: Dictionary) -> void:
+	match String(e["kind"]):
+		"served":
+			_sfx("ui_buy")
+		"leave":
+			_sfx("ui_denied")
 
 
 # --- フェーズ遷移 ------------------------------------------------------------
@@ -360,6 +393,12 @@ func _on_close_done() -> void:
 
 
 func _on_next_morning() -> void:
+	# 暖簾を下ろす（営業中なら締めて好感度・住民ストーリーを確定）。
+	if shop != null and shop.open:
+		var summary := shop.close_shop()
+		shop = null
+		if not summary["lines"].is_empty():
+			_notify(String(summary["lines"][0]))
 	sim.next_morning()
 	night_data = {}
 	phase = Phase.MORNING
@@ -412,10 +451,10 @@ func _update_clock(now: float) -> void:
 			timer_label.text = "Day %d" % int(sim.state["day"])
 			status_label.text = "開店前。雨。"
 		Phase.NIGHT:
-			timer_label.text = "閉店後"
-			status_label.text = "箱と、会話と、雨音。"
+			timer_label.text = "営業中" if (shop != null and shop.open) else "黒猫飯店"
+			status_label.text = "灯りをつけて、皆が戻る。"
 		Phase.CLOSE:
-			timer_label.text = "精算"
+			timer_label.text = "帰還"
 			status_label.text = ""
 	DisplayServer.window_set_title(title)
 
@@ -764,7 +803,7 @@ func _build_dive_panel(parent: Control) -> void:
 
 func _build_night(parent: Control) -> void:
 	night_panel = ScrollContainer.new()
-	night_panel.name = "閉店後"
+	night_panel.name = "営業中"
 	night_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	night_panel.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	night_box = VBoxContainer.new()
@@ -1132,7 +1171,11 @@ func _girl_card(id: String) -> PanelContainer:
 func _refresh_night() -> void:
 	_clear(night_box)
 	var s := sim.state
-	if not night_data.is_empty():
+	# 営業中：ライブの一行を最上部に（客数・皿・売上・待ち）
+	if shop != null and shop.open:
+		shop_status = _label(_shop_line(), 22, COL_WARM)
+		night_box.add_child(shop_status)
+	if night_data.get("lines", []).size() > 0:
 		var panel := PanelContainer.new()
 		var box := VBoxContainer.new()
 		for line in night_data["lines"]:
@@ -1201,7 +1244,8 @@ func _refresh_night() -> void:
 			pet_names.append(KuroData.PETS[pid]["name"])
 		night_box.add_child(_label("店の住人: " + "、".join(pet_names), 16, COL_DIM))
 	night_box.add_child(_label("好感度：%s" % "  ".join(_aff_summary()), 16, COL_DIM))
-	var next := _cta("☀ 翌朝へ", _on_next_morning, TYPE_SUB)
+	var next_label := "🏮 暖簾を下ろして翌朝へ" if (shop != null and shop.open) else "☀ 翌朝へ"
+	var next := _cta(next_label, _on_next_morning, TYPE_SUB)
 	next.custom_minimum_size = Vector2(0, 56)
 	night_box.add_child(next)
 

@@ -8,6 +8,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_test_scripts_compile()
 	_test_rng()
 	_test_determinism()
 	_test_quick_completes()
@@ -53,6 +54,15 @@ func _run_for(sim: KuroSim, seconds: float) -> void:
 		sim.step(KuroData.SIM_DT)
 		if not sim.state["run"]["active"]:
 			return
+
+
+func _test_scripts_compile() -> void:
+	# test_sim.gd は main.gd を読まないため、主要スクリプトの読込でコンパイル検証する。
+	# （CI の import は || true なので、ここで GDScript の解析エラーを確実に捕える）
+	print("[compile]")
+	for path in ["res://main.gd", "res://src/ui/ui_theme.gd", "res://src/ui/ds.gd",
+			"res://src/ui/dive_view.gd", "res://src/sim/shop.gd", "res://src/sim/sim.gd"]:
+		check(load(path) != null, "%s がコンパイルできる" % path)
 
 
 func _test_rng() -> void:
