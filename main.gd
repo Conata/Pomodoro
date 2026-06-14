@@ -137,11 +137,14 @@ func _maybe_event(id: String) -> void:
 func _check_story_events() -> void:
 	var floor_reached := int(sim.state["best_floor"]) + 1
 	var day := int(sim.state["day"])
+	var mem_all: bool = sim.state.get("memories", []).size() >= KuroMemories.MEMORIES.size()
 	var milestones := [
 		["story_b3", floor_reached >= 3],
 		["story_b6", floor_reached >= 6],
 		["story_b10", floor_reached >= 10],
 		["story_day3", day >= 3],
+		# 真エンド級：記憶を拾いきり、深部まで届いた人へ（メモリ収集率がカギ）
+		["story_finale", mem_all and floor_reached >= 10],
 	]
 	for m in milestones:
 		if bool(m[1]) and not String(m[0]) in sim.state["events_seen"]:

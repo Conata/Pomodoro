@@ -250,6 +250,10 @@ func _test_memory() -> void:
 	_run_for(a, 1200.0)
 	_run_for(b, 1200.0)
 	check(a.state["memories"] == b.state["memories"], "同シードで同じ記憶列")
+	# ボスのみ心象語／雑魚は普通名（匂わせはボスに集約）
+	check(KuroData.PSYCHE.size() > 0, "ボス用の心象語テーブルがある")
+	for biome in KuroData.BIOMES:
+		check(biome.has("mob_names") and biome.has("elite_name"), "各バイオームに雑魚/エリートの普通名")
 
 
 func _test_ui_theme() -> void:

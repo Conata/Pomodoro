@@ -459,26 +459,31 @@ func _spawn_pack(boss: bool) -> void:
 	var biome: Dictionary = KuroData.BIOMES[fl % KuroData.BIOMES.size()]
 	var mobs := []
 	if boss:
+		# ボスだけ心象語（人格『後悔』…）。要所の不穏さは"人格"に集約する。
+		var psyche: String = KuroData.PSYCHE[fl % KuroData.PSYCHE.size()]
 		mobs.append({
-			"name": "欠落した%sの主" % biome["name"],
+			"name": "人格『%s』" % psyche,
 			"hp": 220.0 * sc, "max_hp": 220.0 * sc, "atk": 7.0 * sc,
 			"boss": true, "elite": false, "sprite": String(biome["boss"]),
 		})
-		_emit("boss", "階の最奥。欠落ボスが待っている")
+		_emit("boss", "階の最奥。人格『%s』が待っている" % psyche)
 	else:
+		# 雑魚は普通の名前（匂わせない）。
+		var names: Array = biome["mob_names"]
 		var n := 2 + rng.randi(2)
 		var elite := rng.chance(0.18)
 		for i in n:
 			var hp := 22.0 * sc * rng.randf_range(0.85, 1.15)
 			mobs.append({
-				"name": "断片", "hp": hp, "max_hp": hp, "atk": 1.8 * sc,
+				"name": String(names[rng.randi(names.size())]),
+				"hp": hp, "max_hp": hp, "atk": 1.8 * sc,
 				"boss": false, "elite": false,
 				"sprite": String(biome["mobs"][rng.randi(biome["mobs"].size())]),
 			})
 		if elite:
 			var ehp := 60.0 * sc
 			mobs.append({
-				"name": "肥大した断片", "hp": ehp, "max_hp": ehp, "atk": 3.0 * sc,
+				"name": String(biome["elite_name"]), "hp": ehp, "max_hp": ehp, "atk": 3.0 * sc,
 				"boss": false, "elite": true,
 				"sprite": String(biome["mobs"][0]),
 			})

@@ -214,12 +214,18 @@ const DROP_SHARD := 0.25
 # バイオーム3種ループ（電脳深層＝最初の店主の脳内）
 const BIOMES := [
 	{"name": "管理区画", "color": Color(0.10, 0.16, 0.34), "ing": "dry",
-		"mobs": ["tiny_zombie", "skelet"], "boss": "big_zombie"},
+		"mobs": ["tiny_zombie", "skelet"], "boss": "big_zombie",
+		"mob_names": ["故障ロボット", "野良ボット"], "elite_name": "暴走ボット"},
 	{"name": "商店遺構", "color": Color(0.08, 0.20, 0.30), "ing": "meat",
-		"mobs": ["goblin", "imp"], "boss": "ogre"},
+		"mobs": ["goblin", "imp"], "boss": "ogre",
+		"mob_names": ["こそ泥ゴブリン", "小鬼"], "elite_name": "親玉ゴブリン"},
 	{"name": "記憶の海", "color": Color(0.07, 0.12, 0.38), "ing": "sea",
-		"mobs": ["wogol", "ice_zombie"], "boss": "big_demon"},
+		"mobs": ["wogol", "ice_zombie"], "boss": "big_demon",
+		"mob_names": ["漂流体", "氷の影"], "elite_name": "巨大漂流体"},
 ]
+
+# ボス専用の心象語（匂わせはボスだけ。雑魚は普通名）。深度で巡回。
+const PSYCHE := ["後悔", "承認", "孤独", "未練", "羨望", "怠惰", "虚栄", "執着", "諦め", "赦し"]
 
 # 闇市（夜に3品）
 const MARKET := [
