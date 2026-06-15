@@ -322,7 +322,7 @@ func _test_talk() -> void:
 			total += 1
 			check(scene.has("a") and scene.has("b") and not scene["lines"].is_empty(),
 					"%s「%s」が完全" % [girl, scene["title"]])
-	check(total == 12, "会話は4人×3=12本")
+	check(total == TalkData.TALKS.size() * 3, "会話は各キャラ3本ずつ（%d人=%d本）" % [TalkData.TALKS.size(), TalkData.TALKS.size() * 3])
 
 
 func _test_content() -> void:
