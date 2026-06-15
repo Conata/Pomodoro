@@ -132,6 +132,41 @@ python3 tools/gen_sprites.py kiriko walk_front.gif attack.gif
 
 ---
 
+## 6.5 PixAI API（画像生成）
+
+PixAI は **GraphQL API**（公式 Go/JS クライアント準拠）。
+
+| 項目 | 値 |
+|---|---|
+| エンドポイント | `https://api.pixai.art/graphql`（WS: `wss://gw.pixai.art`） |
+| 認証 | `Authorization: Bearer <PIXAI_API_KEY>` |
+| 生成 | `mutation createGenerationTask(parameters: JSONObject!) { id status }` |
+| 取得 | `query getGenerationTask(id) { id status outputs }`（`outputs` は JSONObject） |
+| メディア | `query media(id) { urls { variant url } }`（`variant=PUBLIC`） |
+| 状態 | `waiting / running / completed / failed / cancelled` |
+| パラメータ | `prompts`(必須) `negativePrompts` `modelId`(必須) `width` `height` `samplingSteps` `cfgScale` `seed` `batchSize` `priority`(1000で即時) |
+| 課金 | クレジット消費（失敗の無駄打ちに注意） |
+
+> `modelId` は pixai.art のモデルページで選ぶ。`seed` を固定すると表情シートの一貫性が上がる。
+
+### 同梱ラッパ（依存なし・標準ライブラリのみ）
+```bash
+export PIXAI_API_KEY=sk_...          # コミット厳禁（.gitignore / 環境変数で）
+# 立ち絵（レイカ=kiriko）を1枚。単色背景を prompt に明記しておくと後処理が楽
+python3 tools/pixai_gen.py \
+  --prompt "1girl, occult scientist, long purple hair, calm, full body, flat #1a1030 background, anime" \
+  --model <MODEL_ID> --width 768 --height 1280 --seed 42 \
+  --out assets/portraits/_raw/kiriko.png
+# → 透過化:  python3 tools/key_bg.py assets/portraits/_raw/kiriko.png assets/portraits/kiriko.png --bg 1a1030
+```
+表情シートは「同一キャラ・同一構図で口/目だけ違う4×4」を seed 固定で1枚出し → `tools/slice_expressions.py` へ。
+
+> `tools/pixai_gen.py` は `outputs` の形に依存しないようURLを再帰探索する作り。万一
+> GraphQLのフィールド名が変わっていたら `QUERY_TASK` 等の定数を直すだけで追従できる。
+> **APIキーは絶対にコミットしない**（露出したら必ず再発行）。
+
+---
+
 ## 7. 私が用意済みの受け口（コード側）
 
 - **FaceCam（配信ワイプ）**：`src/ui/face_cam.gd`。表情シート→立ち絵頭部→キャラ色の順で自動フォールバック。発話中に口パク、ランダムでまばたき。TTS音声が来たら音量ピーク駆動に差し替え予定。
