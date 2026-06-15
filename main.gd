@@ -123,6 +123,8 @@ var bgm_battle: AudioStreamPlayer  # 戦闘レイヤー（手続き生成）
 var sfx_pool: Array[AudioStreamPlayer] = []
 var sfx_next := 0
 var sfx_cache := {}
+var voice_pool: Array[AudioStreamPlayer] = []  # 実況/会話ボイス（Voiceバス）
+var _voice_rr := 0
 
 
 func _ready() -> void:
@@ -356,7 +358,42 @@ func _idle_banter() -> void:
 
 func _say(gid: String, text: String) -> void:
 	dive.say(gid, text)
+	_play_voice(gid, text)
 	_log("[color=#9fd8ff]%s[/color]「%s」" % [KuroData.GIRLS[gid]["name"], text])
+
+
+## ボイス再生：assets/generated/voice/<id>/<key>.{ogg,mp3,wav} があれば鳴らす。
+## key は sha256("<id>|<text>") の先頭16桁（tools/voice_key.py と一致）。
+## 無ければ何もしない＝FaceCam はテキスト推定の口パクのまま（安全）。
+func _play_voice(gid: String, text: String) -> void:
+	if voice_pool.is_empty():
+		return
+	var base := "res://assets/generated/voice/%s/%s" % [gid, _voice_key(gid, text)]
+	var path := ""
+	for ext in [".ogg", ".mp3", ".wav"]:
+		if ResourceLoader.exists(base + ext):
+			path = base + ext
+			break
+	if path == "":
+		return
+	var vp: AudioStreamPlayer = voice_pool[_voice_rr % voice_pool.size()]
+	_voice_rr += 1
+	vp.stream = load(path)
+	vp.play()
+
+
+func _voice_key(gid: String, text: String) -> String:
+	var ctx := HashingContext.new()
+	ctx.start(HashingContext.HASH_SHA256)
+	ctx.update(("%s|%s" % [gid, text]).to_utf8_buffer())
+	return ctx.finish().hex_encode().substr(0, 16)
+
+
+func _voice_busy() -> bool:
+	for vp in voice_pool:
+		if vp.playing:
+			return true
+	return false
 
 
 func _on_run_complete() -> void:
@@ -676,6 +713,7 @@ func _build_ui() -> void:
 	talk_view.set_anchors_preset(Control.PRESET_FULL_RECT)
 	talk_view.visible = false
 	talk_view.finished.connect(_on_scene_finished)
+	talk_view.line_shown.connect(_play_voice)  # 会話の話者行→ボイス再生（あれば）
 	add_child(talk_view)
 
 	confirm = ConfirmationDialog.new()
@@ -721,6 +759,7 @@ func _build_post_fx() -> void:
 
 ## 探索ステージの矩形にポスト処理／配信UIを合わせる（毎フレーム）。
 func _update_overlays() -> void:
+	FaceCam.voice_active = _voice_busy()  # ボイス再生中は口を実音同期に
 	if dive_frame == null:
 		return
 	var r := dive_frame.get_global_rect()
@@ -1958,6 +1997,18 @@ func _build_audio() -> void:
 	bgm = _make_loop(_audio_pick("bgm_el/store", "res://assets/third_party/music/sketchbook_loop.ogg"), -16.0)
 	bgm_dive = _make_loop(_audio_pick("bgm_el/dive", "res://assets/generated/bgm/dive_drone.wav"), -60.0)
 	bgm_battle = _make_loop(_audio_pick("bgm_el/battle", "res://assets/generated/bgm/battle_layer.wav"), -60.0)
+	# 実況/会話ボイス用バス＋プレイヤー（assets/generated/voice/<id>/<key>.* を再生）。
+	# 音量ピークを FaceCam が読み、発話ワイプの口を実音に同期させる。
+	if AudioServer.get_bus_index("Voice") < 0:
+		AudioServer.add_bus(AudioServer.bus_count)
+		AudioServer.set_bus_name(AudioServer.bus_count - 1, "Voice")
+		AudioServer.set_bus_send(AudioServer.get_bus_index("Voice"), "Master")
+	FaceCam.voice_bus = AudioServer.get_bus_index("Voice")
+	for i in 2:
+		var vp := AudioStreamPlayer.new()
+		vp.bus = "Voice"
+		add_child(vp)
+		voice_pool.append(vp)
 
 
 ## 生成BGMがあればそのパス（mp3優先・無ければwav）、無ければフォールバックを返す。

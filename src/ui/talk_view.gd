@@ -9,6 +9,8 @@ extends Control
 ## who: "g"=話者, "*"=地の文（雨/行動）。finished は meta を返すので
 ## 呼び出し側が文脈（会話完了/イベント既読など）を処理する。
 signal finished(meta: Dictionary)
+## 話者の1行が表示されたとき（地の文 "*" は除く）。main がボイス再生に使う。
+signal line_shown(girl_id: String, text: String)
 
 const FRAME_DIR := "res://assets/third_party/dungeon/frames/"
 
@@ -24,6 +26,7 @@ var _bg_name := ""              # 現在ロード済みの背景キー
 
 var choice_a: Button
 var choice_b: Button
+var _cam: FaceCam  # 話者のリップシンク・ワイプ（左上）
 
 
 func _ready() -> void:
@@ -33,6 +36,11 @@ func _ready() -> void:
 	choice_b = _mk_choice()
 	choice_a.pressed.connect(_on_choice.bind("a"))
 	choice_b.pressed.connect(_on_choice.bind("b"))
+	_cam = FaceCam.new()
+	_cam.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cam.show_label = false
+	_cam.visible = false
+	add_child(_cam)
 
 
 func _mk_choice() -> Button:
@@ -66,6 +74,11 @@ func play(scene: Dictionary, speaker: String, meta: Dictionary) -> void:
 	_meta = meta
 	_load_bg(String(scene.get("bg", "")))
 	visible = true
+	if _cam != null:
+		_cam.girl_id = girl
+		_cam.expression = "neutral"
+		_cam.speaking = false
+		_cam.visible = true
 	_advance_to_current()
 
 
@@ -83,6 +96,10 @@ func _load_bg(name: String) -> void:
 
 func _process(delta: float) -> void:
 	pulse += delta
+	if _cam != null and _cam.visible:
+		var w := clampf(size.x * 0.24, 92.0, 150.0)
+		_cam.size = Vector2(w, w * 1.14)
+		_cam.position = Vector2(16, 16)
 	if visible:
 		queue_redraw()
 
@@ -100,10 +117,32 @@ func _advance_to_current() -> void:
 		choice_a.size = Vector2(w, 56)
 		choice_b.position = Vector2(60, size.y * 0.42 + 72)
 		choice_b.size = Vector2(w, 56)
+	_announce_current_line()
 	# 行が尽きて、選択肢が無い（or選択済み）なら終了
 	if queue.is_empty() and (picked or not scene_data.has("a")):
 		visible = false
+		if _cam != null:
+			_cam.visible = false
 		finished.emit(_meta)
+
+
+## 現在の行が話者セリフなら、ワイプを口パクさせ line_shown を発火（地の文は口を閉じる）。
+func _announce_current_line() -> void:
+	if _cam == null:
+		return
+	if queue.is_empty():
+		_cam.speaking = false
+		return
+	var who := String(queue[0][0])
+	var text := String(queue[0][1])
+	if who == "*":
+		_cam.speaking = false
+		return
+	_cam.girl_id = girl
+	_cam.visible = true
+	_cam.speaking = true
+	_cam.start_speech(text)
+	line_shown.emit(girl, text)
 
 
 func _on_choice(which: String) -> void:
@@ -111,6 +150,7 @@ func _on_choice(which: String) -> void:
 	queue = scene_data[which]["r"].duplicate()
 	choice_a.visible = false
 	choice_b.visible = false
+	_announce_current_line()
 	queue_redraw()
 
 

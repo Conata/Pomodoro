@@ -56,6 +56,11 @@ var expression := "neutral"
 var show_label := true
 var flip_h := false                # true で左右反転（画面内側に向かせる用）
 
+# TTS音声駆動（全FaceCam共有）。main が Voice バスを作って設定する。
+# voice_active 中は「発話中の」ワイプの口を音量ピークで動かす（実音同期）。
+static var voice_bus := -1
+static var voice_active := false
+
 var _tex_cache := {}
 var _mouth := 0.0
 var _mouth_target := 0.0
@@ -126,8 +131,12 @@ func _process(delta: float) -> void:
 			expression = "neutral"
 	# 口の動き：発話 > 咀嚼 > 閉口 の優先順
 	if speaking:
+		if voice_active and voice_bus >= 0:
+			# TTS音声が再生中なら、その音量ピークで口を駆動（テキスト推定より実音優先）
+			var vdb := AudioServer.get_bus_peak_volume_left_db(voice_bus, 0)
+			_mouth_target = clampf((vdb + 42.0) / 42.0, 0.0, 1.0)
 		# フォネムシーケンス再生（start_speech がセット済みのとき）
-		if not _phoneme_seq.is_empty():
+		elif not _phoneme_seq.is_empty():
 			_phoneme_t -= delta
 			while _phoneme_t <= 0.0:
 				if _phoneme_idx >= _phoneme_seq.size():

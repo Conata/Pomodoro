@@ -204,5 +204,26 @@ python3 tools/pixai_gen.py \
 - **スライサ/キーイング**：`tools/slice_expressions.py` `tools/key_bg.py` `tools/gen_sprites.py`。
 - **音声の自動採用**：`assets/generated/...` に mp3/wav を置けば手続き版より優先して読む（`_audio_pick` / `_sfx`）。
 
-> TODO（私側・素材が来たら）：会話画面(talk_view)にも FaceCam を載せてリップシンク。
-> TTS音声プールの再生バス追加（口パクを実音量に連動）。PixAI APIラッパ（`tools/pixai_gen.py`）は API仕様をもらえれば作る。
+## 8. ボイス（TTS実況・会話）— 実装済みの受け口
+
+会話(VN)も潜行の掛け合いも、**ボイス音声があれば自動で再生し、FaceCamの口を実音に同期**させる
+（音声が無ければ従来どおりテキスト推定の口パク＝置くだけで段階的に良くなる）。
+
+| 項目 | 内容 |
+|---|---|
+| 置き場所 | `assets/generated/voice/<id>/<key>.{ogg,mp3,wav}` |
+| key | `sha256("<id>|<セリフ全文>")` の先頭16桁（`tools/voice_key.py` で算出） |
+| 再生 | 会話の話者行 / 潜行の `_say` で自動再生（Voiceバス経由） |
+| 口パク | Voiceバスの音量ピークで開閉（テキスト推定より優先） |
+
+```bash
+# 1行ぶんのキーを出して、その名前でTTS出力を置く
+python3 tools/voice_key.py mil "完璧です。でも、おいしいかどうかは分かりませんでした"
+# → 例 0daa74dd958f7346  → assets/generated/voice/mil/0daa74dd958f7346.ogg
+```
+- セリフ全文は **データ側の文字列と完全一致**させる（`src/sim/talk.gd` `banter.gd` `event_data.gd`）。
+- TTSは Gemini TTS / Irodori-TTS など。話者ごとに声を割り当て、上記キー名で `voice/<id>/` に保存。
+- `id` 対応：ミル=mil / ユズキ=yuzuki / ムュウ=muu / レイカ=kiriko / NPCキリコ=kiriko_npc。
+
+> 実装メモ（コード側・完了）：会話(talk_view)に話者ワイプ(FaceCam)を追加しリップシンク。
+> Voiceバス＋プレイヤーを用意し、`FaceCam.voice_active` 中は音量ピークで口を駆動。
