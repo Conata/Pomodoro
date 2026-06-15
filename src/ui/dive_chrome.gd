@@ -8,9 +8,30 @@ const VIEWERS_BASE := 8200
 
 var sim: KuroSim = null
 var dive: DiveView = null
+var _cam: FaceCam = null
+
+
+func _ready() -> void:
+	_cam = FaceCam.new()
+	_cam.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_cam)
 
 
 func _process(_delta: float) -> void:
+	# 配信者ワイプ（右下）：先頭の潜行メンバー＝配信者。発話中は口パク。
+	if _cam != null and sim != null and dive != null and sim.state["run"]["active"]:
+		var ds := sim.divers()
+		var sid := String(ds[0]) if not ds.is_empty() else ""
+		_cam.girl_id = sid
+		_cam.speaking = (not dive._bubble.is_empty()
+				and String(dive._bubble.get("girl", "")) == sid)
+		var w := clampf(size.x * 0.26, 96.0, 168.0)
+		var h := w * 1.14
+		_cam.size = Vector2(w, h)
+		_cam.position = Vector2(size.x - w - 12.0, size.y - h - 12.0)
+		_cam.visible = sid != ""
+	elif _cam != null:
+		_cam.visible = false
 	if visible:
 		queue_redraw()
 
