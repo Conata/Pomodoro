@@ -11,6 +11,7 @@ extends Control
 
 var girl_id := ""
 var speaking := false              # この配信者が今しゃべっているか（main/chrome が設定）
+var eating := false                # 食事中（咀嚼リズムで口が動く）
 var expression := "neutral"
 var show_label := true
 
@@ -18,9 +19,12 @@ var _tex_cache := {}
 var _mouth := 0.0
 var _mouth_target := 0.0
 var _talk_t := 0.0
+var _chew_t := 0.0                 # 咀嚼タイマー（eating 用）
+var _chew_phase := 0               # 0=とじ 1=半開 2=全開 1=半開 のサイクル
 var _blink_t := 2.0
 var _blinking := 0.0
 var _pulse := 0.0
+var _expr_timer := 0.0            # >0 のあいだ expression を維持し、0 になったら neutral に戻す
 
 
 func _ready() -> void:
@@ -28,17 +32,42 @@ func _ready() -> void:
 	_blink_t = randf_range(2.0, 5.0)
 
 
+## 表情を duration 秒だけ切り替え、その後 neutral に自動で戻す。
+## duration=0 で即時 neutral 戻し。
+func set_expression(expr: String, duration: float = 1.8) -> void:
+	expression = expr
+	_expr_timer = duration
+
+
 func _process(delta: float) -> void:
 	_pulse += delta
-	# リップシンク（暫定：発話中は口を細かく開閉。TTS導入時は音声ピークに差し替え）
+	# 表情タイマー：期限が来たら neutral に戻す
+	if _expr_timer > 0.0:
+		_expr_timer -= delta
+		if _expr_timer <= 0.0:
+			expression = "neutral"
+	# 口の動き：発話 > 咀嚼 > 閉口 の優先順
 	if speaking:
+		# リップシンク（高速ランダム。TTS導入時は音量ピークに差し替え）
 		_talk_t += delta
 		if _talk_t >= 0.08:
 			_talk_t = 0.0
 			_mouth_target = randf_range(0.15, 1.0)
+	elif eating:
+		# 咀嚼（0→1→2→1→0 をゆっくり繰り返す。1周 ~1.4s）
+		_chew_t += delta
+		var chew_step := 0.35  # 1ステップの秒数
+		if _chew_t >= chew_step:
+			_chew_t -= chew_step
+			_chew_phase = (_chew_phase + 1) % 4  # 0,1,2,1,0,1,2… (4でラップ→0,1,2,3→map下)
+		# phase: 0=閉 1=半開 2=全開 3=半開（0と同じ扱い）
+		match _chew_phase:
+			0, 3: _mouth_target = 0.0
+			1:    _mouth_target = 0.4
+			2:    _mouth_target = 0.85
 	else:
 		_mouth_target = 0.0
-	_mouth = move_toward(_mouth, _mouth_target, delta * 12.0)
+	_mouth = move_toward(_mouth, _mouth_target, delta * 8.0)
 	# まばたき
 	_blink_t -= delta
 	if _blink_t <= 0.0:
