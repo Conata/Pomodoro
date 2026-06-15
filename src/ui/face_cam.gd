@@ -131,9 +131,9 @@ func _process(delta: float) -> void:
 			expression = "neutral"
 	# 口の動き：発話 > 咀嚼 > 閉口 の優先順
 	if speaking:
-		if voice_active and voice_bus >= 0:
+		if FaceCam.voice_active and FaceCam.voice_bus >= 0:
 			# TTS音声が再生中なら、その音量ピークで口を駆動（テキスト推定より実音優先）
-			var vdb := AudioServer.get_bus_peak_volume_left_db(voice_bus, 0)
+			var vdb := AudioServer.get_bus_peak_volume_left_db(FaceCam.voice_bus, 0)
 			_mouth_target = clampf((vdb + 42.0) / 42.0, 0.0, 1.0)
 		# フォネムシーケンス再生（start_speech がセット済みのとき）
 		elif not _phoneme_seq.is_empty():

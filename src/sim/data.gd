@@ -72,8 +72,6 @@ const GIRLS := {
 		"keeper_apt": 1.0, "synergy": "解析仕込み", "synergy_desc": "予報外れの皿も売れる",
 		"color": Color(0.75, 0.65, 1.0), "flip": false,
 	},
-}
-
 	"doctor": {
 		"name": "ドクター", "order": 4, "role": "精神外科医・後衛支援", "sprite": "doc",
 		"hp": 180.0, "atk": 6.0, "fav": "淡",
