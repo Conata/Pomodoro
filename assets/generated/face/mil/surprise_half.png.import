@@ -2,16 +2,12 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c02ck611xj41n"
-path="res://.godot/imported/surprise_half.png-7e96b87c48a2c8e9216dd2e9a8d10239.ctex"
-metadata={
-"vram_texture": false
-}
+uid="uid://dhtmjxwubeoe6"
+valid=false
 
 [deps]
 
 source_file="res://assets/generated/face/mil/surprise_half.png"
-dest_files=["res://.godot/imported/surprise_half.png-7e96b87c48a2c8e9216dd2e9a8d10239.ctex"]
 
 [params]
 

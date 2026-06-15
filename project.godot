@@ -1,11 +1,22 @@
-; Godot 4.3 — 黒猫飯店（探索が本編、経営は閉店三行、集中が深度になる）
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
 config_version=5
+
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
 
 config/name="黒猫飯店"
 run/main_scene="res://main.tscn"
-config/features=PackedStringArray("4.3", "GL Compatibility")
+config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"
 
 [display]
@@ -24,8 +35,5 @@ theme/custom_font="res://assets/fonts/DotGothic16-Regular.ttf"
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
-environment/defaults/default_clear_color=Color(0.082, 0.082, 0.082, 1)
-; Webプリセットの vram_texture_compression/for_mobile=true に必須。
-; これが false だと「Cannot export ... configuration errors:」が
-; 空メッセージで失敗する（Godot 4.3 はエラー文を出さない）
 textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0.082, 0.082, 0.082, 1)

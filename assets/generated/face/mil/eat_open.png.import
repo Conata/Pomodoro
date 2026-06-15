@@ -2,16 +2,12 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c6nm4slq8q4p0"
-path="res://.godot/imported/eat_open.png-19e87d1f5ba9b6aeee78835db0e2b588.ctex"
-metadata={
-"vram_texture": false
-}
+uid="uid://m64hpik6ffn6"
+valid=false
 
 [deps]
 
 source_file="res://assets/generated/face/mil/eat_open.png"
-dest_files=["res://.godot/imported/eat_open.png-19e87d1f5ba9b6aeee78835db0e2b588.ctex"]
 
 [params]
 

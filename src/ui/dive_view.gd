@@ -22,6 +22,7 @@ var _tex_cache := {}
 var _fx_active: Array = []
 var _bubble := {}  # {girl, text, t}
 var _dialog: Array = []  # 直近の掛け合いログ {who,text,col}
+var _damage_pops: Array = []  # {val, x, y, t, col}  ダメージ数字ポップアップ
 # 疑似Camera2D（ノード化せず draw_set_transform で表現＝決定論を崩さず軽い）
 var _cam_zoom := 1.04
 var _cam_zoom_target := 1.04
@@ -55,6 +56,14 @@ func _process(delta: float) -> void:
 		if float(_bubble["t"]) <= 0.0:
 			_bubble = {}
 	var i := 0
+	while i < _damage_pops.size():
+		var p: Dictionary = _damage_pops[i]
+		p["t"] = float(p["t"]) + delta
+		if float(p["t"]) > 1.2:
+			_damage_pops.remove_at(i)
+		else:
+			i += 1
+	i = 0
 	while i < _fx_active.size():
 		var fx: Dictionary = _fx_active[i]
 		fx["t"] = float(fx["t"]) + delta
@@ -75,6 +84,16 @@ func _process(delta: float) -> void:
 	_cam_shake = maxf(0.0, _cam_shake - delta * 26.0)
 	if visible:
 		queue_redraw()
+
+
+func spawn_damage(amount: int, at: String = "enemy") -> void:
+	if amount <= 0:
+		return
+	var x := (size.x * 0.76) if at == "enemy" else (size.x * 0.24)
+	x += randf_range(-18.0, 18.0)
+	var y := size.y * 0.42 + randf_range(-10.0, 10.0)
+	var col := Color(1.0, 0.92, 0.3) if at == "enemy" else Color(1.0, 0.4, 0.45)
+	_damage_pops.append({"val": amount, "x": x, "y": y, "t": 0.0, "col": col})
 
 
 func spawn_fx(kind: String, at: String = "enemy") -> void:
@@ -218,7 +237,13 @@ func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool, h: flo
 	if flip:
 		rect = Rect2(rect.position + Vector2(rect.size.x, 0), Vector2(-rect.size.x, rect.size.y))
 	var tint := Color(1, 1, 1) if alive else Color(0.45, 0.47, 0.58)
-	draw_texture_rect_region(tex, rect, Rect2(f * fw, 0, fw, fh), tint)
+	var src := Rect2(f * fw, 0, fw, fh)
+	# ピクセルアート輪郭線（4方向 1px）
+	var ofs := maxf(1.0, dw / fw * 0.5)
+	var outline_col := Color(0.0, 0.0, 0.05, 0.72)
+	for ov in [Vector2(ofs, 0), Vector2(-ofs, 0), Vector2(0, ofs), Vector2(0, -ofs)]:
+		draw_texture_rect_region(tex, Rect2(rect.position + ov, rect.size), src, outline_col)
+	draw_texture_rect_region(tex, rect, src, tint)
 	return dw
 
 
@@ -316,20 +341,16 @@ func _draw() -> void:
 	draw_set_transform(focus * (1.0 - zoom) + shake, 0.0, Vector2(zoom, zoom))
 
 	_draw_explore_bg(sz, biome, dist)
-	draw_line(Vector2(0, ground), Vector2(sz.x, ground),
-			Color(DS.LINE.r, DS.LINE.g, DS.LINE.b, 0.30), 2.0)
+	_draw_ground(sz, ground, biome)
 
 	# 突進モーション＆歩行のゆれ（自動歩行感）
 	var lunge_party := (9.0 * maxf(0.0, sin(pulse * 5.0))) if in_combat else 0.0
 	var lunge_enemy := (9.0 * maxf(0.0, sin(pulse * 5.0 + PI))) if in_combat else 0.0
 	var bob := 0.0 if in_combat else sin(pulse * 3.0) * 3.0
 
-	# 扉（クイック決断バナー中）
+	# 扉（クイック決断バナー中）→ イベントカード演出
 	if door_open:
-		var door_tex := _tex(FRAME_DIR + "doors_leaf_closed.png")
-		if door_tex != null:
-			_draw_sprite(door_tex, Vector2(sz.x * 0.5, ground), false, Color(0.8, 0.9, 1.3),
-					(chibi_h * 0.9) / door_tex.get_size().y)
+		_draw_event_cards(sz, font)
 
 	# 潜行メンバー（左クラスタ・自動歩行）
 	var ds: Array = sim.divers()
@@ -394,9 +415,13 @@ func _draw() -> void:
 			_draw_bubble(font, Vector2(float(party_x[bi]), ground - ch - 6.0),
 					String(KuroData.GIRLS[_bubble["girl"]]["name"]), String(_bubble["text"]))
 
-	# ====== スクリーン層（雨だけ。配信チロップは DiveChrome がポスト処理の上に描く）======
+	# ゴールオーブ（階層の終端マーカー）
+	_draw_goal_orb(sz, ground, dist, font)
+
+	# ====== スクリーン層（雨・ダメージ数字。DiveChrome がさらにその上に重なる）======
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_draw_rain(sz)
+	_draw_damage_numbers(font)
 
 
 ## 探索の背景。提供イラスト（assets/art/explore_bg.png）を COVERED で敷き、
@@ -421,6 +446,101 @@ func _draw_explore_bg(sz: Vector2, biome: Dictionary, dist: float) -> void:
 	_draw_parallax("bg/city_mid.png", dist * 0.22, sz.y * 0.36, Color(city_tint.r, city_tint.g, city_tint.b, 1.0))
 	draw_rect(Rect2(0, sz.y * 0.5, sz.x, sz.y * 0.5), Color(0.02, 0.04, 0.10, 0.4))
 	_draw_lightshaft(sz)
+
+
+## 地面プラットフォーム（タイル状のレール）。キャラを「乗せる」接地感。
+func _draw_ground(sz: Vector2, ground: float, biome: Dictionary) -> void:
+	var plat_h := 8.0
+	var base_col: Color = biome["color"]
+	# 台座の塗り（床面）
+	draw_rect(Rect2(0, ground, sz.x, plat_h), Color(base_col.r * 0.3 + 0.06, base_col.g * 0.3 + 0.04, base_col.b * 0.3 + 0.12))
+	# タイル境界線（等間隔の縦スリット）
+	var tile_w := 28.0
+	for k in ceili(sz.x / tile_w) + 1:
+		var tx := fposmod(float(k) * tile_w - fposmod(pulse * 30.0, tile_w), sz.x + tile_w)
+		draw_rect(Rect2(tx, ground, 1.5, plat_h), Color(base_col.r * 0.6 + 0.1, base_col.g * 0.6 + 0.08, base_col.b * 0.6 + 0.22, 0.7))
+	# 上辺のハイライト
+	draw_rect(Rect2(0, ground, sz.x, 2.0), Color(base_col.r * 0.9 + 0.3, base_col.g * 0.9 + 0.35, base_col.b * 0.9 + 0.6, 0.75))
+	# 台座の影（床面すぐ下）
+	draw_rect(Rect2(0, ground + plat_h, sz.x, 6.0), Color(0, 0, 0, 0.22))
+
+
+## 扉決断中のイベントカード演出（3枚フロート）。
+## ゲーム内容は未確定→「?」カードで期待感を煽る。
+func _draw_event_cards(sz: Vector2, font: Font) -> void:
+	var n_cards := 3
+	var cw := minf(70.0, sz.x * 0.16)
+	var ch := cw * 1.32
+	var gap := cw * 0.22
+	var total := cw * n_cards + gap * (n_cards - 1)
+	var cx0 := (sz.x - total) * 0.5
+	var base_y := sz.y * 0.14
+	var labels := ["宝物", "食料", "罠?"]
+	var colors := [Color(1.0, 0.82, 0.3), Color(0.4, 0.95, 0.65), Color(1.0, 0.42, 0.45)]
+	for i in n_cards:
+		var bob := sin(pulse * 2.0 + i * 1.1) * 4.0
+		var x := cx0 + i * (cw + gap)
+		var y := base_y + bob
+		# カード本体
+		draw_rect(Rect2(x, y, cw, ch), Color(0.09, 0.07, 0.16, 0.93))
+		draw_rect(Rect2(x, y, cw, ch), colors[i], false, 1.5)
+		# 上辺カラーバー
+		draw_rect(Rect2(x, y, cw, 4.0), colors[i])
+		# ? マーク（大きく中央）
+		var qs := int(cw * 0.55)
+		var qw := font.get_string_size("?", HORIZONTAL_ALIGNMENT_LEFT, -1, qs).x
+		draw_string(font, Vector2(x + (cw - qw) * 0.5, y + ch * 0.58),
+				"?", HORIZONTAL_ALIGNMENT_LEFT, -1, qs, Color(colors[i].r, colors[i].g, colors[i].b, 0.85))
+		# 下部ラベル
+		var lfs := int(cw * 0.19)
+		var lw := font.get_string_size(labels[i], HORIZONTAL_ALIGNMENT_LEFT, -1, lfs).x
+		draw_string(font, Vector2(x + (cw - lw) * 0.5, y + ch - 8.0),
+				labels[i], HORIZONTAL_ALIGNMENT_LEFT, -1, lfs, Color(0.85, 0.92, 1.0, 0.8))
+
+
+## 階層ゴールのオーブ（右端・常時表示）。階層終端/ボス位置の視覚的アンカー。
+func _draw_goal_orb(sz: Vector2, ground: float, dist: float, font: Font) -> void:
+	var prog := fmod(dist, KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN
+	var orb_x := sz.x * 0.91
+	var orb_y := ground - 30.0
+	var r_base := 18.0
+	# ボス近接（>85%）なら赤みが強く脈動
+	var near_boss := prog > 0.85
+	var r := r_base * (1.0 + 0.08 * sin(pulse * (3.5 if near_boss else 1.8)))
+	var inner_col := Color(1.0, 0.4, 0.45) if near_boss else Color(0.4, 0.9, 1.0)
+	var outer_col := Color(inner_col.r, inner_col.g, inner_col.b, 0.15 + 0.08 * sin(pulse * 2.0))
+	draw_circle(Vector2(orb_x, orb_y), r * 2.2, outer_col)
+	draw_circle(Vector2(orb_x, orb_y), r * 1.35, Color(inner_col.r, inner_col.g, inner_col.b, 0.30))
+	draw_circle(Vector2(orb_x, orb_y), r, Color(inner_col.r * 0.6, inner_col.g * 0.6, inner_col.b * 0.6, 0.85))
+	draw_circle(Vector2(orb_x, orb_y), r * 0.5, inner_col)
+	# 接続ライン（オーブ→地面）
+	draw_line(Vector2(orb_x, orb_y + r), Vector2(orb_x, ground),
+			Color(inner_col.r, inner_col.g, inner_col.b, 0.3), 1.5)
+	# ラベル
+	var lbl := "BOSS" if near_boss else "GOAL"
+	var lfs := 11
+	var lw := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, lfs).x
+	draw_string(font, Vector2(orb_x - lw * 0.5, orb_y + r + 14.0),
+			lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, lfs, Color(inner_col.r, inner_col.g, inner_col.b, 0.8))
+
+
+## ダメージ数字ポップアップ（スクリーン層で描く）。
+func _draw_damage_numbers(font: Font) -> void:
+	for p in _damage_pops:
+		var prog := float(p["t"]) / 1.2
+		var y := float(p["y"]) - prog * 44.0
+		var alpha := 1.0 - prog * prog
+		# 序盤は大きく、後半は小さく消えていく
+		var fs := int(lerp(26.0, 16.0, prog))
+		var col: Color = p["col"]
+		var txt := str(int(p["val"]))
+		var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+		var px := float(p["x"]) - tw * 0.5
+		# 影（1px ずらし）
+		draw_string(font, Vector2(px + 1.5, y + 1.5), txt,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, alpha * 0.6))
+		draw_string(font, Vector2(px, y), txt,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(col.r, col.g, col.b, alpha))
 
 
 ## 敵遭遇のサイン：赤く脈動する✕のうず（ボスは大きく＋外周リング）。

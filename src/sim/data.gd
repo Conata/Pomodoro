@@ -23,6 +23,7 @@ const SHARD_PER_BOX := 1        # 箱(欠片枠)の基礎欠片（実際は +gra
 const NIGHT_GOLD_SCALE := 0.6   # 夜の売上倍率（インフレ抑制）
 const DEBUG_GAIN := 10.0        # デバッグ時の獲得倍率（gold/素材/欠片/売上）
 const CHEST_INTERVAL := 480.0  # 箱はプレイ時間8分毎に蓄積（TBH準拠）
+const BOX_MAX := 10             # 未開封箱の最大保持数（満杯なら溢れる）
 const SHIP_ROTATE_SEC := 600.0  # 交易船は10分毎に在庫入替
 const OFFLINE_CAP_SEC := 28800.0  # 安息の上限8時間
 
@@ -48,38 +49,62 @@ const TASTE_COLORS := {
 # keeper_apt: 店番の仕込み適性 / synergy: 店番シナジー
 const GIRLS := {
 	"mil": {
-		"name": "ミル", "order": 0, "role": "前衛・守護", "sprite": "knight_f",
+		"name": "ミル", "order": 0, "role": "ダークヒロイン・前衛守護", "sprite": "knight_f",
 		"hp": 150.0, "atk": 7.0, "fav": "淡",
 		"keeper_apt": 1.0, "synergy": "静かな給仕", "synergy_desc": "単価+10%",
-		"color": Color(0.8, 0.9, 1.0),
+		"color": Color(0.8, 0.9, 1.0), "flip": false,
 	},
 	"yuzuki": {
 		"name": "ユズキ", "order": 1, "role": "近接火力", "sprite": "elf_f",
 		"hp": 110.0, "atk": 13.0, "fav": "旨",
 		"keeper_apt": 1.35, "synergy": "解析いらずの仕込み", "synergy_desc": "仕込み数+35%",
-		"color": Color(1.0, 0.75, 0.55),
+		"color": Color(1.0, 0.75, 0.55), "flip": false,
 	},
 	"muu": {
 		"name": "ムュウ", "order": 2, "role": "手数・歌", "sprite": "wizzard_f",
 		"hp": 95.0, "atk": 9.0, "fav": "甘",
 		"keeper_apt": 0.9, "synergy": "店内ライブ", "synergy_desc": "客数+4",
-		"color": Color(1.0, 0.7, 0.9),
+		"color": Color(1.0, 0.7, 0.9), "flip": false,
 	},
 	"kiriko": {
 		"name": "レイカ", "order": 3, "role": "オカルトサイエンティスト・後衛重撃", "sprite": "necromancer",
 		"hp": 85.0, "atk": 16.0, "fav": "辛",
 		"keeper_apt": 1.0, "synergy": "解析仕込み", "synergy_desc": "予報外れの皿も売れる",
-		"color": Color(0.75, 0.65, 1.0),
+		"color": Color(0.75, 0.65, 1.0), "flip": false,
 	},
 }
 
-const GIRL_ORDER := ["mil", "yuzuki", "muu", "kiriko"]
+	"doctor": {
+		"name": "ドクター", "order": 4, "role": "精神外科医・後衛支援", "sprite": "doc",
+		"hp": 180.0, "atk": 6.0, "fav": "淡",
+		"keeper_apt": 0.8, "synergy": "診察メニュー", "synergy_desc": "回復量+20%",
+		"color": Color(0.45, 0.90, 0.70), "flip": false,
+	},
+	"nurse": {
+		"name": "ナース", "order": 5, "role": "医療支援AI・盾", "sprite": "angel",
+		"hp": 130.0, "atk": 8.0, "fav": "甘",
+		"keeper_apt": 1.1, "synergy": "処方箋メニュー", "synergy_desc": "客の回復量+15%",
+		"color": Color(0.55, 0.98, 0.85), "flip": false,
+	},
+}
+
+const GIRL_ORDER := ["mil", "yuzuki", "muu", "kiriko", "doctor", "nurse"]
 
 # NPC（操作不可・会話/イベントの話者になれる）。プレイアブルとは別。
 # キリコ＝依頼人「私を殺してほしい」。物語の核（人格コピーの残り）。
 const NPCS := {
 	"kiriko_npc": {
 		"name": "キリコ", "role": "依頼人", "color": Color("cdb4db"),
+	},
+	# 特注レシピ常連（住民ストーリー担当）
+	"tao": {
+		"name": "タオ爺", "role": "薬膳師", "color": Color("c8a96e"),
+	},
+	"nono": {
+		"name": "ノノ", "role": "ハッカー見習い", "color": Color("7fe8d8"),
+	},
+	"err404": {
+		"name": "404さん", "role": "謎の常連", "color": Color("b0b0b8"),
 	},
 }
 
@@ -110,6 +135,12 @@ const SKILL_DB := {
 	"observe": {"girl": "kiriko", "name": "観測射撃", "unlock": 0, "cd": 7.0, "kind": "hit", "power": 2.8},
 	"hypothesis": {"girl": "kiriko", "name": "雷の仮説", "unlock": 1, "cd": 14.0, "kind": "aoe", "power": 2.4, "fx": "lightning"},
 	"reconnect": {"girl": "kiriko", "name": "再接続理論", "unlock": 2, "cd": 22.0, "kind": "hit", "power": 5.2, "fx": "lightning"},
+	"diagnose": {"girl": "doctor", "name": "診断", "unlock": 0, "cd": 8.0, "kind": "heal_one", "power": 0.35, "fx": "heal"},
+	"dive_sync": {"girl": "doctor", "name": "ダイブシンク", "unlock": 1, "cd": 20.0, "kind": "heal_all", "power": 0.38, "fx": "heal"},
+	"override": {"girl": "doctor", "name": "オーバーライド", "unlock": 2, "cd": 28.0, "kind": "hit", "power": 5.5, "fx": "explosion"},
+	"patch": {"girl": "nurse", "name": "応急パッチ", "unlock": 0, "cd": 7.0, "kind": "heal_one", "power": 0.30, "fx": "heal"},
+	"emergency": {"girl": "nurse", "name": "緊急処置", "unlock": 1, "cd": 22.0, "kind": "heal_all", "power": 0.42, "fx": "heal"},
+	"full_sync": {"girl": "nurse", "name": "完全同期", "unlock": 2, "cd": 35.0, "kind": "shield_all", "power": 0.50, "fx": "heal"},
 }
 const SKILL_UNLOCK_AFF := [0, 45, 80]
 
@@ -141,6 +172,18 @@ const GIRL_TREES := {
 		{"id": "kir_b", "name": "技・雷の仮説", "cost": 5, "req_aff": 45, "effect": {"skill": "hypothesis"}},
 		{"id": "kir_c", "name": "重撃強化", "cost": 9, "effect": {"atk": 0.16}},
 		{"id": "kir_d", "name": "技・再接続理論", "cost": 15, "req_aff": 80, "effect": {"skill": "reconnect"}},
+	],
+	"doctor": [
+		{"id": "doc_a", "name": "診察眼", "cost": 2, "effect": {"hp": 0.14}},
+		{"id": "doc_b", "name": "技・ダイブシンク", "cost": 5, "req_aff": 45, "effect": {"skill": "dive_sync"}},
+		{"id": "doc_c", "name": "治癒の心得", "cost": 9, "effect": {"hp": 0.18}},
+		{"id": "doc_d", "name": "技・オーバーライド", "cost": 15, "req_aff": 80, "effect": {"skill": "override"}},
+	],
+	"nurse": [
+		{"id": "nur_a", "name": "処置速度", "cost": 2, "effect": {"crit": 0.05, "hp": 0.08}},
+		{"id": "nur_b", "name": "技・緊急処置", "cost": 5, "req_aff": 45, "effect": {"skill": "emergency"}},
+		{"id": "nur_c", "name": "防護膜", "cost": 9, "effect": {"hp": 0.12, "crit": 0.06}},
+		{"id": "nur_d", "name": "技・完全同期", "cost": 15, "req_aff": 80, "effect": {"skill": "full_sync"}},
 	],
 }
 

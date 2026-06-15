@@ -12,10 +12,17 @@ const RUNE_DIM := Color("3a2f4a")   # 未到達の沈んだ縁
 
 var sim: KuroSim = null
 var pulse := 0.0
+var _tex: Dictionary = {}  # id -> Texture2D
+
+const TEX_SIZE := 42.0  # 円内に収まるアイコンサイズ (RADIUS*2 - 余白)
 
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(640, 660)
+	for id in KuroData.RENOV_NODES:
+		var path := "res://assets/generated/renov/%s.png" % id
+		if ResourceLoader.exists(path):
+			_tex[id] = load(path)
 
 
 func _process(delta: float) -> void:
@@ -58,7 +65,17 @@ func _draw() -> void:
 		var nm: String = node["name"]
 		var w := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_CENTER, -1, 15).x
 		draw_string(font, c + Vector2(-w * 0.5, RADIUS + 19), nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, label_color)
-		if owned:
+		if id in _tex:
+			var alpha := 1.0 if owned else (0.75 if avail else 0.3)
+			var half := TEX_SIZE * 0.5
+			draw_texture_rect(_tex[id], Rect2(c - Vector2(half, half), Vector2(TEX_SIZE, TEX_SIZE)),
+					false, Color(1, 1, 1, alpha))
+			if not owned:
+				var cost := "%dG" % int(node["cost"])
+				var cw := font.get_string_size(cost, HORIZONTAL_ALIGNMENT_CENTER, -1, 13).x
+				draw_string(font, c + Vector2(-cw * 0.5, RADIUS + 34), cost,
+						HORIZONTAL_ALIGNMENT_LEFT, -1, 13, DS.WARM if avail else DS.TEXT_MUTE)
+		elif owned:
 			var mw := font.get_string_size("●", HORIZONTAL_ALIGNMENT_CENTER, -1, 18).x
 			draw_string(font, c + Vector2(-mw * 0.5, 7), "●", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, RUNE)
 		else:

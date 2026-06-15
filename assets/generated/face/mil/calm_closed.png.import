@@ -2,16 +2,12 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://owp7k5vd327t"
-path="res://.godot/imported/calm_closed.png-fd537d45d6cbc90e9742fec494861d5e.ctex"
-metadata={
-"vram_texture": false
-}
+uid="uid://cnk7prtrbyuma"
+valid=false
 
 [deps]
 
 source_file="res://assets/generated/face/mil/calm_closed.png"
-dest_files=["res://.godot/imported/calm_closed.png-fd537d45d6cbc90e9742fec494861d5e.ctex"]
 
 [params]
 

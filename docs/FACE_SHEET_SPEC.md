@@ -101,7 +101,34 @@ calm     [3,0]  [3,1]  [3,2]  [3,3]
 | 頭の位置 | **全コマで固定**（位置がズレると口パクがガクガクする）|
 | 差分 | 口と目だけ変える。髪・服・体は全コマ完全に同じに |
 
-### 4-3. 単色背景を使う場合
+### 4-3. ★ 生成ツール・モデルのルール（重要）
+
+**FaceCam 顔画像は必ず PixAI の Tsubaki.2 モデルで生成する。**
+
+| 項目 | 値 |
+|---|---|
+| ツール | `tools/pixai_gen.py face <char_id>` |
+| モデル | Tsubaki.2（ID: `1983308862240288769`） |
+| スタイル | chibi / SD（大頭・小身体）|
+| サイズ | 512×512 px |
+| 背景 | `#1a1030`（濃紫）固定 |
+
+```bash
+# mil の全表情（20フレーム）を生成
+python3 tools/pixai_gen.py face mil
+
+# 特定表情だけ
+python3 tools/pixai_gen.py face mil --exprs neutral,smile
+
+# 上書き再生成
+python3 tools/pixai_gen.py face mil --force
+```
+
+> **PixelLab（pixellab_gen.py face）は使わない。** PixelLab の generate-image-v2 は通常比率のアニメ絵になり、SD キャラにならない。
+
+---
+
+### 4-4. 単色背景を使う場合
 
 透過に見えない生成物でも、単色背景なら後でキーイングで抜ける。
 

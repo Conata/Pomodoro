@@ -21,6 +21,11 @@
 - 渡し方は2通り：①自分でブランチに commit/push する ②ファイルを私に渡す（私が配置・commit）。
 - **キャラID対応（重要）**：`ミル=mil` / `ユズキ=yuzuki` / `ムュウ=muu` / `レイカ(プレイアブル)=kiriko` / `NPCキリコ=kiriko_npc`
 
+
+こちらにキャラのリファレンスがある
+/Users/mekezzo/Work/Pomodoro/docs/Refs/Chara
+
+
 ---
 
 ## 1. ローカルでゲームを動かす

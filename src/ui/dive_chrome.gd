@@ -6,34 +6,83 @@ extends Control
 
 const VIEWERS_BASE := 8200
 
+const MAX_CAMS := 4  # 最大ワイプ数（メンバー数に合わせて自動で増減）
+const CAM_GAP := 8.0
+
 var sim: KuroSim = null
 var dive: DiveView = null
-var _cam: FaceCam = null
+var morning_mode := false          # true のとき MORNING 食事ワイプを表示
+var _cams: Array = []  # FaceCam × MAX_CAMS
+var _last_bubble_key := ""  # "girl_id|text" 変化検出用
 
 
 func _ready() -> void:
-	_cam = FaceCam.new()
-	_cam.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_cam)
+	for i in MAX_CAMS:
+		var cam := FaceCam.new()
+		cam.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cam.visible = false
+		add_child(cam)
+		_cams.append(cam)
 
 
 func _process(_delta: float) -> void:
-	# 配信者ワイプ（右下）：先頭の潜行メンバー＝配信者。発話中は口パク。
-	if _cam != null and sim != null and dive != null and sim.state["run"]["active"]:
-		var ds := sim.divers()
-		var sid := String(ds[0]) if not ds.is_empty() else ""
-		_cam.girl_id = sid
-		_cam.speaking = (not dive._bubble.is_empty()
-				and String(dive._bubble.get("girl", "")) == sid)
-		var w := clampf(size.x * 0.26, 96.0, 168.0)
-		var h := w * 1.14
-		_cam.size = Vector2(w, h)
-		_cam.position = Vector2(size.x - w - 12.0, size.y - h - 12.0)
-		_cam.visible = sid != ""
-	elif _cam != null:
-		_cam.visible = false
+	if sim == null:
+		for cam in _cams:
+			cam.visible = false
+		if visible:
+			queue_redraw()
+		return
+
+	if morning_mode:
+		# MORNING：全キャラが食事中ワイプとして右下に並ぶ
+		_update_cams(KuroData.GIRL_ORDER, "", true)
+	elif dive != null and sim.state["run"]["active"]:
+		# DIVE：潜行メンバーが配信ワイプとして並ぶ
+		var bubble_girl := ""
+		var bubble_text := ""
+		if not dive._bubble.is_empty():
+			bubble_girl = String(dive._bubble.get("girl", ""))
+			bubble_text = String(dive._bubble.get("text", ""))
+		# 新しいセリフが来たら対象キャラのワイプにフォネムシーケンスを渡す
+		var bubble_key := bubble_girl + "|" + bubble_text
+		if bubble_key != _last_bubble_key:
+			_last_bubble_key = bubble_key
+			if not bubble_text.is_empty():
+				for cam in _cams:
+					var fc := cam as FaceCam
+					if fc.girl_id == bubble_girl:
+						fc.start_speech(bubble_text)
+		_update_cams(sim.divers(), bubble_girl, false)
+	else:
+		for cam in _cams:
+			cam.visible = false
+
 	if visible:
 		queue_redraw()
+
+
+func _update_cams(members: Array, bubble_girl: String, is_eating: bool) -> void:
+	var n := mini(members.size(), MAX_CAMS)
+	var max_w := clampf(size.x * 0.26, 96.0, 168.0)
+	var avail := size.x * 0.70 - CAM_GAP * maxf(n - 1, 0)
+	var w := minf(max_w, avail / maxf(n, 1))
+	var h := w * 1.14
+	for i in MAX_CAMS:
+		var cam: FaceCam = _cams[i]
+		if i < n:
+			var gid := String(members[i])
+			cam.girl_id = gid
+			# wipe は右端に並ぶ。i=0が最右端→左向き、i>0は左寄り→右向きで画面内を向く
+			cam.flip_h  = (i == 0)
+			cam.eating = is_eating
+			cam.speaking = (not is_eating) and gid == bubble_girl
+			cam.size = Vector2(w, h)
+			cam.position = Vector2(
+				size.x - 12.0 - (i + 1) * w - i * CAM_GAP,
+				size.y - h - 12.0)
+			cam.visible = true
+		else:
+			cam.visible = false
 
 
 func _draw() -> void:
@@ -170,3 +219,12 @@ func _fmt_k(v: int) -> String:
 func _mmss(sec: float) -> String:
 	var s := int(ceil(sec))
 	return "%02d:%02d" % [int(s / 60.0), s % 60]
+
+
+## 指定キャラのワイプに表情を設定する（main._pump_events から呼ぶ）。
+## duration 秒後に自動で neutral に戻る。
+func set_expr(girl_id: String, expr: String, duration: float = 1.8) -> void:
+	for cam in _cams:
+		if (cam as FaceCam).girl_id == girl_id:
+			(cam as FaceCam).set_expression(expr, duration)
+			return

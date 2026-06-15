@@ -19,6 +19,8 @@ var picked := false
 var pulse := 0.0
 var _meta := {}
 var _tex_cache := {}
+var _bg_tex: Texture2D = null   # シーン背景テクスチャ（nullなら暗青ベタ）
+var _bg_name := ""              # 現在ロード済みの背景キー
 
 var choice_a: Button
 var choice_b: Button
@@ -62,8 +64,21 @@ func play(scene: Dictionary, speaker: String, meta: Dictionary) -> void:
 	queue = scene["lines"].duplicate()
 	picked = false
 	_meta = meta
+	_load_bg(String(scene.get("bg", "")))
 	visible = true
 	_advance_to_current()
+
+
+## "bg" キーに対応した背景テクスチャをロード（差し替え時だけ再ロード）。
+func _load_bg(name: String) -> void:
+	if name == _bg_name:
+		return
+	_bg_name = name
+	if name == "":
+		_bg_tex = null
+		return
+	var path := "res://assets/generated/scene/%s.png" % name
+	_bg_tex = load(path) if ResourceLoader.exists(path) else null
 
 
 func _process(delta: float) -> void:
@@ -125,7 +140,13 @@ func _band(y: float, h: float, color: Color, skew_px: float = 26.0) -> void:
 
 func _draw() -> void:
 	var sz := size
-	draw_rect(Rect2(Vector2.ZERO, sz), Color(0.025, 0.05, 0.16, 1.0))
+	# 背景：テクスチャがあればそれを引き伸ばし、なければ暗青ベタ
+	if _bg_tex != null:
+		draw_texture_rect(_bg_tex, Rect2(Vector2.ZERO, sz), false)
+		# 少し暗くして雨＆立ち絵を読みやすくする
+		draw_rect(Rect2(Vector2.ZERO, sz), Color(0.0, 0.02, 0.08, 0.55))
+	else:
+		draw_rect(Rect2(Vector2.ZERO, sz), Color(0.025, 0.05, 0.16, 1.0))
 	# 雨
 	for i in 60:
 		var speed := 380.0 + fposmod(i * 41.3, 260.0)
@@ -136,9 +157,9 @@ func _draw() -> void:
 	# 立ち絵（等身の高いキャラ。ピクセルではなくポートレート）。
 	# res://assets/portraits/<id>.png があればそれ、無ければシルエット。
 	var g: Dictionary = KuroData.actor(girl)  # GIRLS か NPC のどちらでも
-	var pw := sz.x * 0.62
-	var ph := sz.y * 0.62
-	Portrait.draw_into(self, girl, Rect2(sz.x - pw - 20.0, 10.0, pw, ph), pulse)
+	var pw := sz.x * 0.65
+	var ph := sz.y          # 全高を渡す → 幅で scale → 足元が画面下に揃う
+	Portrait.draw_into(self, girl, Rect2(sz.x - pw - 8.0, 0.0, pw, ph), pulse)
 	var font := get_theme_default_font()
 	# 名前の斜めバンド（白地に黒、Rain98 の名前演出）
 	_band(sz.y * 0.62, 52.0, Color(0.94, 0.97, 1.0))

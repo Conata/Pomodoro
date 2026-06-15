@@ -2,16 +2,12 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://onwulvoahr8t"
-path="res://.godot/imported/calm_blink.png-f2168d643d4a67d09037b464800d36c2.ctex"
-metadata={
-"vram_texture": false
-}
+uid="uid://b0l6w5njxo0dx"
+valid=false
 
 [deps]
 
 source_file="res://assets/generated/face/mil/calm_blink.png"
-dest_files=["res://.godot/imported/calm_blink.png-f2168d643d4a67d09037b464800d36c2.ctex"]
 
 [params]
 

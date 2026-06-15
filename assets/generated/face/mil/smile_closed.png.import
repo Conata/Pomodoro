@@ -2,16 +2,12 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://d4m630ragdvpa"
-path="res://.godot/imported/smile_closed.png-2fb4b1af118e037b1f4c1ed0e08ceb0a.ctex"
-metadata={
-"vram_texture": false
-}
+uid="uid://cyqv18hbqvdsl"
+valid=false
 
 [deps]
 
 source_file="res://assets/generated/face/mil/smile_closed.png"
-dest_files=["res://.godot/imported/smile_closed.png-2fb4b1af118e037b1f4c1ed0e08ceb0a.ctex"]
 
 [params]
 

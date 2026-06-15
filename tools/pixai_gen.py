@@ -194,31 +194,123 @@ def load_models_file(path: str) -> list[tuple[str, str]]:
 
 
 # ──────────────────────────────────────────────────────────────
-# main
+# 顔表情フレーム生成（FaceCam SDキャラ専用）
 # ──────────────────────────────────────────────────────────────
 
-def main():
-    ap = argparse.ArgumentParser(
-        description="PixAI model-comparison harness",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    ap.add_argument("--prompt",  required=True, help="生成プロンプト")
-    ap.add_argument("--neg",     default="lowres, bad anatomy, worst quality, blurry",
-                    help="ネガティブプロンプト")
-    ap.add_argument("--seed",    type=int, default=42)
-    ap.add_argument("--width",   type=int, default=512)
-    ap.add_argument("--height",  type=int, default=768)
-    ap.add_argument("--out",     default="tools/_out/model_test",
-                    help="出力ディレクトリ")
-    group = ap.add_mutually_exclusive_group(required=True)
-    group.add_argument("--models-file", metavar="FILE",
-                       help="モデルリストファイル (pixai_models.txt)")
-    group.add_argument("--model", metavar="ID[:NAME]",
-                       help="単体モデル指定")
-    args = ap.parse_args()
+REPO_ROOT = Path(__file__).parent.parent
 
-    api_key = load_api_key()
+# 顔生成モデル固定: Tsubaki.2  ← SDキャラはこれで作る（★ルール）
+FACE_MODEL_ID = "1983308862240288769"
 
+FACE_CHARACTERS = {
+    "mil": (
+        "masterpiece, best quality, chibi, SD, 1girl, "
+        "short white silver hair, pink inner color, "
+        "oversized black jacket, pink crop top, no glasses, "
+        "stoic dark heroine, pink reddish eyes"
+    ),
+    "yuzuki": (
+        "masterpiece, best quality, chibi, SD, 1girl, "
+        "short brown hair orange highlights, white chef uniform apron, "
+        "cheerful ramen cook"
+    ),
+    "muu": (
+        "masterpiece, best quality, chibi, SD, 1girl, "
+        "pink magenta twin tails, idol streamer outfit, "
+        "bright energetic vtuber"
+    ),
+    "kiriko": (
+        "masterpiece, best quality, chibi, SD, 1girl, "
+        "long purple hair, white lab coat, "
+        "occult scientist, mysterious"
+    ),
+    "kiriko_npc": (
+        "masterpiece, best quality, chibi, SD, 1girl, "
+        "short light purple hair, casual outfit, friendly soft expression"
+    ),
+}
+
+FACE_EXPR_PROMPTS = {
+    "neutral":  "neutral relaxed expression",
+    "smile":    "smiling happily, confident bright smile",
+    "surprise": "surprised shocked, wide eyes open mouth",
+    "calm":     "serene focused, half-lidded calm eyes",
+    "eat":      "eating food, satisfied chewing, cheeks puffed",
+}
+
+FACE_STATE_PROMPTS = {
+    "closed": "mouth closed, eyes open",
+    "half":   "mouth slightly open, eyes open",
+    "open":   "mouth wide open, eyes open",
+    "blink":  "eyes fully closed, mouth closed",
+}
+
+FACE_NEG = (
+    "lowres, bad anatomy, worst quality, blurry, "
+    "realistic proportions, tall body, long legs, "
+    "glasses, megane, eyewear"
+)
+
+
+def cmd_face(api_key: str, args) -> None:
+    char_id = args.char_id
+    exprs   = args.exprs.split(",")  if getattr(args, "exprs",  None) else list(FACE_EXPR_PROMPTS)
+    states  = args.states.split(",") if getattr(args, "states", None) else list(FACE_STATE_PROMPTS)
+    seed    = getattr(args, "seed",  42)
+    force   = getattr(args, "force", False)
+
+    if char_id not in FACE_CHARACTERS:
+        sys.exit(f"ERROR: 未知のキャラID '{char_id}'  選択肢: {list(FACE_CHARACTERS)}")
+
+    base_desc = FACE_CHARACTERS[char_id]
+    out_dir   = REPO_ROOT / "assets" / "generated" / "face" / char_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    total = len(exprs) * len(states)
+    ok = fail = 0
+
+    print(f"\n▶ 顔表情フレーム生成: {char_id}  model=Tsubaki.2")
+    print(f"  表情: {exprs}  状態: {states}  合計: {total} フレーム\n")
+
+    for expr in exprs:
+        for state in states:
+            dest = out_dir / f"{expr}_{state}.png"
+            if dest.exists() and not force:
+                print(f"  skip (exists): {dest.name}")
+                ok += 1
+                continue
+
+            prompt = (
+                f"{base_desc}, "
+                f"{FACE_EXPR_PROMPTS[expr]}, {FACE_STATE_PROMPTS[state]}, "
+                "bust shot, flat solid background #1a1030, "
+                "centered head, anime illustration"
+            )
+
+            print(f"  {expr}_{state} …", flush=True)
+            try:
+                task_id = create_task(api_key, FACE_MODEL_ID, prompt, FACE_NEG,
+                                      seed, 512, 512)
+                url = poll_task(api_key, task_id)
+                if url:
+                    download_image(url, dest)
+                    print(f"    ✓ {dest.name}", flush=True)
+                    ok += 1
+                else:
+                    print(f"    ✗ FAILED", flush=True)
+                    fail += 1
+            except Exception as e:
+                print(f"    ✗ ERROR: {e}", flush=True)
+                fail += 1
+
+    print(f"\n  完了: {ok}/{total} 成功, {fail} 失敗")
+
+
+# ──────────────────────────────────────────────────────────────
+# モデル比較（旧来の動作）
+# ──────────────────────────────────────────────────────────────
+
+def cmd_compare(api_key: str, args) -> None:
     if args.models_file:
         models = load_models_file(args.models_file)
     else:
@@ -257,9 +349,53 @@ def main():
             results.append((name, dest, False))
 
     print("\n── 結果 ──")
-    for name, dest, ok in results:
-        mark = "✓" if ok else "✗"
-        print(f"  {mark} {name}: {dest if ok else 'FAILED'}")
+    for name, dest, ok_flag in results:
+        mark = "✓" if ok_flag else "✗"
+        print(f"  {mark} {name}: {dest if ok_flag else 'FAILED'}")
+
+
+# ──────────────────────────────────────────────────────────────
+# main
+# ──────────────────────────────────────────────────────────────
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="PixAI 生成ツール",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = ap.add_subparsers(dest="cmd")
+
+    # face — SDキャラ顔表情フレーム生成（Tsubaki.2 固定）
+    p_face = sub.add_parser("face", help="顔表情フレームを生成（Tsubaki.2 固定・SDキャラ）")
+    p_face.add_argument("char_id", choices=list(FACE_CHARACTERS))
+    p_face.add_argument("--exprs",  help="カンマ区切り表情 (例: neutral,smile)")
+    p_face.add_argument("--states", help="カンマ区切り状態 (例: closed,half,open,blink)")
+    p_face.add_argument("--seed",   type=int, default=42)
+    p_face.add_argument("--force",  action="store_true", help="既存を上書き")
+
+    # compare — モデル比較・単体生成（旧来の動作）
+    p_cmp = sub.add_parser("compare", help="モデル比較・単体生成")
+    p_cmp.add_argument("--prompt",  required=True)
+    p_cmp.add_argument("--neg",     default="lowres, bad anatomy, worst quality, blurry")
+    p_cmp.add_argument("--seed",    type=int, default=42)
+    p_cmp.add_argument("--width",   type=int, default=512)
+    p_cmp.add_argument("--height",  type=int, default=768)
+    p_cmp.add_argument("--out",     default="tools/_out/model_test")
+    grp = p_cmp.add_mutually_exclusive_group(required=True)
+    grp.add_argument("--models-file", metavar="FILE")
+    grp.add_argument("--model",       metavar="ID[:NAME]")
+
+    args = ap.parse_args()
+    if args.cmd is None:
+        ap.print_help()
+        sys.exit(1)
+
+    api_key = load_api_key()
+
+    if args.cmd == "face":
+        cmd_face(api_key, args)
+    elif args.cmd == "compare":
+        cmd_compare(api_key, args)
 
 
 if __name__ == "__main__":

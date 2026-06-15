@@ -12,6 +12,8 @@ extends RefCounted
 var state: Dictionary = {}
 var rng := SimRNG.new()
 var events: Array = []
+var _hurt_expr_cd := {}   # {girl_id: float} 被弾表情の連打防止（非保存）
+var _dmg_pop_cd := 0.0    # 敵ダメージポップの連打防止
 
 
 func _init(p_state: Dictionary = {}) -> void:
@@ -388,7 +390,8 @@ func _tick_chests(dt: float) -> void:
 		state["chest_progress"] = float(state["chest_progress"]) - interval
 		var grade := rng.randi(2)
 		if renov_bonus("auto_chest") > 0.0:
-			state["boxes"].append(grade)
+			if state["boxes"].size() < KuroData.BOX_MAX:
+				state["boxes"].append(grade)
 			var r := open_box()
 			_emit("log", "ぜんまいが箱を開けた: %s" % r.get("text", ""))
 		else:
@@ -536,6 +539,10 @@ func _combat_step(dt: float) -> void:
 		if low != "" and worst < 0.9:
 			state["hp"][low] = minf(girl_maxhp(low), float(state["hp"][low]) + girl_maxhp(low) * 0.03 * dt)
 	_damage_mobs(dps * dt)
+	_dmg_pop_cd = maxf(0.0, _dmg_pop_cd - dt)
+	if _dmg_pop_cd <= 0.0 and not state["mobs"].is_empty():
+		_emit("dmg_pop", "", {"at": "enemy", "val": int(dps * 0.8)})
+		_dmg_pop_cd = 0.8
 	if state["mobs"].is_empty():
 		return
 	# 敵攻撃は盾（隊列順の先頭＝ミルがいれば必ずミル）へ。守護で被弾-25%
@@ -545,6 +552,13 @@ func _combat_step(dt: float) -> void:
 	var tank: String = alive[0]
 	var dmg := matk * dt * (0.75 if tank == "mil" else 1.0)
 	state["hp"][tank] = float(state["hp"][tank]) - dmg
+	# 被弾表情（2秒ごとに1回だけ emit）
+	var hcd: float = float(_hurt_expr_cd.get(tank, 0.0))
+	_hurt_expr_cd[tank] = maxf(0.0, hcd - dt)
+	if hcd <= 0.0:
+		_emit("expr", "", {"girl": tank, "expr": "surprise"})
+		_emit("dmg_pop", "", {"at": "party", "val": maxi(1, int(dmg * (2.0 / KuroData.SIM_DT)))})
+		_hurt_expr_cd[tank] = 2.0
 	if float(state["hp"][tank]) <= 0.0:
 		state["hp"][tank] = 0.0
 		_emit("log", "%s の同期が乱れた…" % KuroData.GIRLS[tank]["name"])
@@ -592,8 +606,15 @@ func _cast_skill(id: String, sid: String) -> bool:
 			for gid in _alive_divers():
 				state["hp"][gid] = minf(girl_maxhp(gid), float(state["hp"][gid]) + girl_maxhp(gid) * float(def["power"]) * 0.6)
 			ok = true
-	if ok and def.has("fx"):
-		_emit("fx", "", {"fx": String(def["fx"])})
+	if ok:
+		if def.has("fx"):
+			_emit("fx", "", {"fx": String(def["fx"])})
+		# 表情：攻撃系=smile / 回復・盾=calm（詠唱者のみ）
+		var expr := "smile"
+		match String(def["kind"]):
+			"heal_one", "heal_all", "shield_all":
+				expr = "calm"
+		_emit("expr", "", {"girl": id, "expr": expr})
 	return ok
 
 
@@ -645,7 +666,8 @@ func _on_mob_killed(m: Dictionary) -> void:
 	if m["boss"]:
 		# ボス箱は即時バンク——切断でも失わない（戻さないこと）
 		var grade := 2 + (1 if current_floor() >= 5 else 0)
-		state["boxes"].append(grade)
+		if state["boxes"].size() < KuroData.BOX_MAX:
+			state["boxes"].append(grade)
 		run["banked"] = int(run["banked"]) + 1
 		_emit("fx", "", {"fx": "explosion"})
 
@@ -724,7 +746,8 @@ func _end_run(disconnected: bool) -> void:
 		state["streak"] = 0
 	else:
 		for grade in run["boxes"]:
-			state["boxes"].append(int(grade))
+			if state["boxes"].size() < KuroData.BOX_MAX:
+				state["boxes"].append(int(grade))
 		lost_boxes = 0
 	var mats_total := 0
 	for ing in mats:

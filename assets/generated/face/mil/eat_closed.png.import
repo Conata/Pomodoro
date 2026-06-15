@@ -2,16 +2,12 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cms0yub4hjra4"
-path="res://.godot/imported/eat_closed.png-ff98d88102c55808d69cd8dedee9d479.ctex"
-metadata={
-"vram_texture": false
-}
+uid="uid://dwij1xv4s6ier"
+valid=false
 
 [deps]
 
 source_file="res://assets/generated/face/mil/eat_closed.png"
-dest_files=["res://.godot/imported/eat_closed.png-ff98d88102c55808d69cd8dedee9d479.ctex"]
 
 [params]
 

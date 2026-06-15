@@ -25,6 +25,19 @@ const LOOK := {
 	# 匿名の来店客（店の賑わい用・無個性なグレー）
 	"guest": {"accent": Color(0.58, 0.60, 0.66), "eye": Color(0.85, 0.80, 0.70),
 		"hair": Color(0.22, 0.22, 0.26), "style": "short", "warm": false},
+	# 特注レシピ常連
+	"tao": {"accent": Color(0.78, 0.66, 0.43), "eye": Color(0.92, 0.80, 0.60),
+		"hair": Color(0.88, 0.88, 0.88), "style": "long", "warm": true},
+	"nono": {"accent": Color(0.49, 0.91, 0.85), "eye": Color(0.40, 0.98, 0.90),
+		"hair": Color(0.25, 0.42, 0.56), "style": "short", "warm": false},
+	"err404": {"accent": Color(0.69, 0.69, 0.72), "eye": Color(0.55, 0.55, 0.62),
+		"hair": Color(0.15, 0.15, 0.18), "style": "hood", "warm": false},
+	# 精神外科医（深緑・グレー瞳・長髪）
+	"doctor": {"accent": Color(0.45, 0.90, 0.70), "eye": Color(0.30, 0.78, 0.55),
+		"hair": Color(0.10, 0.22, 0.16), "style": "long", "warm": false},
+	# 医療支援AI（ミントグリーン・白衣）
+	"nurse": {"accent": Color(0.60, 0.98, 0.88), "eye": Color(0.50, 0.94, 0.80),
+		"hair": Color(0.22, 0.52, 0.45), "style": "short", "warm": false},
 }
 
 static var _cache := {}
@@ -45,7 +58,9 @@ static func draw_into(ci: CanvasItem, id: String, rect: Rect2, t: float) -> void
 		var asz := art.get_size()
 		var scale := minf(rect.size.x / asz.x, rect.size.y / asz.y)
 		var dsz := asz * scale
-		var pos := rect.position + (rect.size - dsz) * 0.5
+		# VN立ち絵は下揃え（足元をnamebandに合わせる）
+		var pos := Vector2(rect.position.x + (rect.size.x - dsz.x) * 0.5,
+				rect.position.y + rect.size.y - dsz.y)
 		ci.draw_texture_rect(art, Rect2(pos, dsz), false)
 		return
 	_draw_silhouette(ci, id, rect, t)

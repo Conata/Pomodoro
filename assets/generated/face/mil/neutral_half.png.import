@@ -2,16 +2,12 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://0ssqmcc8r4s"
-path="res://.godot/imported/neutral_half.png-731997188db9d6307cc42083782589cf.ctex"
-metadata={
-"vram_texture": false
-}
+uid="uid://cio3ml53wb2mp"
+valid=false
 
 [deps]
 
 source_file="res://assets/generated/face/mil/neutral_half.png"
-dest_files=["res://.godot/imported/neutral_half.png-731997188db9d6307cc42083782589cf.ctex"]
 
 [params]
 

@@ -2,16 +2,12 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://371sgdxytpdu"
-path="res://.godot/imported/surprise_blink.png-2fdb5caa96c19654bb9b871534c6a2d3.ctex"
-metadata={
-"vram_texture": false
-}
+uid="uid://d0ejcjchfljn7"
+valid=false
 
 [deps]
 
 source_file="res://assets/generated/face/mil/surprise_blink.png"
-dest_files=["res://.godot/imported/surprise_blink.png-2fdb5caa96c19654bb9b871534c6a2d3.ctex"]
 
 [params]
 
