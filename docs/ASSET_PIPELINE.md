@@ -149,6 +149,32 @@ PixAI は **GraphQL API**（公式 Go/JS クライアント準拠）。
 
 > `modelId` は pixai.art のモデルページで選ぶ。`seed` を固定すると表情シートの一貫性が上がる。
 
+### APIキーの置き場所（重要）
+- **コミット厳禁・チャット貼り付け厳禁**（露出したら pixai.art で必ず再発行）。
+- 置き方は2通り（`pixai_gen.py` がどちらも読む）:
+  1. 環境変数: `export PIXAI_API_KEY=sk_...`
+  2. リポジトリ直下に `.env`（**`.gitignore` 済み**）: `cp .env.example .env` して `PIXAI_API_KEY=sk_...` を記入
+- `.env` / `*.key` / `secrets*` / `assets/**/_raw/` / `tools/_out/` は gitignore 済み。
+
+### モデルを選ぶ（10個テスト）
+PixAIのモデルIDは **モデルページURLの数字**（例 `pixai.art/model/1983308862240288769/...` → `1983308862240288769`）。
+`tools/pixai_models.txt` に「ID 名前」を並べて一括比較:
+```bash
+python3 tools/pixai_gen.py --models-file tools/pixai_models.txt --seed 12345 \
+  --prompt "1girl, occult scientist, long purple hair, bust, flat #1a1030 bg, anime" \
+  --out tools/_out/model_test
+# → tools/_out/model_test/<id>_<名前>.png が並ぶ。好みのIDを以後 --model に使う
+```
+採用候補（実ID・`pixai_models.txt` に記載済み）:
+
+| モデル | ID | 特長 |
+|---|---|---|
+| Tsubaki.2 | `1983308862240288769` | プロンプト理解強・自然な骨格・精密ディテール・複数キャラ |
+| Haruka v2 | `1861558740588989558` | 品質安定・緻密・手が崩れにくい万能 |
+| Hoshino v2 | `1954632828118619567` | 日本で人気の作風 |
+
+> このサンドボックスは外部通信が制限されており、**生成は必ずローカルで**実行してください（私はここでは流せません）。
+
 ### 同梱ラッパ（依存なし・標準ライブラリのみ）
 ```bash
 export PIXAI_API_KEY=sk_...          # コミット厳禁（.gitignore / 環境変数で）

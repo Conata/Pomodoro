@@ -1,0 +1,25 @@
+# 比較したいモデルを「ID  名前」で1行ずつ。# はコメント。
+#
+# 数値IDの取り方:
+#   pixai.art/market（または ranking/model/today）でモデルを開く
+#   → モデルページURLの数字が ID（例 pixai.art/model/1648918127446573124/... → 1648918127446573124）
+#   → 下の候補名を探して、見つけたIDを頭に書いて行頭の # を外す
+#
+# 使い方:
+#   python3 tools/pixai_gen.py --models-file tools/pixai_models.txt --seed 12345 \
+#       --prompt "1girl, occult scientist, long purple hair, bust, flat #1a1030 bg, anime" \
+#       --out tools/_out/model_test
+#   → tools/_out/model_test/ に各モデル1枚ずつ出るので見比べる
+#
+# --- 採用候補（実ID入り。このまま比較に回せる）---
+1983308862240288769  Tsubaki.2     # プロンプト理解強・自然な骨格・精密ディテール・複数キャラ
+1861558740588989558  Haruka_v2     # 品質安定・緻密・手が崩れにくい万能
+1954632828118619567  Hoshino_v2    # 日本で人気の作風
+
+# --- 追加で試すなら（pixai.art でIDを拾って # を外す）---
+# <ID>  Otome-Illustrious
+# <ID>  HinataV2-Noob
+# <ID>  Hikari-Noob
+# <ID>  NovaAnimeXL
+# <ID>  LifeOrbXL
+# <ID>  HexBase-Illustrious

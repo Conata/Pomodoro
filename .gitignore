@@ -3,3 +3,14 @@ build/
 *.tmp
 __pycache__/
 *.pyc
+
+# secrets — 絶対にコミットしない（APIキー等）
+.env
+.env.*
+!.env.example
+*.key
+secrets*
+
+# 生成途中の生データ（keying前の元画像など）
+assets/**/_raw/
+tools/_out/
