@@ -66,6 +66,7 @@ var task_edit: LineEdit
 var mode_group := ButtonGroup.new()
 var forecast_label: Label
 var dive_panel: VBoxContainer
+var dive_party_row: HBoxContainer  # 潜行中の育成導線（配信を観ながら装備/スキル）
 var log_label: RichTextLabel
 var dive_info: Label              # 探索の最小情報HUD（探索率/現在地/遭遇）
 var door_row: HBoxContainer
@@ -464,6 +465,7 @@ func _apply_phase() -> void:
 	if diving:
 		dive.custom_minimum_size = Vector2(0, 300)
 		dive_frame.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		_fill_dive_party()  # 潜行メンバーの育成導線を埋める
 	else:
 		dive.custom_minimum_size = Vector2(0, 92)
 		dive_frame.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
@@ -594,6 +596,7 @@ func _build_ui() -> void:
 	_build_renov_tab()
 	_build_stats_tab()
 	_build_close()
+	_build_post_fx()  # 配信ポスト処理＋チロップ（モーダルより先＝下に積む）
 
 	talk_view = TalkView.new()
 	talk_view.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -608,7 +611,6 @@ func _build_ui() -> void:
 	add_child(confirm)
 	_build_status_overlay()
 	_build_audio()
-	_build_post_fx()
 	get_viewport().size_changed.connect(_relayout)
 	_relayout()
 
@@ -757,16 +759,10 @@ func _open_status(id: String) -> void:
 	fav.autowrap_mode = TextServer.AUTOWRAP_OFF
 	status_head.add_child(fav)
 	_clear(status_body)
-	# 装備（3枠）。倉庫タブで埋める
-	status_body.add_child(_section("装備"))
+	# 装備（3枠）。拾った装備をその場でセット（潜行中もOK）
+	status_body.add_child(_section("装備　拾った物をセット"))
 	for slot in ["weapon", "armor", "trinket"]:
-		var it: Dictionary = s["girls"][id]["equip"][slot]
-		var slot_name: String = SimItems.SLOTS[slot]["name"]
-		if it.is_empty():
-			status_body.add_child(_label("%s： —（倉庫で装着）" % slot_name, TYPE_SMALL, Color(1, 1, 1, 0.45)))
-		else:
-			status_body.add_child(_label("%s： %s %s" % [slot_name, SimItems.display_name(it), SimItems.affix_text(it)],
-					TYPE_SMALL, SimItems.GRADES[int(it["grade"])]["color"]))
+		status_body.add_child(_equip_slot_row(id, slot))
 	# スキルツリー（記憶の欠片で解放）＝グリッドのノードカード
 	status_body.add_child(_section("スキルツリー　記憶の欠片 %d" % int(s["shards"])))
 	var tree_grid := GridContainer.new()
@@ -790,6 +786,61 @@ func _open_status(id: String) -> void:
 		sk_flow.add_child(sk)
 	status_body.add_child(sk_flow)
 	status_overlay.visible = true
+
+
+## 装備スロット1行：現在の装備＋倉庫の候補（このスロットのスコア上位3）を装備ボタンで。
+## 拾った装備を「店に戻らず」その場でセットできる＝潜行中の育成導線。
+func _equip_slot_row(id: String, slot: String) -> VBoxContainer:
+	var s := sim.state
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", SP_1)
+	var slot_name: String = SimItems.SLOTS[slot]["name"]
+	var cur: Dictionary = s["girls"][id]["equip"][slot]
+	var cur_score := 0.0
+	if cur.is_empty():
+		box.add_child(_label("%s： —" % slot_name, TYPE_SMALL, Color(1, 1, 1, 0.45)))
+	else:
+		cur_score = float(cur["score"])
+		var cl := _label("%s： %s %s" % [slot_name, SimItems.display_name(cur), SimItems.affix_text(cur)],
+				TYPE_SMALL, SimItems.GRADES[int(cur["grade"])]["color"])
+		cl.autowrap_mode = TextServer.AUTOWRAP_OFF
+		box.add_child(cl)
+	# 倉庫からこのスロットの候補（スコア上位3）
+	var cands: Array = []
+	for it in s["inventory"]:
+		if String(it["slot"]) == slot:
+			cands.append(it)
+	cands.sort_custom(func(a, b): return float(a["score"]) > float(b["score"]))
+	var shown := mini(cands.size(), 3)
+	for k in shown:
+		var it: Dictionary = cands[k]
+		var diff := float(it["score"]) - cur_score
+		var badge := ("▲+%d" % int(diff)) if diff > 0.0 else ("▼%d" % int(diff))
+		var line := HBoxContainer.new()
+		line.add_theme_constant_override("separation", SP_1)
+		var nl := _label("　%s %s %s" % [SimItems.display_name(it), SimItems.affix_text(it), badge],
+				TYPE_SMALL, SimItems.GRADES[int(it["grade"])]["color"])
+		nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		nl.autowrap_mode = TextServer.AUTOWRAP_OFF
+		line.add_child(nl)
+		var b := _button("装備", _on_status_equip.bind(int(it["id"]), id), TYPE_SMALL)
+		if diff > 0.0 and UIKit.available():
+			UIKit.as_primary(b)
+		line.add_child(b)
+		box.add_child(line)
+	if shown == 0 and cur.is_empty():
+		box.add_child(_label("　倉庫にこの枠の装備なし。潜って拾おう", TYPE_SMALL, COL_DIM))
+	return box
+
+
+func _on_status_equip(item_id: int, girl_id: String) -> void:
+	if sim.equip_from_inventory(item_id, girl_id):
+		_sfx("ui_equip")
+		_save(Time.get_unix_time_from_system())
+		_refresh_header()
+		if inv_box != null:
+			_refresh_inventory()
+		_open_status(girl_id)  # 再描画
 
 
 ## スキルツリーの1ノードをカードで（精神世界＝紫。解放済/可能/ロックで色分け）。
@@ -847,6 +898,19 @@ func _on_status_skill(id: String, sid: String) -> void:
 
 func _close_status() -> void:
 	status_overlay.visible = false
+
+
+## 潜行中の育成導線：配信を観ながら、各メンバーをタップで装備セット／スキル育成。
+func _fill_dive_party() -> void:
+	if dive_party_row == null:
+		return
+	_clear(dive_party_row)
+	dive_party_row.add_child(_label("育成▶", TYPE_SMALL, COL_DIM))
+	for id in sim.divers():
+		var g: Dictionary = KuroData.GIRLS[id]
+		var b := _button(String(g["name"]), _open_status.bind(id), TYPE_SMALL)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		dive_party_row.add_child(b)
 
 
 ## 店先バナーの枠（角丸＋ネオン縁、内側余白なし）。
@@ -952,6 +1016,10 @@ func _build_dive_panel(parent: Control) -> void:
 	skip_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	door_row.add_child(skip_b)
 	dive_panel.add_child(door_row)
+	# 潜行中の育成導線：配信を観ながら、拾った装備のセット／スキル成長・装備（タップで各キャラ）
+	dive_party_row = HBoxContainer.new()
+	dive_party_row.add_theme_constant_override("separation", SP_1)
+	dive_panel.add_child(dive_party_row)
 	# 最小情報HUD（戦闘ログのスパムではなく、探索率・現在地・遭遇だけ）
 	dive_info = _label("", TYPE_BODY, UIKit.SECONDARY)
 	dive_info.autowrap_mode = TextServer.AUTOWRAP_OFF
