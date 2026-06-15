@@ -3,3 +3,12 @@ build/
 *.tmp
 __pycache__/
 *.pyc
+
+# secrets — コミット厳禁
+.env
+*.key
+secrets*
+
+# 生成途中物
+assets/**/_raw/
+tools/_out/
