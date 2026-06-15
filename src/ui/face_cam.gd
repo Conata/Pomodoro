@@ -142,10 +142,11 @@ func _draw() -> void:
 	var inner := Rect2(2, 2, sz.x - 4, sz.y - 4)
 	# 顔：表情フレーム > 立ち絵頭部 > キャラ色バスト
 	var drew := false
+	# 閾値: closed < 0.25 / half 0.25〜0.65 / open > 0.65（広めにとってチラつきを抑える）
 	var mouth_name := "closed"
-	if _mouth >= 0.6:
+	if _mouth >= 0.65:
 		mouth_name = "open"
-	elif _mouth >= 0.2:
+	elif _mouth >= 0.25:
 		mouth_name = "half"
 	var frame_name := ("%s_blink" % expression) if _blinking > 0.0 else ("%s_%s" % [expression, mouth_name])
 	var ftex := _tex(frame_name)

@@ -37,7 +37,9 @@ func _ready() -> void:
 
 ## キャラのセリフ吹き出しを数秒表示。掛け合いログにも積む（下部の配信ログ）。
 func say(girl_id: String, text: String) -> void:
-	_bubble = {"girl": girl_id, "text": text, "t": 3.6}
+	# 発話時間をテキスト長に比例させる（日本語: 約5〜6文字/秒）
+	var speak_dur := clampf(text.length() * 0.16, 1.2, 4.5)
+	_bubble = {"girl": girl_id, "text": text, "t": speak_dur}
 	var col := Color(0.7, 0.85, 1.0)
 	if KuroData.GIRLS.has(girl_id):
 		col = KuroData.GIRLS[girl_id]["color"]
