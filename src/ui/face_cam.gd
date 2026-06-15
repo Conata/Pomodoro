@@ -48,11 +48,24 @@ func _process(delta: float) -> void:
 			expression = "neutral"
 	# 口の動き：発話 > 咀嚼 > 閉口 の優先順
 	if speaking:
-		# リップシンク（高速ランダム。TTS導入時は音量ピークに差し替え）
+		# リップシンク（フォネム模倣：子音=閉口 / 母音=開口 を不規則に。TTS導入時は音量ピークに差し替え）
 		_talk_t += delta
-		if _talk_t >= 0.08:
-			_talk_t = 0.0
-			_mouth_target = randf_range(0.15, 1.0)
+		if _talk_t >= 0.0:
+			var rnd := randf()
+			var next_dur: float
+			if rnd < 0.22:
+				# 子音クラスタ：完全閉口（短め）
+				_mouth_target = 0.0
+				next_dur = randf_range(0.06, 0.13)
+			elif rnd < 0.55:
+				# 開口母音
+				_mouth_target = randf_range(0.55, 1.0)
+				next_dur = randf_range(0.12, 0.22)
+			else:
+				# 半開き（移行音）
+				_mouth_target = randf_range(0.2, 0.55)
+				next_dur = randf_range(0.09, 0.16)
+			_talk_t = -next_dur
 	elif eating:
 		# 咀嚼（0→1→2→1→0 をゆっくり繰り返す。1周 ~1.4s）
 		_chew_t += delta
@@ -67,7 +80,14 @@ func _process(delta: float) -> void:
 			2:    _mouth_target = 0.85
 	else:
 		_mouth_target = 0.0
-	_mouth = move_toward(_mouth, _mouth_target, delta * 8.0)
+	# 発話中は追いつき速度を上げ、閉じるときは緩める（自然な口の動き）
+	var mouth_speed := 14.0 if _mouth_target > _mouth else 8.0
+	_mouth = move_toward(_mouth, _mouth_target, delta * mouth_speed)
+	# eating 中は expression を eat に固定（戦闘表情タイマーがなければ）
+	if eating and _expr_timer <= 0.0:
+		expression = "eat"
+	elif not eating and expression == "eat":
+		expression = "neutral"
 	# まばたき
 	_blink_t -= delta
 	if _blink_t <= 0.0:
