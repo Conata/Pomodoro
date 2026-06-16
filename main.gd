@@ -103,6 +103,8 @@ var market_content: VBoxContainer  # 闇市商品リスト（購入後に差し�
 var ship_overlay: Control          # 交易船専用全画面ページ
 var ship_content: VBoxContainer    # 交易船在庫リスト（購入後に差し替え）
 var ship_overlay_label: Label      # 交易船のカウントダウンラベル（オーバーレイ内）
+var bag_modal: Control                 # バッグ整理モーダル（帰還直後・inventory > 0 で表示）
+var bag_modal_content: VBoxContainer   # バッグアイテムリスト
 var formation_overlay: VBoxContainer  # 編成・献立専用全画面ページ
 var management_overlay: VBoxContainer # 経営専用全画面ページ
 var box_overlay: VBoxContainer        # 箱開封専用全画面ページ
@@ -382,6 +384,9 @@ func _on_run_complete() -> void:
 	_apply_phase()
 	_refresh_all()
 	_check_story_events()
+	# バッグにアイテムがあれば整理モーダルを自動表示
+	if not sim.state["inventory"].is_empty():
+		_open_bag_modal()
 
 
 ## 営業中のライブ表示用の一行。
@@ -512,7 +517,7 @@ func _apply_phase() -> void:
 		dive_frame.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	# 店モード(MORNING)だけタブを表示。探索/休憩中は隠す。
 	# オーバーレイが開いたままフェーズ変化した場合も強制クローズ。
-	for ov in [management_overlay, box_overlay, formation_overlay, market_overlay, ship_overlay]:
+	for ov in [management_overlay, box_overlay, formation_overlay, market_overlay, ship_overlay, bag_modal]:
 		if ov != null and ov.visible:
 			ov.visible = false
 	tabs.visible = phase == Phase.MORNING
@@ -691,6 +696,7 @@ func _build_ui() -> void:
 	_build_box_overlay()
 	_build_market_overlay()
 	_build_ship_overlay()
+	_build_bag_modal()
 	_build_audio()
 	get_viewport().size_changed.connect(_relayout)
 	_relayout()
@@ -896,15 +902,20 @@ func _equip_slot_row(id: String, slot: String) -> VBoxContainer:
 		header_row.add_child(lbl)
 	else:
 		cur_score = float(cur["score"])
+		var grade_col := KuroData.equip_grade_color(int(cur["grade"]))
 		var cl := _label("%s： %s %s" % [slot_name, SimItems.display_name(cur), SimItems.affix_text(cur)],
-				TYPE_SMALL, SimItems.GRADES[int(cur["grade"])]["color"])
+				TYPE_SMALL, grade_col)
 		cl.autowrap_mode = TextServer.AUTOWRAP_OFF
 		cl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		header_row.add_child(cl)
+		# 外すボタン（装備中のみ）
+		var rm := _button("外す", _on_status_unequip.bind(id, slot), TYPE_SMALL)
+		DS.as_danger(rm)
+		header_row.add_child(rm)
 	box.add_child(header_row)
 	# 倉庫からこのスロットの候補（スコア上位3）
 	var cands: Array = []
-	for it in s["inventory"]:
+	for it in s["storage"]:
 		if String(it["slot"]) == slot:
 			cands.append(it)
 	cands.sort_custom(func(a, b): return float(a["score"]) > float(b["score"]))
@@ -913,16 +924,17 @@ func _equip_slot_row(id: String, slot: String) -> VBoxContainer:
 		var it: Dictionary = cands[k]
 		var diff := float(it["score"]) - cur_score
 		var badge := ("▲+%d" % int(diff)) if diff > 0.0 else ("▼%d" % int(diff))
+		var grade_col := KuroData.equip_grade_color(int(it["grade"]))
 		var line := HBoxContainer.new()
 		line.add_theme_constant_override("separation", SP_1)
 		var nl := _label("　%s %s %s" % [SimItems.display_name(it), SimItems.affix_text(it), badge],
-				TYPE_SMALL, SimItems.GRADES[int(it["grade"])]["color"])
+				TYPE_SMALL, grade_col)
 		nl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		nl.autowrap_mode = TextServer.AUTOWRAP_OFF
 		line.add_child(nl)
-		var b := _button("装備", _on_status_equip.bind(int(it["id"]), id), TYPE_SMALL)
-		if diff > 0.0 and UIKit.available():
-			UIKit.as_primary(b)
+		var b := _button("装備", _on_status_equip_storage.bind(int(it["id"]), id), TYPE_SMALL)
+		if diff > 0.0:
+			DS.as_primary(b)
 		line.add_child(b)
 		box.add_child(line)
 	if shown == 0 and cur.is_empty():
@@ -930,9 +942,32 @@ func _equip_slot_row(id: String, slot: String) -> VBoxContainer:
 	return box
 
 
+## バッグからの装備（後方互換）
 func _on_status_equip(item_id: int, girl_id: String) -> void:
 	if sim.equip_from_inventory(item_id, girl_id):
 		_sfx("ui_equip")
+		_save(Time.get_unix_time_from_system())
+		_refresh_header()
+		if inv_box != null:
+			_refresh_inventory()
+		_open_status(girl_id)  # 再描画
+
+
+## 倉庫からの装備
+func _on_status_equip_storage(item_id: int, girl_id: String) -> void:
+	if sim.equip_from_storage(item_id, girl_id):
+		_sfx("ui_equip")
+		_save(Time.get_unix_time_from_system())
+		_refresh_header()
+		if inv_box != null:
+			_refresh_inventory()
+		_open_status(girl_id)  # 再描画
+
+
+## 装備を外して倉庫へ
+func _on_status_unequip(girl_id: String, slot: String) -> void:
+	if sim.unequip_to_storage(girl_id, slot):
+		_sfx("ui_buy")
 		_save(Time.get_unix_time_from_system())
 		_refresh_header()
 		if inv_box != null:
@@ -1489,6 +1524,162 @@ func _close_ship() -> void:
 	tabs.visible = true
 
 
+# バッグ整理モーダル（帰還直後・inventory > 0 で自動表示）
+# ──────────────────────────────────────────
+
+func _build_bag_modal() -> void:
+	bag_modal = VBoxContainer.new()
+	bag_modal.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	bag_modal.add_theme_constant_override("separation", 0)
+	bag_modal.visible = false
+	# ── ヘッダ
+	var header := PanelContainer.new()
+	var hsb := StyleBoxFlat.new()
+	hsb.bg_color = Color(0.06, 0.10, 0.20)
+	hsb.set_content_margin_all(SP_3)
+	header.add_theme_stylebox_override("panel", hsb)
+	var hrow := HBoxContainer.new()
+	hrow.add_theme_constant_override("separation", SP_2)
+	hrow.add_child(_label("バッグ整理", TYPE_SUB, DS.ACCENT))
+	var hsp := Control.new()
+	hsp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hrow.add_child(hsp)
+	var all_btn := _button("全部→倉庫", _on_bag_all_to_storage, TYPE_BODY)
+	DS.as_primary(all_btn)
+	hrow.add_child(all_btn)
+	header.add_child(hrow)
+	bag_modal.add_child(header)
+	# ── スクロールコンテンツ
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	bag_modal.add_child(scroll)
+	var margin_wrap := MarginContainer.new()
+	margin_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for m in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+		margin_wrap.add_theme_constant_override(m, SP_3)
+	scroll.add_child(margin_wrap)
+	bag_modal_content = VBoxContainer.new()
+	bag_modal_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bag_modal_content.add_theme_constant_override("separation", SP_2)
+	margin_wrap.add_child(bag_modal_content)
+	# ── 閉じる
+	var close_btn := _button("← 閉じる（残りは倉庫へ）", _close_bag_modal, TYPE_SUB)
+	close_btn.custom_minimum_size = Vector2(0, 48)
+	bag_modal.add_child(close_btn)
+	panel_col.add_child(bag_modal)
+
+
+func _open_bag_modal() -> void:
+	if sim.state["inventory"].is_empty():
+		return
+	_sfx("ui_confirm")
+	_clear(bag_modal_content)
+	_fill_bag_content()
+	tabs.visible = false
+	bag_modal.visible = true
+
+
+func _close_bag_modal() -> void:
+	# 残ったバッグアイテムを全部倉庫へ自動移動
+	sim.bag_all_to_storage()
+	_save(Time.get_unix_time_from_system())
+	bag_modal.visible = false
+	tabs.visible = true
+	_refresh_inventory()
+
+
+func _fill_bag_content() -> void:
+	_clear(bag_modal_content)
+	var s := sim.state
+	var inv: Array = s["inventory"]
+	if inv.is_empty():
+		bag_modal_content.add_child(_label("バッグは空です。", TYPE_SMALL, COL_DIM))
+		return
+	bag_modal_content.add_child(_label(
+		"バッグ %d/%d — 倉庫 %d/%d" % [inv.size(), KuroData.BAG_MAX,
+		s["storage"].size(), KuroData.STORAGE_MAX], TYPE_SMALL, COL_DIM))
+	for it in inv:
+		var target := _equip_target(it)
+		var diff := float(it["score"]) - float(target["cur_score"])
+		var grade_col := KuroData.equip_grade_color(int(it["grade"]))
+		var panel := PanelContainer.new()
+		panel.add_theme_stylebox_override("panel", DS.card_style(1))
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", SP_1)
+		# 行1: グレード色 + 名前 + 比較バッジ
+		var top := HBoxContainer.new()
+		top.add_theme_constant_override("separation", SP_2)
+		var dot := ColorRect.new()
+		dot.color = grade_col
+		dot.custom_minimum_size = Vector2(10, 10)
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		top.add_child(dot)
+		var badge_str := ("▲+%.0f" % diff) if diff > 0.0 else ("▼%.0f" % diff)
+		var nm := _label("%s  %s" % [SimItems.display_name(it), badge_str], TYPE_BODY, grade_col)
+		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		top.add_child(nm)
+		col.add_child(top)
+		# アフィックス行
+		var aff_txt := SimItems.affix_text(it)
+		if aff_txt != "":
+			col.add_child(_label(aff_txt, TYPE_SMALL, COL_DIM))
+		# 行2: ボタン群
+		var btn_row := HBoxContainer.new()
+		btn_row.add_theme_constant_override("separation", SP_2)
+		var eq_btn := _button(
+			"装備: %s" % KuroData.GIRLS[target["girl"]]["name"],
+			_on_bag_equip.bind(int(it["id"])), TYPE_SMALL)
+		if diff > 0.0:
+			DS.as_primary(eq_btn)
+		eq_btn.disabled = diff <= 0.0
+		btn_row.add_child(eq_btn)
+		btn_row.add_child(_button("倉庫へ", _on_bag_to_storage.bind(int(it["id"])), TYPE_SMALL))
+		var sv := SimItems.salvage_value(it)
+		var sc_btn := _button("分解 +%d" % sv, _on_bag_salvage.bind(int(it["id"])), TYPE_SMALL)
+		DS.as_danger(sc_btn)
+		btn_row.add_child(sc_btn)
+		col.add_child(btn_row)
+		panel.add_child(col)
+		bag_modal_content.add_child(panel)
+
+
+func _on_bag_equip(item_id: int) -> void:
+	for it in sim.state["inventory"]:
+		if int(it["id"]) == item_id:
+			sim.equip_from_inventory(item_id, String(_equip_target(it)["girl"]))
+			_sfx("ui_equip")
+			break
+	_fill_bag_content()
+	_refresh_header()
+
+
+func _on_bag_to_storage(item_id: int) -> void:
+	sim.bag_to_storage(item_id)
+	_fill_bag_content()
+	if sim.state["inventory"].is_empty():
+		_close_bag_modal()
+
+
+func _on_bag_salvage(item_id: int) -> void:
+	sim.salvage_item(item_id)
+	_sfx("ui_buy")
+	_fill_bag_content()
+	if sim.state["inventory"].is_empty():
+		_close_bag_modal()
+
+
+func _on_bag_all_to_storage() -> void:
+	var moved := sim.bag_all_to_storage()
+	_sfx("ui_equip")
+	_save(Time.get_unix_time_from_system())
+	bag_modal.visible = false
+	tabs.visible = true
+	_refresh_inventory()
+	if moved > 0:
+		_log("%d個を倉庫に移した。" % moved)
+
+
 ## 潜行中の育成導線：配信を観ながら、各メンバーをタップで装備セット／スキル育成。
 func _fill_dive_party() -> void:
 	if dive_party_row == null:
@@ -1976,7 +2167,7 @@ func _build_tab_footer() -> void:
 
 ## 全オーバーレイを閉じてタブビューに戻る（フッターからオーバーレイ切替時に使う）。
 func _close_all_overlays() -> void:
-	for ov in [management_overlay, box_overlay, formation_overlay, market_overlay, ship_overlay]:
+	for ov in [management_overlay, box_overlay, formation_overlay, market_overlay, ship_overlay, bag_modal]:
 		if ov != null and ov.visible:
 			ov.visible = false
 	if tabs != null:
@@ -2829,6 +3020,12 @@ func _refresh_inventory() -> void:
 	row.add_child(_button("一括分解", _on_bulk_salvage, TYPE_BODY))
 	row.add_child(_button("合成 3→1", _on_synthesize, TYPE_BODY))
 	inv_box.add_child(row)
+	# バッグにアイテムがあれば整理バナーを表示
+	if not s["inventory"].is_empty():
+		var bag_btn := _button("バッグ %d個 → 整理する" % s["inventory"].size(), _open_bag_modal, TYPE_BODY)
+		DS.as_primary(bag_btn)
+		bag_btn.custom_minimum_size = Vector2(0, 40)
+		inv_box.add_child(bag_btn)
 	# 装備中サマリ
 	inv_box.add_child(_section("装備中"))
 	for id in KuroData.GIRL_ORDER:
@@ -2839,12 +3036,13 @@ func _refresh_inventory() -> void:
 		var sl := _label("%s  %s" % [KuroData.GIRLS[id]["name"], "  ".join(parts)], TYPE_SMALL, COL_DIM)
 		sl.autowrap_mode = TextServer.AUTOWRAP_OFF
 		inv_box.add_child(sl)
-	var inv: Array = s["inventory"]
-	inv_box.add_child(_section("倉庫"))
-	if inv.is_empty():
-		inv_box.add_child(_label("倉庫は空。潜って拾おう（装備は自動装着される）", TYPE_SMALL, COL_DIM))
+	# 倉庫（storage）
+	var storage: Array = s["storage"]
+	inv_box.add_child(_section("倉庫  %d/%d" % [storage.size(), KuroData.STORAGE_MAX]))
+	if storage.is_empty():
+		inv_box.add_child(_label("倉庫は空。潜って拾おう。", TYPE_SMALL, COL_DIM))
 		return
-	var sorted_items := inv.duplicate()
+	var sorted_items := storage.duplicate()
 	sorted_items.sort_custom(func(a, b): return float(a["score"]) > float(b["score"]))
 	var shown: int = mini(sorted_items.size(), 40)
 	for k in shown:
@@ -2856,18 +3054,21 @@ func _refresh_inventory() -> void:
 		panel.add_theme_stylebox_override("panel", _card_sb())
 		var line := HBoxContainer.new()
 		line.add_theme_constant_override("separation", SP_1)
-		var slot_ic := _gen_tex("equip/" + String(it["slot"]))
-		if slot_ic != null:
-			line.add_child(_icon_rect(slot_ic, 18))
+		# グレード色ドット
+		var grade_dot := ColorRect.new()
+		grade_dot.color = KuroData.equip_grade_color(int(it["grade"]))
+		grade_dot.custom_minimum_size = Vector2(8, 8)
+		grade_dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		line.add_child(grade_dot)
 		var name_label := _label("%s %s %s" % [SimItems.display_name(it), SimItems.affix_text(it), badge],
-				TYPE_SMALL, SimItems.GRADES[int(it["grade"])]["color"])
+				TYPE_SMALL, KuroData.equip_grade_color(int(it["grade"])))
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		line.add_child(name_label)
-		var eq := _button("装備", _on_equip.bind(int(it["id"])), TYPE_SMALL)
+		var eq := _button("装備", _on_equip_storage.bind(int(it["id"])), TYPE_SMALL)
 		eq.disabled = diff <= 0.0
 		line.add_child(eq)
-		line.add_child(_button("分解", _on_salvage.bind(int(it["id"])), TYPE_SMALL))
-		var rr := _button("刻印", _on_reroll.bind(int(it["id"])), TYPE_SMALL)
+		line.add_child(_button("分解", _on_salvage_storage.bind(int(it["id"])), TYPE_SMALL))
+		var rr := _button("刻印", _on_reroll_storage.bind(int(it["id"])), TYPE_SMALL)
 		rr.disabled = int(s["scrap"]) < SimItems.REROLL_COST
 		line.add_child(rr)
 		panel.add_child(line)
@@ -3159,6 +3360,7 @@ func _on_skill_toggle(girl_id: String, skill_id: String) -> void:
 	_refresh_morning()
 
 
+## ── バッグ（inventory）からの装備（自動装着用、後方互換）
 func _on_equip(item_id: int) -> void:
 	for it in sim.state["inventory"]:
 		if int(it["id"]) == item_id:
@@ -3174,6 +3376,29 @@ func _on_salvage(item_id: int) -> void:
 	_refresh_header()
 
 
+## ── 倉庫（storage）操作コールバック
+func _on_equip_storage(item_id: int) -> void:
+	for it in sim.state["storage"]:
+		if int(it["id"]) == item_id:
+			sim.equip_from_storage(item_id, String(_equip_target(it)["girl"]))
+			_sfx("ui_equip")
+			break
+	_refresh_all()
+
+
+func _on_salvage_storage(item_id: int) -> void:
+	sim.salvage_from_storage(item_id)
+	_refresh_inventory()
+	_refresh_header()
+
+
+func _on_reroll_storage(item_id: int) -> void:
+	if sim.reroll_storage(item_id):
+		_sfx("ui_equip")
+	_refresh_inventory()
+	_refresh_header()
+
+
 func _on_reroll(item_id: int) -> void:
 	if sim.reroll_item(item_id):
 		_sfx("ui_equip")
@@ -3182,7 +3407,7 @@ func _on_reroll(item_id: int) -> void:
 
 
 func _on_bulk_salvage() -> void:
-	var r := sim.bulk_salvage()
+	var r := sim.bulk_salvage_storage()
 	_sfx("ui_buy")
 	_refresh_inventory()
 	_refresh_header()
@@ -3190,7 +3415,7 @@ func _on_bulk_salvage() -> void:
 
 
 func _on_synthesize() -> void:
-	var made := sim.synthesize_all()
+	var made := sim.synthesize_storage()
 	if made > 0:
 		_sfx("ui_equip")
 	_pump_events()

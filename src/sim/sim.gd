@@ -71,6 +71,7 @@ static func new_state(seed_value: int) -> Dictionary:
 		"shards": 0,
 		"scrap": 0,
 		"inventory": [],
+		"storage": [],
 		"next_item_id": 1,
 		"renov": ["start"],
 		"pets": [],
@@ -1120,7 +1121,7 @@ func synthesize_all() -> int:
 	return made
 
 
-## 刻印：廃材50でアフィックス再抽選（倉庫内のみ）。
+## 刻印：廃材50でアフィックス再抽選（バッグ内）。
 func reroll_item(item_id: int) -> bool:
 	if int(state["scrap"]) < SimItems.REROLL_COST:
 		return false
@@ -1129,6 +1130,140 @@ func reroll_item(item_id: int) -> bool:
 		return false
 	state["scrap"] = int(state["scrap"]) - SimItems.REROLL_COST
 	SimItems.reroll_affixes(rng, state["inventory"][i])
+	return true
+
+
+# --- 倉庫（storage）操作 -------------------------------------------------------
+
+
+func _find_storage(item_id: int) -> int:
+	for i in state["storage"].size():
+		if int(state["storage"][i]["id"]) == item_id:
+			return i
+	return -1
+
+
+## バッグ → 倉庫へ1個移動。倉庫満杯ならスクラップに変換。
+func bag_to_storage(item_id: int) -> bool:
+	var i := _find_inventory(item_id)
+	if i < 0:
+		return false
+	var storage: Array = state["storage"]
+	if storage.size() >= KuroData.STORAGE_MAX:
+		state["scrap"] = int(state["scrap"]) + SimItems.salvage_value(state["inventory"][i])
+		state["inventory"].remove_at(i)
+		return false
+	storage.append(state["inventory"][i])
+	state["inventory"].remove_at(i)
+	return true
+
+
+## バッグを全部倉庫へ。溢れた分はスクラップ。戻り値は移動数。
+func bag_all_to_storage() -> int:
+	var moved := 0
+	while not state["inventory"].is_empty():
+		var storage: Array = state["storage"]
+		var it: Dictionary = state["inventory"][0]
+		if storage.size() >= KuroData.STORAGE_MAX:
+			state["scrap"] = int(state["scrap"]) + SimItems.salvage_value(it)
+		else:
+			storage.append(it)
+			moved += 1
+		state["inventory"].remove_at(0)
+	return moved
+
+
+## 倉庫 → キャラに装備。旧装備は倉庫に戻る。
+func equip_from_storage(item_id: int, girl_id: String) -> bool:
+	var i := _find_storage(item_id)
+	if i < 0:
+		return false
+	var item: Dictionary = state["storage"][i]
+	state["storage"].remove_at(i)
+	var old: Dictionary = state["girls"][girl_id]["equip"][item["slot"]]
+	state["girls"][girl_id]["equip"][item["slot"]] = item
+	if not old.is_empty():
+		state["storage"].append(old)
+	return true
+
+
+## キャラの装備を外して倉庫へ。倉庫満杯ならスクラップ。
+func unequip_to_storage(girl_id: String, slot: String) -> bool:
+	var item: Dictionary = state["girls"][girl_id]["equip"].get(slot, {})
+	if item.is_empty():
+		return false
+	state["girls"][girl_id]["equip"][slot] = {}
+	var storage: Array = state["storage"]
+	if storage.size() >= KuroData.STORAGE_MAX:
+		state["scrap"] = int(state["scrap"]) + SimItems.salvage_value(item)
+	else:
+		storage.append(item)
+	return true
+
+
+## 倉庫のアイテムを分解。
+func salvage_from_storage(item_id: int) -> int:
+	var i := _find_storage(item_id)
+	if i < 0:
+		return 0
+	var dust := SimItems.salvage_value(state["storage"][i])
+	state["storage"].remove_at(i)
+	state["scrap"] = int(state["scrap"]) + dust
+	return dust
+
+
+## 倉庫の一括分解：誰の装備改善にもならない品を廃材に。
+func bulk_salvage_storage() -> Dictionary:
+	var keep := []
+	var count := 0
+	var dust := 0
+	for it in state["storage"]:
+		var useful := false
+		for id in KuroData.GIRL_ORDER:
+			var cur: Dictionary = state["girls"][id]["equip"][it["slot"]]
+			if cur.is_empty() or float(cur["score"]) < float(it["score"]):
+				useful = true
+				break
+		if useful:
+			keep.append(it)
+		else:
+			count += 1
+			dust += SimItems.salvage_value(it)
+	state["storage"] = keep
+	state["scrap"] = int(state["scrap"]) + dust
+	return {"count": count, "dust": dust}
+
+
+## 倉庫での合成：同グレード3つ→上位1つ（スコアの低い順に消費）。
+func synthesize_storage() -> int:
+	var made := 0
+	for grade in range(SimItems.GRADES.size() - 1):
+		while true:
+			var same := []
+			for it in state["storage"]:
+				if int(it["grade"]) == grade:
+					same.append(it)
+			if same.size() < 3:
+				break
+			same.sort_custom(func(a, b): return float(a["score"]) < float(b["score"]))
+			for k in 3:
+				state["storage"].erase(same[k])
+			var item := SimItems.roll_graded(rng, int(state["best_floor"]), _next_id(), grade + 1)
+			state["storage"].append(item)
+			_emit("loot", "合成成功: %s" % SimItems.display_name(item))
+			made += 1
+	return made
+
+
+## 倉庫の刻印：廃材50でアフィックス再抽選。
+func reroll_storage(item_id: int) -> bool:
+	if int(state["scrap"]) < SimItems.REROLL_COST:
+		return false
+	var i := _find_storage(item_id)
+	if i < 0:
+		return false
+	state["scrap"] = int(state["scrap"]) - SimItems.REROLL_COST
+	SimItems.reroll_affixes(rng, state["storage"][i])
 	return true
 
 

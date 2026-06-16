@@ -42,8 +42,12 @@ static func roll_graded(rng: SimRNG, floor_idx: int, id_num: int, grade: int) ->
 	var slot: String = slot_keys[rng.randi(slot_keys.size())]
 	var mult: float = GRADES[grade]["mult"]
 	var base := snappedf(mult * (5.0 + floor_idx * 1.8) * rng.randf_range(0.85, 1.15), 0.1)
+	# EQUIP_DB から表示名テンプレートを選択
+	var tpl_keys: Array = KuroData.EQUIP_BY_SLOT[slot]
+	var tpl: String = tpl_keys[rng.randi(tpl_keys.size())]
 	var item := {
 		"id": id_num, "slot": slot, "grade": grade, "base": base,
+		"tpl": tpl,
 		"affixes": _roll_affixes(rng, _roll_affix_count(rng, grade)),
 	}
 	item["score"] = score(item)
@@ -63,7 +67,14 @@ static func score(item: Dictionary) -> float:
 
 
 static func display_name(item: Dictionary) -> String:
-	var n := "【%s】%s" % [GRADES[int(item["grade"])]["name"], SLOTS[item["slot"]]["name"]]
+	var tpl_id: String = item.get("tpl", "")
+	var n: String
+	if KuroData.EQUIP_DB.has(tpl_id):
+		n = KuroData.EQUIP_DB[tpl_id]["name"]
+	else:
+		n = "【%s】%s" % [GRADES[int(item["grade"])]["name"], SLOTS[item["slot"]]["name"]]
+	if int(item["grade"]) >= 4:
+		n += " ★"
 	if not item["affixes"].is_empty():
 		n += " +%d" % item["affixes"].size()
 	return n

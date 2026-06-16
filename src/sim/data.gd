@@ -286,119 +286,42 @@ static func girl_mult(aff: int) -> float:
 
 # ── 装備システム ────────────────────────────────────────────────────────────
 
-# グレード（0=白/1=青/2=紫/3=金）
-const EQUIP_GRADE_NAMES := ["白", "青", "紫", "金"]
-# グレード色（DSトークンと対応: 白=TEXT_MUTE / 青=ACCENT / 紫=RUNE / 金=WARM）
-const EQUIP_GRADE_COLORS := [
-	Color(0.55, 0.55, 0.60),   # 白 — TEXT_MUTE
-	Color(0.45, 0.95, 1.00),   # 青 — ACCENT (シアン)
-	Color(0.56, 0.42, 0.78),   # 紫 — RUNE
-	Color(1.00, 0.75, 0.35),   # 金 — WARM
-]
-
-# アフィックス数 / グレード（0=なし … 3=3個）
-const EQUIP_AFFIX_COUNT := [0, 1, 2, 3]
-
 # バッグ（inventory）最大枠
 const BAG_MAX := 20
 # 倉庫（storage）最大枠
 const STORAGE_MAX := 60
-# スクラップ獲得量 / grade（分解報酬）
-const SCRAP_BY_GRADE := [1, 3, 6, 12]
-# 合成コスト（同グレード3個 + スクラップ）
-const SYNTH_COUNT := 3
-const SYNTH_SCRAP_COST := [0, 2, 4, 8]  # index = 合成元グレード
 
-# 装備定義 DB
-# slot: "weapon" | "armor" | "trinket"
-# stat: grade 0 での基礎効果（乗算倍率）
-# scale: grade ごとの上昇量（grade 1 から +scale ずつ加算）
-# affix_pool: このアイテムが持てるアフィックスキー
+# アイテム表示名テンプレート（slot × 名前）。
+# stat/スコア計算は SimItems に委譲。roll 時に "tpl" キーで紐付く。
 const EQUIP_DB := {
-	# ── weapon ──────────────────────────────────────────
-	"dao": {
-		"name": "解体刀", "slot": "weapon",
-		"stat": {"atk": 0.10},
-		"scale": 0.05,
-		"affix_pool": ["atk", "crit"],
-	},
-	"pile": {
-		"name": "電磁杭", "slot": "weapon",
-		"stat": {"atk": 0.08, "crit": 0.04},
-		"scale": 0.04,
-		"affix_pool": ["atk", "crit", "spd"],
-	},
-	"wok": {
-		"name": "鉄鍋", "slot": "weapon",
-		"stat": {"atk": 0.07, "hp": 0.05},
-		"scale": 0.04,
-		"affix_pool": ["atk", "hp"],
-	},
-	# ── armor ───────────────────────────────────────────
-	"coat": {
-		"name": "電脳コート", "slot": "armor",
-		"stat": {"hp": 0.12},
-		"scale": 0.06,
-		"affix_pool": ["hp", "atk"],
-	},
-	"mesh": {
-		"name": "強化メッシュ", "slot": "armor",
-		"stat": {"hp": 0.08, "atk": 0.04},
-		"scale": 0.04,
-		"affix_pool": ["hp", "atk", "crit"],
-	},
-	"vest": {
-		"name": "防刃ベスト", "slot": "armor",
-		"stat": {"hp": 0.10, "crit": 0.03},
-		"scale": 0.05,
-		"affix_pool": ["hp", "crit"],
-	},
-	# ── trinket ─────────────────────────────────────────
-	"lens": {
-		"name": "照準レンズ", "slot": "trinket",
-		"stat": {"crit": 0.08},
-		"scale": 0.04,
-		"affix_pool": ["crit", "atk"],
-	},
-	"charm": {
-		"name": "猫の爪", "slot": "trinket",
-		"stat": {"crit": 0.06, "atk": 0.04},
-		"scale": 0.03,
-		"affix_pool": ["crit", "atk", "spd"],
-	},
-	"badge": {
-		"name": "深層バッジ", "slot": "trinket",
-		"stat": {"gold": 0.06},
-		"scale": 0.03,
-		"affix_pool": ["gold", "mat"],
-	},
+	"dao":   {"name": "解体刀",     "slot": "weapon"},
+	"pile":  {"name": "電磁杭",     "slot": "weapon"},
+	"wok":   {"name": "鉄鍋",       "slot": "weapon"},
+	"coat":  {"name": "電脳コート", "slot": "armor"},
+	"mesh":  {"name": "強化メッシュ","slot": "armor"},
+	"vest":  {"name": "防刃ベスト", "slot": "armor"},
+	"lens":  {"name": "照準レンズ", "slot": "trinket"},
+	"charm": {"name": "猫の爪",     "slot": "trinket"},
+	"badge": {"name": "深層バッジ", "slot": "trinket"},
+}
+# slot 別テンプレートキー（SimItems.roll_graded で選択）
+const EQUIP_BY_SLOT := {
+	"weapon":  ["dao", "pile", "wok"],
+	"armor":   ["coat", "mesh", "vest"],
+	"trinket": ["lens", "charm", "badge"],
 }
 
-# アフィックスキーの表示名
-const AFFIX_NAMES := {
-	"atk":  "ATK", "hp":   "HP",  "crit": "CRIT",
-	"spd":  "SPD", "gold": "GOLD","mat":  "MAT DROP",
-}
+# SimItems の 7 段グレードを 4 色バケツに対応させる表示色。
+# grade 0-1=白(TEXT_MUTE) / 2-3=青(ACCENT) / 4-5=紫(RUNE) / 6=金(WARM)
+const EQUIP_GRADE_COLORS := [
+	Color(0.55, 0.55, 0.60),  # 0 粗末 — 白
+	Color(0.55, 0.55, 0.60),  # 1 普通 — 白
+	Color(0.45, 0.95, 1.00),  # 2 上質 — 青 ACCENT
+	Color(0.45, 0.95, 1.00),  # 3 精錬 — 青 ACCENT
+	Color(0.56, 0.42, 0.78),  # 4 英雄 — 紫 RUNE
+	Color(0.56, 0.42, 0.78),  # 5 伝説 — 紫 RUNE
+	Color(1.00, 0.75, 0.35),  # 6 星界 — 金 WARM
+]
 
-# アフィックスの基礎値（ランダム幅 ±50%）
-const AFFIX_BASE := {
-	"atk": 6, "hp": 8, "crit": 5, "spd": 4, "gold": 5, "mat": 4,
-}
-
-# アイテムの stat 合計を計算して返す（装備中効果の適用に使う）
-# item = {base: str, grade: int, affixes: [{k, v}]}
-static func item_stats(item: Dictionary) -> Dictionary:
-	if item.is_empty():
-		return {}
-	var base_key: String = item.get("base", "")
-	if not EQUIP_DB.has(base_key):
-		return {}
-	var def: Dictionary = EQUIP_DB[base_key]
-	var g := int(item.get("grade", 0))
-	var result := {}
-	for k: String in def["stat"]:
-		result[k] = float(def["stat"][k]) + float(def["scale"]) * g
-	for af: Dictionary in item.get("affixes", []):
-		var k: String = af["k"]
-		result[k] = float(result.get(k, 0.0)) + float(af["v"]) * 0.01
-	return result
+static func equip_grade_color(grade: int) -> Color:
+	return EQUIP_GRADE_COLORS[clampi(grade, 0, EQUIP_GRADE_COLORS.size() - 1)]

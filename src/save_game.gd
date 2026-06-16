@@ -141,7 +141,11 @@ static func _normalize_items(items: Array) -> void:
 static func _normalize_item(it: Dictionary) -> void:
 	it["id"] = int(it.get("id", 0))
 	it["grade"] = int(it.get("grade", 0))
-	it["kind"] = str(it.get("kind", "weapon"))
-	it["base"] = str(it.get("base", ""))
+	# base は SimItems が使う float。str 変換しない
+	if it.has("base") and it["base"] is String:
+		it["base"] = float(it["base"])
+	# tpl = EQUIP_DB テンプレートキー（表示名用）
+	if it.has("tpl"):
+		it["tpl"] = str(it["tpl"])
 	for a in it.get("affixes", []):
 		a["v"] = int(a.get("v", 0))
