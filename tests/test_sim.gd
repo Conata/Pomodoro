@@ -358,24 +358,64 @@ func _rng_for(seedv: int) -> RandomNumberGenerator:
 func _test_equipment() -> void:
 	print("[equipment]")
 	var sim := _fresh(37)
-	var atk0 := sim.girl_atk("yuzuki")
+	# グレードは7段階（粗末〜星界）。色テーブルも7色で、範囲外はクランプ。
+	check(SimItems.GRADES.size() == 7, "グレードは7段階")
+	check(KuroData.EQUIP_GRADE_COLORS.size() == 7, "グレード色も7色")
+	check(KuroData.equip_grade_color(99) == KuroData.EQUIP_GRADE_COLORS[6], "範囲外グレードは末尾色にクランプ")
+	# ソケット枠：上質(2)=0／英雄(4)=1／伝説(5)以上=2
+	check(SimItems.socket_capacity(2) == 0, "上質以下はソケットなし")
+	check(SimItems.socket_capacity(4) == 1, "英雄は1ソケット")
+	check(SimItems.socket_capacity(6) == 2, "星界は2ソケット")
+	# 拾得＝自動装着。英雄(grade4)以上は rare_drop フラグが立つ（UIのレア演出用）。
+	var atk0 := sim.girl_atk("mil")
 	var item := SimItems.roll_graded(sim.rng, 3, 900, 4)
 	item["slot"] = "weapon"
 	item["base"] = 50.0
 	item["score"] = SimItems.score(item)
-	sim._acquire_item(item)
-	check(sim.girl_atk("yuzuki") > atk0 or sim.girl_atk("mil") > 0.0, "装備で攻撃が上がる")
+	var res := sim._acquire_item(item)
+	check(bool(res["rare_drop"]), "英雄以上の拾得は rare_drop が立つ")
+	check(bool(res["equipped"]), "良い装備は自動装着される")
+	check(sim.girl_atk("mil") > atk0, "装備で攻撃が上がる")
 	var equipped := false
 	for id in KuroData.GIRL_ORDER:
 		if not sim.state["girls"][id]["equip"]["weapon"].is_empty():
 			equipped = true
 	check(equipped, "拾得時に自動装着される")
-	# 合成
+	# 粗末(grade0)の拾得は rare_drop ではない。
+	check(not bool(sim._acquire_item(SimItems.roll_graded(sim.rng, 0, 901, 0))["rare_drop"]),
+			"粗末は rare_drop ではない")
+	# stat_summary：空装備は0、装備品は base を拾う。
+	check(int(SimItems.stat_summary({})["base"]) == 0, "空装備のサマリは0")
+	check(float(SimItems.stat_summary(item)["base"]) == 50.0, "stat_summary が base を集計")
+	# compare_equip：装着中の品そのものと比べれば差分0＝アップグレードではない。
+	var cmp := sim.compare_equip(String(res["girl"]), "weapon", item)
+	check(cmp.has("diff") and cmp.has("current") and cmp.has("candidate"), "compare_equip が差分を返す")
+	check(not bool(cmp["is_upgrade"]), "同一スコアはアップグレードではない")
+	# バッグ合成：同グレード3つ→上位1つ。
 	sim.state["inventory"] = []
 	for i in 3:
 		sim.state["inventory"].append(SimItems.roll_graded(sim.rng, 0, 1000 + i, 1))
-	var made := sim.synthesize_all()
-	check(made == 1, "同グレード3つで合成1回")
+	check(sim.synthesize_all() == 1, "バッグは同グレード3つで合成1回")
+	# 倉庫合成は5つ必要（3つでは不成立 → 5つで1回）。
+	sim.state["storage"] = []
+	for i in 3:
+		sim.state["storage"].append(SimItems.roll_graded(sim.rng, 0, 1100 + i, 1))
+	check(sim.synthesize_storage() == 0, "倉庫は3つでは合成できない（5つ必要）")
+	for i in 2:
+		sim.state["storage"].append(SimItems.roll_graded(sim.rng, 0, 1103 + i, 1))
+	check(sim.synthesize_storage() == 1, "倉庫は同グレード5つで合成1回")
+	# ソケット：伝説(5)は2枠。嵌めるとスコアが上がり、満杯なら拒否、外せる。
+	sim.state["storage"] = [SimItems.roll_graded(sim.rng, 5, 1200, 5)]
+	var gem: String = KuroData.SOCKET_GEMS.keys()[0]
+	var s0 := float(sim.state["storage"][0]["score"])
+	check(sim.socket_gem(0, gem), "伝説装備に宝石を嵌められる")
+	check(float(sim.state["storage"][0]["score"]) > s0, "宝石でスコアが上がる")
+	check(sim.socket_gem(0, gem), "2枠目にも嵌められる")
+	check(not sim.socket_gem(0, gem), "枠が満杯なら嵌められない")
+	check(sim.remove_gem(0, 0), "宝石を外せる")
+	# ソケット枠を持たないグレードには嵌められない。
+	sim.state["storage"].append(SimItems.roll_graded(sim.rng, 0, 1300, 2))
+	check(not sim.socket_gem(1, gem), "ソケットのない装備には嵌められない")
 	# 分解
 	sim.state["inventory"] = [SimItems.roll_graded(sim.rng, 0, 2000, 2)]
 	var dust := sim.salvage_item(2000)
