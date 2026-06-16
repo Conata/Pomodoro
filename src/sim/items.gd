@@ -50,8 +50,20 @@ static func roll_graded(rng: SimRNG, floor_idx: int, id_num: int, grade: int) ->
 		"tpl": tpl,
 		"affixes": _roll_affixes(rng, _roll_affix_count(rng, grade)),
 	}
+	# 英雄(4)以上はソケット枠を持つ（容量は socket_capacity 参照）。
+	if grade >= 4:
+		item["sockets"] = []
 	item["score"] = score(item)
 	return item
+
+
+# ソケット枠数：英雄(4)で1枠、伝説(5)以上で2枠。
+static func socket_capacity(grade: int) -> int:
+	if grade >= 5:
+		return 2
+	if grade >= 4:
+		return 1
+	return 0
 
 
 static func reroll_affixes(rng: SimRNG, item: Dictionary) -> void:
@@ -63,7 +75,28 @@ static func score(item: Dictionary) -> float:
 	var s: float = float(item["base"]) * 2.0
 	for a in item["affixes"]:
 		s += float(a["v"])
+	# 嵌めたソケット宝石（slot 別ステ）もスコアに反映。
+	for gem_key in item.get("sockets", []):
+		var slot_stats: Dictionary = KuroData.SOCKET_GEMS.get(gem_key, {}).get(item["slot"], {})
+		for v in slot_stats.values():
+			s += float(v)
 	return snappedf(s, 0.1)
+
+
+# 装備の合計ステを集計（base/score＋アフィックス＋ソケット宝石）。比較表示用。
+static func stat_summary(item: Dictionary) -> Dictionary:
+	var sum := {"base": 0.0, "score": 0.0, "atk": 0, "hp": 0, "spd": 0, "gold": 0, "mat": 0, "crit": 0}
+	if item.is_empty():
+		return sum
+	sum["base"] = float(item.get("base", 0.0))
+	sum["score"] = float(item.get("score", 0.0))
+	for a in item.get("affixes", []):
+		sum[a["t"]] = int(sum.get(a["t"], 0)) + int(a["v"])
+	for gem_key in item.get("sockets", []):
+		var slot_stats: Dictionary = KuroData.SOCKET_GEMS.get(gem_key, {}).get(item.get("slot", ""), {})
+		for k in slot_stats:
+			sum[k] = int(sum.get(k, 0)) + int(slot_stats[k])
+	return sum
 
 
 static func display_name(item: Dictionary) -> String:

@@ -1018,7 +1018,11 @@ func _next_id() -> int:
 
 
 ## 拾得時は自動装着（そのスロットのスコアが最も低い子へ。改善しないなら倉庫）。
-func _acquire_item(item: Dictionary) -> void:
+## 拾得アイテムを自動装着 or バッグ収納。
+## 戻り値: {"rare_drop": bool, "equipped": bool, "girl": String, "item": Dictionary}
+## rare_drop は英雄(grade4)以上のドロップ時 true → UI 側でレア演出に使う。
+func _acquire_item(item: Dictionary) -> Dictionary:
+	var rare := int(item["grade"]) >= 4
 	var best_gain := 0.0
 	var best_id := ""
 	for id in KuroData.GIRL_ORDER:
@@ -1037,6 +1041,7 @@ func _acquire_item(item: Dictionary) -> void:
 	else:
 		state["inventory"].append(item)
 	_trim_inventory()
+	return {"rare_drop": rare, "equipped": best_id != "", "girl": best_id, "item": item}
 
 
 func _trim_inventory() -> void:
@@ -1234,23 +1239,30 @@ func bulk_salvage_storage() -> Dictionary:
 	return {"count": count, "dust": dust}
 
 
-## 倉庫での合成：同グレード3つ→上位1つ（スコアの低い順に消費）。
+## 倉庫での合成：同グレード5つ→上位1つ（スコアの低い順に消費）。
+## 10%で「大成功」、2ランク上が出る（最高グレードで頭打ち）。
 func synthesize_storage() -> int:
 	var made := 0
-	for grade in range(SimItems.GRADES.size() - 1):
+	var max_grade := SimItems.GRADES.size() - 1
+	for grade in range(max_grade):
 		while true:
 			var same := []
 			for it in state["storage"]:
 				if int(it["grade"]) == grade:
 					same.append(it)
-			if same.size() < 3:
+			if same.size() < 5:
 				break
 			same.sort_custom(func(a, b): return float(a["score"]) < float(b["score"]))
-			for k in 3:
+			for k in 5:
 				state["storage"].erase(same[k])
-			var item := SimItems.roll_graded(rng, int(state["best_floor"]), _next_id(), grade + 1)
+			var great := rng.chance(0.10)
+			var out_grade: int = mini(grade + (2 if great else 1), max_grade)
+			var item := SimItems.roll_graded(rng, int(state["best_floor"]), _next_id(), out_grade)
 			state["storage"].append(item)
-			_emit("loot", "合成成功: %s" % SimItems.display_name(item))
+			if great:
+				_emit("loot", "★大成功★ %s" % SimItems.display_name(item))
+			else:
+				_emit("loot", "合成成功: %s" % SimItems.display_name(item))
 			made += 1
 	return made
 
@@ -1265,6 +1277,63 @@ func reroll_storage(item_id: int) -> bool:
 	state["scrap"] = int(state["scrap"]) - SimItems.REROLL_COST
 	SimItems.reroll_affixes(rng, state["storage"][i])
 	return true
+
+
+# --- ソケット（倉庫アイテム）-------------------------------------------------
+
+
+## 倉庫アイテムのソケットに宝石を嵌める。空き枠がなければ false。
+func socket_gem(storage_idx: int, gem_key: String) -> bool:
+	if storage_idx < 0 or storage_idx >= state["storage"].size():
+		return false
+	if not KuroData.SOCKET_GEMS.has(gem_key):
+		return false
+	var item: Dictionary = state["storage"][storage_idx]
+	var cap := SimItems.socket_capacity(int(item["grade"]))
+	if cap <= 0:
+		return false
+	var sockets: Array = item.get("sockets", [])
+	if sockets.size() >= cap:
+		return false
+	sockets.append(gem_key)
+	item["sockets"] = sockets
+	item["score"] = SimItems.score(item)
+	_emit("log", "%s を装着（%s）" % [KuroData.SOCKET_GEMS[gem_key]["name"], SimItems.display_name(item)])
+	return true
+
+
+## 倉庫アイテムのソケットから宝石を外す（socket_idx 番目）。
+func remove_gem(storage_idx: int, socket_idx: int) -> bool:
+	if storage_idx < 0 or storage_idx >= state["storage"].size():
+		return false
+	var item: Dictionary = state["storage"][storage_idx]
+	var sockets: Array = item.get("sockets", [])
+	if socket_idx < 0 or socket_idx >= sockets.size():
+		return false
+	sockets.remove_at(socket_idx)
+	item["sockets"] = sockets
+	item["score"] = SimItems.score(item)
+	return true
+
+
+# --- 装備比較（データ層）-----------------------------------------------------
+
+
+## 現装備 vs 候補のステ差分を返す（candidate - current）。UI 比較表示用。
+## 戻り値: {"current": {...}, "candidate": {...}, "diff": {...}, "is_upgrade": bool}
+func compare_equip(girl_id: String, slot: String, candidate_item: Dictionary) -> Dictionary:
+	var cur: Dictionary = state["girls"].get(girl_id, {}).get("equip", {}).get(slot, {})
+	var cur_s := SimItems.stat_summary(cur)
+	var cand_s := SimItems.stat_summary(candidate_item)
+	var diff := {}
+	for k in cand_s:
+		diff[k] = cand_s[k] - cur_s[k]
+	return {
+		"current": cur_s,
+		"candidate": cand_s,
+		"diff": diff,
+		"is_upgrade": float(cand_s["score"]) > float(cur_s["score"]),
+	}
 
 
 # --- 改装ツリー ---------------------------------------------------------------
