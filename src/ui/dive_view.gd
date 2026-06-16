@@ -28,6 +28,7 @@ var _cam_zoom := 1.04
 var _cam_zoom_target := 1.04
 var _cam_shake := 0.0
 var _was_combat := false
+var _party_hit_t := 0.0  # 味方被弾のけぞり残り秒（hit アニメ切替用）
 const BASE_ZOOM := 1.04
 
 
@@ -82,6 +83,7 @@ func _process(delta: float) -> void:
 	_cam_zoom_target = lerpf(_cam_zoom_target, BASE_ZOOM, delta * 1.4)
 	_cam_zoom = lerpf(_cam_zoom, _cam_zoom_target, delta * 7.0)
 	_cam_shake = maxf(0.0, _cam_shake - delta * 26.0)
+	_party_hit_t = maxf(0.0, _party_hit_t - delta)
 	if visible:
 		queue_redraw()
 
@@ -94,6 +96,8 @@ func spawn_damage(amount: int, at: String = "enemy") -> void:
 	var y := size.y * 0.42 + randf_range(-10.0, 10.0)
 	var col := Color(1.0, 0.92, 0.3) if at == "enemy" else Color(1.0, 0.4, 0.45)
 	_damage_pops.append({"val": amount, "x": x, "y": y, "t": 0.0, "col": col})
+	if at == "party":
+		_party_hit_t = 0.32  # 被弾のけぞり（hit アニメ）を再生する時間
 
 
 func spawn_fx(kind: String, at: String = "enemy") -> void:
@@ -217,8 +221,15 @@ func _draw_shadow(cx: float, ground: float, w: float) -> void:
 ## 提供キャラの横スプライトシート（4コマ）を、指定の表示高さ h・足元基準で描く。
 ## 立ち絵を主役に＝画面に応じて大きく見せる。描いた幅を返す（0=未描画）。
 const CHIBI_FRAMES := 4
-func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool, h: float, flip: bool = false) -> float:
-	var anim := "attack" if in_combat else "walk_front"
+func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool, h: float, flip: bool = false, hit: bool = false, moving: bool = true) -> float:
+	# 状態によるアニメ選択：
+	#   戦闘中 + 被弾 → hit / 戦闘中 → attack
+	#   非戦闘 + 移動中 → walk_front / 非戦闘 + 停止中 → idle
+	var anim: String
+	if in_combat:
+		anim = "hit" if hit else "attack"
+	else:
+		anim = "walk_front" if moving else "idle"
 	var tex := _tex("res://assets/generated/sprites/%s/%s.png" % [id, anim])
 	if tex == null:
 		tex = _tex("res://assets/generated/sprites/%s/walk_front.png" % id)
@@ -365,7 +376,10 @@ func _draw() -> void:
 		party_x.append(x)
 		var alive := float(sim.state["hp"].get(id, 0.0)) > 0.0
 		var foot := Vector2(x, ground + (bob if alive else 0.0))
-		var dw := _draw_chibi(id, foot, in_combat, alive, ch, false)
+		# 被弾フラグ＝直近に味方ダメージ発生／停止フラグ＝決断バナー中（door_open）で足踏み停止
+		var hit := _party_hit_t > 0.0
+		var moving := not door_open
+		var dw := _draw_chibi(id, foot, in_combat, alive, ch, false, hit, moving)
 		if dw > 0.0:
 			_draw_shadow(x, ground + 2.0, dw * 0.74)
 			if alive:
