@@ -318,11 +318,12 @@ func _test_talk() -> void:
 	# 全シーンのデータ整合
 	var total := 0
 	for girl in TalkData.TALKS:
+		check(TalkData.TALKS[girl].size() == 3, "%s は会話3本" % girl)
 		for scene in TalkData.TALKS[girl]:
 			total += 1
 			check(scene.has("a") and scene.has("b") and not scene["lines"].is_empty(),
 					"%s「%s」が完全" % [girl, scene["title"]])
-	check(total == 12, "会話は4人×3=12本")
+	check(total == TalkData.TALKS.size() * 3, "会話は各キャラ3本ずつ")
 
 
 func _test_content() -> void:
