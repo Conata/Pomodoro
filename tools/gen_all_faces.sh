@@ -19,7 +19,7 @@ FORCE="${1:-}"
 SCRIPT="tools/gen_face_gemini.py"
 
 declare -A BASE_IMAGES=(
-  [mil]="tools/_out/face_mil_raw/neutral_blink_raw.png"
+  [mil]="tools/_out/chibi4/mil/mil_neutral.png"
   [yuzuki]="tools/_out/face_yuzuki_raw/neutral_blink_raw.png"
   [muu]="tools/_out/face_muu_raw/neutral_blink_raw.png"
   [kiriko]="tools/_out/face_kiriko_raw/neutral_blink_raw.png"

@@ -282,3 +282,57 @@ static func recipe_price(id: String, star: int) -> int:
 
 static func girl_mult(aff: int) -> float:
 	return 1.0 + aff / 200.0
+
+
+# ── 装備システム ────────────────────────────────────────────────────────────
+
+# バッグ（inventory）最大枠
+const BAG_MAX := 20
+# 倉庫（storage）最大枠
+const STORAGE_MAX := 60
+
+# アイテム表示名テンプレート（slot × 名前）。
+# stat/スコア計算は SimItems に委譲。roll 時に "tpl" キーで紐付く。
+const EQUIP_DB := {
+	"dao":   {"name": "解体刀",     "slot": "weapon"},
+	"pile":  {"name": "電磁杭",     "slot": "weapon"},
+	"wok":   {"name": "鉄鍋",       "slot": "weapon"},
+	"coat":  {"name": "電脳コート", "slot": "armor"},
+	"mesh":  {"name": "強化メッシュ","slot": "armor"},
+	"vest":  {"name": "防刃ベスト", "slot": "armor"},
+	"lens":  {"name": "照準レンズ", "slot": "trinket"},
+	"charm": {"name": "猫の爪",     "slot": "trinket"},
+	"badge": {"name": "深層バッジ", "slot": "trinket"},
+}
+# slot 別テンプレートキー（SimItems.roll_graded で選択）
+const EQUIP_BY_SLOT := {
+	"weapon":  ["dao", "pile", "wok"],
+	"armor":   ["coat", "mesh", "vest"],
+	"trinket": ["lens", "charm", "badge"],
+}
+
+# SimItems の 7 段グレードに固有色を割り当てる表示色（TBH 準拠の虹階調）。
+# 粗末=灰 / 普通=白 / 上質=緑 / 精錬=青 / 英雄=紫 / 伝説=橙 / 星界=金
+const EQUIP_GRADE_COLORS := [
+	Color("888888"),  # 0 粗末 — 灰
+	Color("cccccc"),  # 1 普通 — 白
+	Color("4caf50"),  # 2 上質 — 緑
+	Color("2196f3"),  # 3 精錬 — 青
+	Color("9c27b0"),  # 4 英雄 — 紫
+	Color("ff9800"),  # 5 伝説 — 橙
+	Color("ffd700"),  # 6 星界 — 金
+]
+
+static func equip_grade_color(grade: int) -> Color:
+	return EQUIP_GRADE_COLORS[clampi(grade, 0, EQUIP_GRADE_COLORS.size() - 1)]
+
+
+# ソケット素材（埋め込み宝石）。slot 別にステを与える。
+# 英雄(grade4)以上の装備のソケット枠に socket_gem() で嵌める。
+# 値は slot 別の付与ステ（武器=攻寄り／防具=体寄り／装飾=補助寄り）。
+const SOCKET_GEMS := {
+	"em_core":   {"name": "電磁コア",       "weapon": {"atk": 8}, "armor": {"hp": 40}, "trinket": {"spd": 4}},
+	"ice_shard": {"name": "氷晶片",         "weapon": {"atk": 5}, "armor": {"hp": 60}, "trinket": {"crit": 5}},
+	"flux_cell": {"name": "フラックス電池", "weapon": {"atk": 6}, "armor": {"hp": 30}, "trinket": {"gold": 10}},
+	"void_eye":  {"name": "虚無の眼",       "weapon": {"crit": 8}, "armor": {"hp": 25}, "trinket": {"spd": 6}},
+}

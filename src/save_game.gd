@@ -56,6 +56,22 @@ static func normalize(s: Dictionary) -> Dictionary:
 	for g in s.get("boxes", []):
 		boxes.append(int(g))
 	s["boxes"] = boxes
+	# 新規追加キャラがセーブに無い場合、デフォルト値で補完
+	if not s.has("girls"):
+		s["girls"] = {}
+	for id in KuroData.GIRL_ORDER:
+		if not s["girls"].has(id):
+			var first_skill := ""
+			for sid in KuroData.SKILL_DB:
+				if KuroData.SKILL_DB[sid]["girl"] == id and int(KuroData.SKILL_DB[sid]["unlock"]) == 0:
+					first_skill = sid
+					break
+			s["girls"][id] = {
+				"aff": 10, "seen": [],
+				"equip": {"weapon": {}, "armor": {}, "trinket": {}},
+				"skills_eq": [first_skill],
+				"tree": [],
+			}
 	for id in s.get("girls", {}):
 		s["girls"][id]["aff"] = int(s["girls"][id].get("aff", 10))
 		var seen := []
@@ -95,6 +111,9 @@ static func normalize(s: Dictionary) -> Dictionary:
 			s[key_def[0]] = key_def[1]
 	if not s.has("inventory"):
 		s["inventory"] = []
+	if not s.has("storage"):
+		s["storage"] = []
+	_normalize_items(s.get("storage", []))
 	if not s.has("renov"):
 		s["renov"] = ["start"]
 	if not s.has("pets"):
@@ -122,5 +141,11 @@ static func _normalize_items(items: Array) -> void:
 static func _normalize_item(it: Dictionary) -> void:
 	it["id"] = int(it.get("id", 0))
 	it["grade"] = int(it.get("grade", 0))
+	# base は SimItems が使う float。str 変換しない
+	if it.has("base") and it["base"] is String:
+		it["base"] = float(it["base"])
+	# tpl = EQUIP_DB テンプレートキー（表示名用）
+	if it.has("tpl"):
+		it["tpl"] = str(it["tpl"])
 	for a in it.get("affixes", []):
 		a["v"] = int(a.get("v", 0))
