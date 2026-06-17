@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "/tmp"
+    ],
+    "allow": [
+      "Bash(tar -xzf /Users/mekezzo/Work/Pomodoro/docs/Unitychan_PixelArtPack-Vol.2_11-04-2025_16-58.unitypackage -C /tmp/unitychan_extract)"
+    ]
+  }
+}

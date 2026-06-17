@@ -23,6 +23,9 @@ var _fx_active: Array = []
 var _bubble := {}  # {girl, text, t}
 var _dialog: Array = []  # 直近の掛け合いログ {who,text,col}
 var _damage_pops: Array = []  # {val, x, y, t, col}  ダメージ数字ポップアップ
+# ChibiAnim インスタンス（キャラ id → ChibiAnim）
+# Unity の Animator コンポーネントに相当（キャラごとに1つ）
+var _chibi_anims: Dictionary = {}
 # 疑似Camera2D（ノード化せず draw_set_transform で表現＝決定論を崩さず軽い）
 var _cam_zoom := 1.04
 var _cam_zoom_target := 1.04
@@ -52,6 +55,9 @@ func say(girl_id: String, text: String) -> void:
 
 func _process(delta: float) -> void:
 	pulse += delta
+	# ChibiAnim のステートマシンを毎フレーム更新（Unity の Animator.Update() 相当）
+	for anim: ChibiAnim in _chibi_anims.values():
+		anim.tick(delta)
 	if not _bubble.is_empty():
 		_bubble["t"] = float(_bubble["t"]) - delta
 		if float(_bubble["t"]) <= 0.0:
@@ -216,45 +222,55 @@ func _draw_shadow(cx: float, ground: float, w: float) -> void:
 	draw_colored_polygon(pts, Color(0, 0, 0, 0.30))
 
 
-## 提供キャラの横スプライトシート（assets/generated/sprites/<id>/<anim>.png、4コマ）を
-## 足元基準でコマ送り描画。青tintはかけず本来の色で出す。あれば true。
-## 提供キャラの横スプライトシート（4コマ）を、指定の表示高さ h・足元基準で描く。
-## 立ち絵を主役に＝画面に応じて大きく見せる。描いた幅を返す（0=未描画）。
-const CHIBI_FRAMES := 4
+## 個別フレームスプライト（assets/generated/sprites/<id>/<anim>_f<n>.png）を
+## 足元基準で描画。ChibiAnim ステートマシンが現在フレームを管理。描いた幅を返す（0=未描画）。
+##
+## Unity 対応:
+##   ChibiAnim（Base Controller） → ステート遷移はクラス内部で完結
+##   char_id ごとのスプライトフォルダ → Override Controller（クリップ差し替え）
+##   update_params() → SetFloat/SetBool 群
+
+func _get_chibi_anim(id: String) -> ChibiAnim:
+	if not _chibi_anims.has(id):
+		_chibi_anims[id] = ChibiAnim.new(id)
+	return _chibi_anims[id]
+
+
 func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool, h: float, flip: bool = false, hit: bool = false, moving: bool = true) -> float:
-	# 状態によるアニメ選択：
-	#   戦闘中 + 被弾 → hit / 戦闘中 → attack
-	#   非戦闘 + 移動中 → walk_front / 非戦闘 + 停止中 → idle
-	var anim: String
-	if in_combat:
-		anim = "hit" if hit else "attack"
-	else:
-		anim = "walk_front" if moving else "idle"
-	var tex := _tex("res://assets/generated/sprites/%s/%s.png" % [id, anim])
+	# パラメーターを Animator に渡す（Unity の SetFloat/SetBool に相当）
+	var anim: ChibiAnim = _get_chibi_anim(id)
+	anim.update_params(
+		1.0 if moving else 0.0,  # speed
+		in_combat and not hit,   # in_combat
+		in_combat and hit,       # is_hurt
+		not alive,               # is_dead
+	)
+
+	# 現在フレームのパスを取得（Override Controller がクリップを差し替える部分）
+	var path := anim.current_path()
+	var tex := _tex(path)
+
+	# テクスチャが無ければ idle にフォールバック、それも無ければ yuzuki で代用
 	if tex == null:
-		tex = _tex("res://assets/generated/sprites/%s/walk_front.png" % id)
-	if tex == null:  # 暫定：自前シートが無いキャラは全員ユズキで代用
-		tex = _tex("res://assets/generated/sprites/yuzuki/%s.png" % anim)
-	if tex == null:
-		tex = _tex("res://assets/generated/sprites/yuzuki/walk_front.png")
+		tex = _tex("res://assets/generated/sprites/%s/idle_f0.png" % id)
+	if tex == null and id != "yuzuki":
+		return _draw_chibi("yuzuki", foot, in_combat, alive, h, flip, hit, moving)
 	if tex == null:
 		return 0.0
-	var fw := tex.get_size().x / float(CHIBI_FRAMES)
-	var fh := tex.get_size().y
-	var f := int(pulse * ANIM_FPS) % CHIBI_FRAMES
-	var sc := h / fh
-	var dw := fw * sc
+
+	var sc := h / tex.get_size().y
+	var dw := tex.get_size().x * sc
+
 	var rect := Rect2(foot.x - dw * 0.5, foot.y - h, dw, h)
 	if flip:
 		rect = Rect2(rect.position + Vector2(rect.size.x, 0), Vector2(-rect.size.x, rect.size.y))
 	var tint := Color(1, 1, 1) if alive else Color(0.45, 0.47, 0.58)
-	var src := Rect2(f * fw, 0, fw, fh)
-	# ピクセルアート輪郭線（4方向 1px）
-	var ofs := maxf(1.0, dw / fw * 0.5)
+	# ピクセルアート輪郭線（4方向）
+	var ofs := maxf(1.0, sc * 0.5)
 	var outline_col := Color(0.0, 0.0, 0.05, 0.72)
 	for ov in [Vector2(ofs, 0), Vector2(-ofs, 0), Vector2(0, ofs), Vector2(0, -ofs)]:
-		draw_texture_rect_region(tex, Rect2(rect.position + ov, rect.size), src, outline_col)
-	draw_texture_rect_region(tex, rect, src, tint)
+		draw_texture_rect(tex, Rect2(rect.position + ov, rect.size), false, outline_col)
+	draw_texture_rect(tex, rect, false, tint)
 	return dw
 
 

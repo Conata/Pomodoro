@@ -116,8 +116,9 @@ def build_instruction(appearance: str, mouth: str, emotion: str) -> str:
         f"Edit the image MINIMALLY: ONLY change the facial expression. "
         f"The character should now have: {emotion}, {mouth}. "
         f"Do NOT change: hair color or style, eye color, clothing, head angle, "
-        f"head position, body pose, background color, or any other detail. "
+        f"head position, body pose, or any other detail. "
         f"Keep the exact same thick black outline art style and flat color shading. "
+        f"IMPORTANT: Replace the background with a pure solid black (#000000) background. "
         f"Character description to maintain: {appearance}. "
         f"Output only the edited image, same 512x512 size."
     )

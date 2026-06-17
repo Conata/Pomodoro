@@ -1,0 +1,71 @@
+{
+  "char": "mil",
+  "generated": "2026-06-17T09:27:12Z",
+  "frame_size": [
+    144,
+    192
+  ],
+  "fps": 12,
+  "animations": {
+    "idle": {
+      "frames": 1,
+      "loop": true
+    },
+    "run": {
+      "frames": 1,
+      "loop": true
+    },
+    "jump": {
+      "frames": 1,
+      "loop": false
+    },
+    "acquire": {
+      "frames": 1,
+      "loop": false
+    },
+    "climb": {
+      "frames": 1,
+      "loop": true
+    },
+    "attack": {
+      "frames": 1,
+      "loop": false
+    },
+    "jump_attack": {
+      "frames": 1,
+      "loop": false
+    },
+    "hurt": {
+      "frames": 1,
+      "loop": false
+    },
+    "die": {
+      "frames": 1,
+      "loop": false
+    },
+    "dash": {
+      "frames": 1,
+      "loop": false
+    },
+    "wall_slide": {
+      "frames": 1,
+      "loop": true
+    },
+    "double_jump": {
+      "frames": 1,
+      "loop": false
+    },
+    "skill1": {
+      "frames": 1,
+      "loop": false
+    },
+    "skill2": {
+      "frames": 1,
+      "loop": false
+    },
+    "skill3": {
+      "frames": 1,
+      "loop": false
+    }
+  }
+}
