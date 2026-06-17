@@ -1,6 +1,6 @@
 {
   "char": "doctor",
-  "generated": "2026-06-17T09:27:12Z",
+  "generated": "2026-06-17T09:43:34Z",
   "frame_size": [
     144,
     192
@@ -44,6 +44,26 @@
       "loop": false
     },
     "dash": {
+      "frames": 1,
+      "loop": false
+    },
+    "wall_slide": {
+      "frames": 1,
+      "loop": true
+    },
+    "double_jump": {
+      "frames": 1,
+      "loop": false
+    },
+    "skill1": {
+      "frames": 1,
+      "loop": false
+    },
+    "skill2": {
+      "frames": 1,
+      "loop": false
+    },
+    "skill3": {
       "frames": 1,
       "loop": false
     }
