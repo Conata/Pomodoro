@@ -32,11 +32,15 @@ static func load_state() -> Dictionary:
 
 static func normalize(s: Dictionary) -> Dictionary:
 	for key in ["gold", "sign", "invites", "day", "checkpoint", "best_floor",
-			"rng_state", "seed", "scrap", "next_item_id", "streak", "shards"]:
+			"rng_state", "seed", "scrap", "next_item_id", "streak", "shards",
+			"workshop_level"]:
 		if s.has(key):
 			s[key] = int(s[key])
 	if not s.has("shards"):
 		s["shards"] = 0
+	# 工房レベル（1=分解 / 2=合成 / 3=刻印 / 4=装飾 / 5=精錬）。既定は Lv1。
+	if not s.has("workshop_level"):
+		s["workshop_level"] = 1
 	# 素材：旧セーブ（無個性カウント）からの移行も吸収
 	if s.get("stock") is float or s.get("stock") is int:
 		s["stock"] = {"dry": int(s["stock"]), "meat": 0, "sea": 0}

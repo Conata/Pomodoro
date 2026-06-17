@@ -77,6 +77,7 @@ var close_panel: Control
 var close_text: Label
 var tabs: Control
 var inv_box: VBoxContainer
+var workshop_box: VBoxContainer    # 工房（分解・合成・刻印・装飾・精錬を集約。レベルで段階解放）
 var member_box: VBoxContainer     # メンバー一覧（各キャラの詳細・育成への導線）
 var memo_box: VBoxContainer        # 記憶（道中で拾うメモリ＝短文小説）
 var renov_view: RenovView
@@ -711,6 +712,7 @@ func _build_ui() -> void:
 	_build_memory_tab()
 	_build_inventory_tab()
 	_build_renov_tab()
+	_build_workshop_tab()  # ページ index 5（フッターの🔨工房から _switch_tab(5)）
 	_build_stats_tab()
 	_build_tab_footer()
 	_build_close()
@@ -2140,6 +2142,12 @@ func _build_inventory_tab() -> void:
 	inv_box = _scroll_tab("倉庫")
 
 
+## 工房（TBH の Cube 相当）：旧「倉庫」の加工機能（分解／合成／刻印）を集約し、
+## 工房レベルで段階解放する（Lv1分解→Lv2合成→Lv3刻印→Lv4装飾→Lv5精錬）。
+func _build_workshop_tab() -> void:
+	workshop_box = _scroll_tab("工房")
+
+
 func _build_renov_tab() -> void:
 	var box := _scroll_tab("改装")
 	renov_info = _label("ノードをタップして解放（隣のノードから順に）", 17, COL_DIM)
@@ -2167,12 +2175,14 @@ func _build_tab_footer() -> void:
 	footer_panel.add_child(_tab_footer)
 	tabs.add_child(footer_panel)
 
-	# 4タブ: 0=店(page), 1=メンバー(page), 2=市場(overlay), 3=経営(overlay)
+	# 5タブ: 店(page0), メンバー(page1), 工房(page5), 市場(overlay), 経営(overlay)。
+	# 各 entry の4要素目は対応ページ index（オーバーレイは -1＝下線ハイライト対象外）。
 	var tab_data: Array = [
-		["店",      "ui/tab_shop",      _switch_tab.bind(0)],
-		["メンバー", "ui/tab_member",    _switch_tab.bind(1)],
-		["市場",    "ui/tab_market",    func(): _close_all_overlays(); _open_market()],
-		["経営",    "ui/tab_mgmt",      func(): _close_all_overlays(); _open_management()],
+		["店",      "ui/tab_shop",      _switch_tab.bind(0), 0],
+		["メンバー", "ui/tab_member",    _switch_tab.bind(1), 1],
+		["🔨 工房", "ui/tab_workshop",  func(): _close_all_overlays(); _switch_tab(5), 5],
+		["市場",    "ui/tab_market",    func(): _close_all_overlays(); _open_market(), -1],
+		["経営",    "ui/tab_mgmt",      func(): _close_all_overlays(); _open_management(), -1],
 	]
 	for i in tab_data.size():
 		var entry: Array = tab_data[i]
@@ -2199,6 +2209,7 @@ func _build_tab_footer() -> void:
 		col.add_child(lbl)
 		btn.add_child(col)
 		btn.pressed.connect(entry[2] as Callable)
+		btn.set_meta("page", int(entry[3]))  # ハイライト判定用の対応ページ index
 		_tab_footer.add_child(btn)
 		_tab_buttons.append(btn)
 	_update_tab_buttons()
@@ -2220,13 +2231,14 @@ func _switch_tab(idx: int) -> void:
 	for i in _tab_pages.size():
 		_tab_pages[i].visible = (i == idx)
 	_update_tab_buttons()
+	_refresh_all()  # 切替先タブの内容を最新化（工房/メンバー/統計 等）
 	_sfx("ui_tab")
 
 
 func _update_tab_buttons() -> void:
 	for i in _tab_buttons.size():
 		var btn: Button = _tab_buttons[i]
-		var active := (i == _tab_active)
+		var active := (int(btn.get_meta("page", -1)) == _tab_active)
 		# アクティブ：シアン、非アクティブ：薄いグレー
 		btn.modulate = COL_ACCENT if active else Color(COL_DIM.r, COL_DIM.g, COL_DIM.b, 0.7)
 		# アクティブタブの下線
@@ -2467,6 +2479,7 @@ func _refresh_all() -> void:
 		_refresh_member()
 		_refresh_memory_archive()
 		_refresh_inventory()
+		_refresh_workshop()
 		_refresh_stats()
 		if renov_view != null:
 			renov_view.queue_redraw()
@@ -3139,6 +3152,163 @@ func _equip_target(item: Dictionary) -> Dictionary:
 			best_cur = cur_score
 			best_id = id
 	return {"girl": best_id, "cur_score": best_cur}
+
+
+# ──────────────────────────────────────────
+# 工房（Cube）：装備加工を集約。工房レベルで段階解放する。
+#   Lv1 分解 / Lv2 合成 / Lv3 刻印 / Lv4 装飾(ソケット) / Lv5 精錬
+# ──────────────────────────────────────────
+
+const WORKSHOP_FEATURES := [
+	{"lv": 1, "name": "分解", "desc": "装備 → 屑材"},
+	{"lv": 2, "name": "合成", "desc": "同枠3個 → 1ランク上"},
+	{"lv": 3, "name": "刻印", "desc": "屑材でアフィックスをリロール"},
+	{"lv": 4, "name": "装飾", "desc": "ソケットに宝石をはめる"},
+	{"lv": 5, "name": "精錬", "desc": "餌装備でアフィックス値を底上げ"},
+]
+
+
+func _workshop_level() -> int:
+	return int(sim.state.get("workshop_level", 1))
+
+
+func _refresh_workshop() -> void:
+	if workshop_box == null:
+		return
+	_clear(workshop_box)
+	var s := sim.state
+	var lv := _workshop_level()
+	# ── ヘッダ：工房レベルと解放状況
+	workshop_box.add_child(_label("工房 Lv%d　― 進むほど加工が増える ―" % lv, TYPE_SUB, COL_ACCENT))
+	var feat_row := HBoxContainer.new()
+	feat_row.add_theme_constant_override("separation", SP_2)
+	for f in WORKSHOP_FEATURES:
+		var on: bool = lv >= int(f["lv"])
+		feat_row.add_child(_label(
+			("◉ " if on else "○ ") + "Lv%d %s" % [int(f["lv"]), String(f["name"])],
+			TYPE_SMALL, COL_TEXT if on else COL_DIM))
+	workshop_box.add_child(feat_row)
+	# 次の解放案内
+	if lv < WORKSHOP_FEATURES.size():
+		var nxt: Dictionary = WORKSHOP_FEATURES[lv]
+		workshop_box.add_child(_label("次の解放：Lv%d %s（%s）" % [
+			int(nxt["lv"]), String(nxt["name"]), String(nxt["desc"])], TYPE_SMALL, COL_DIM))
+	# DEBUG：工房レベル増減（解放の段階表示を確認するため）
+	var dbg := HBoxContainer.new()
+	dbg.add_theme_constant_override("separation", 6)
+	dbg.add_child(_label("DEBUG", 14, Color(1, 1, 1, 0.3)))
+	dbg.add_child(_button("工房Lv −", _on_workshop_level.bind(-1), TYPE_SMALL))
+	dbg.add_child(_button("工房Lv ＋", _on_workshop_level.bind(1), TYPE_SMALL))
+	workshop_box.add_child(dbg)
+	# ── 加工アクション（屑材残量＋一括分解／合成）
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", SP_2)
+	row.add_child(_badge(null, "屑 %d" % int(s["scrap"]), DS.SUCCESS))
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(sp)
+	if lv >= 1:  # 分解
+		row.add_child(_button("一括分解", _on_ws_bulk_salvage, TYPE_BODY))
+	if lv >= 2:  # 合成
+		row.add_child(_button("合成 3→1", _on_ws_synthesize, TYPE_BODY))
+	workshop_box.add_child(row)
+	# Lv4/Lv5 は枠組みのみ（実装は今後）
+	if lv >= 4:
+		workshop_box.add_child(_label("装飾（ソケット）：近日実装", TYPE_SMALL, COL_DIM))
+	if lv >= 5:
+		workshop_box.add_child(_label("精錬：近日実装", TYPE_SMALL, COL_DIM))
+	# ── 倉庫ビュー（工房のサブビューとして統合）
+	var storage: Array = s["storage"]
+	workshop_box.add_child(_section("倉庫  %d/%d" % [storage.size(), KuroData.STORAGE_MAX]))
+	if storage.is_empty():
+		workshop_box.add_child(_label("倉庫は空。潜って拾おう。", TYPE_SMALL, COL_DIM))
+		return
+	var sorted_items := storage.duplicate()
+	sorted_items.sort_custom(func(a, b): return float(a["score"]) > float(b["score"]))
+	var shown: int = mini(sorted_items.size(), 40)
+	for k in shown:
+		var it: Dictionary = sorted_items[k]
+		var target := _equip_target(it)
+		var diff := float(it["score"]) - float(target["cur_score"])
+		var badge := ("▲+%d" % int(diff)) if diff > 0.0 else ("▼%d" % int(diff))
+		var panel := PanelContainer.new()
+		panel.add_theme_stylebox_override("panel", _card_sb())
+		var line := HBoxContainer.new()
+		line.add_theme_constant_override("separation", SP_1)
+		var grade_dot := ColorRect.new()
+		grade_dot.color = KuroData.equip_grade_color(int(it["grade"]))
+		grade_dot.custom_minimum_size = Vector2(8, 8)
+		grade_dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		line.add_child(grade_dot)
+		var name_label := _label("%s %s %s" % [SimItems.display_name(it), SimItems.affix_text(it), badge],
+				TYPE_SMALL, KuroData.equip_grade_color(int(it["grade"])))
+		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		line.add_child(name_label)
+		var eq := _button("装備", _on_ws_equip_storage.bind(int(it["id"])), TYPE_SMALL)
+		eq.disabled = diff <= 0.0
+		line.add_child(eq)
+		if lv >= 1:  # 分解
+			line.add_child(_button("分解", _on_ws_salvage_storage.bind(int(it["id"])), TYPE_SMALL))
+		if lv >= 3:  # 刻印
+			var rr := _button("刻印", _on_ws_reroll_storage.bind(int(it["id"])), TYPE_SMALL)
+			rr.disabled = int(s["scrap"]) < SimItems.REROLL_COST
+			line.add_child(rr)
+		panel.add_child(line)
+		workshop_box.add_child(panel)
+	if sorted_items.size() > shown:
+		workshop_box.add_child(_label("…ほか %d 品（スコア上位のみ表示）" % (sorted_items.size() - shown), TYPE_SMALL, COL_DIM))
+
+
+## DEBUG：工房レベルを増減（Lv1〜5）。段階解放の表示確認用。
+func _on_workshop_level(delta: int) -> void:
+	sim.state["workshop_level"] = clampi(_workshop_level() + delta, 1, WORKSHOP_FEATURES.size())
+	_sfx("ui_tab")
+	_save(Time.get_unix_time_from_system())
+	_refresh_workshop()
+
+
+## 工房の加工コールバック（倉庫タブと同じ sim 操作を呼び、工房ビューを更新）。
+func _on_ws_bulk_salvage() -> void:
+	var r := sim.bulk_salvage_storage()
+	_sfx("ui_buy")
+	_refresh_header()
+	_refresh_workshop()
+	workshop_box.add_child(_label("一括分解: %d品 → 廃材+%d" % [int(r["count"]), int(r["dust"])], 16, DS.SUCCESS))
+
+
+func _on_ws_synthesize() -> void:
+	var made := sim.synthesize_storage()
+	if made > 0:
+		_sfx("ui_equip")
+	_pump_events()
+	_refresh_header()
+	_refresh_workshop()
+
+
+func _on_ws_salvage_storage(item_id: int) -> void:
+	sim.salvage_from_storage(item_id)
+	_refresh_header()
+	_refresh_workshop()
+
+
+func _on_ws_reroll_storage(item_id: int) -> void:
+	if sim.reroll_storage(item_id):
+		_sfx("ui_equip")
+	_refresh_header()
+	_refresh_workshop()
+
+
+func _on_ws_equip_storage(item_id: int) -> void:
+	for it in sim.state["storage"]:
+		if int(it["id"]) == item_id:
+			sim.equip_from_storage(item_id, String(_equip_target(it)["girl"]))
+			_sfx("ui_equip")
+			break
+	_save(Time.get_unix_time_from_system())
+	_refresh_header()
+	_refresh_workshop()
+	if inv_box != null:
+		_refresh_inventory()
 
 
 func _refresh_stats() -> void:
