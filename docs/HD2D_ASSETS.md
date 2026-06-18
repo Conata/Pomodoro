@@ -48,7 +48,7 @@ HD-2D 探索画面の背景/地形を**自作せず**、ライセンスが明確
 
 | 提供元 | パック | 形式 | ライセンス | 備考 |
 |---|---|---|---|---|
-| **Quaternius** | [Cyberpunk Game Kit](https://quaternius.com/packs/cyberpunkgamekit.html)（[poly.pizza](https://poly.pizza/bundle/Cyberpunk-Game-Kit-Hkfxa8K8zF)） | glTF/FBX/OBJ/Blend | **CC0** | **本命**。ネオン建物・モジュラー街・小物。クレジット不要 |
+| **Quaternius** | [Cyberpunk Game Kit](https://quaternius.com/packs/cyberpunkgamekit.html)（**導入済**） | glTF/FBX/OBJ/Blend | **CC0** | **採用**。`assets/third_party/cyberpunk_kit/`（Platforms 52モデル）。ビル/看板/街灯/AC/アンテナ/TV/パイプ |
 | **Kenney** | [City Kit (Roads)](https://kenney.nl/assets/city-kit-roads) / [City Kit (Commercial)](https://kenney.nl/assets/city-kit-commercial) | glTF | **CC0** | 道路・ビルの土台。ネオンは自前 emission で足す |
 | **KayKit** | [City Builder Bits](https://kaylousberg.itch.io/city-builder-bits) | glTF/FBX/OBJ | **CC0** | 32+ のローポリ街パーツ |
 | monogon | [Voxel Cyberpunk City](https://itch.io/game-assets/free/tag-cyberpunk/tag-low-poly) | voxel | 要確認（多くは無料） | voxel 路線で HD-2D の質感に合う |

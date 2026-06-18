@@ -309,45 +309,53 @@ func _neon_light(pos: Vector3, col: Color, energy: float, rng: float) -> void:
 	_sub.add_child(o)
 
 
-## サイバーパンク中華（黒猫飯店）の通り。暗い路面にネオン看板・赤提灯・店先の暖色。
-## 現状は仮のジオメトリ（箱）。Cyberpunk/中華キット導入後に差し替える前提。
+## サイバーパンク中華（黒猫飯店）の通り。Quaternius Cyberpunk Game Kit（CC0）の
+## 実モデル（ビル/看板/街灯/AC/アンテナ/TV/パイプ）＋中華の赤提灯＋ネオン点光源で構成。
 func _build_props_cyberpunk() -> void:
+	const NEON_RED := Color(1.0, 0.18, 0.12)
 	const NEON_CYAN := Color(0.2, 0.9, 1.0)
 	const NEON_MAGENTA := Color(1.0, 0.2, 0.7)
-	const NEON_RED := Color(1.0, 0.18, 0.12)
 	const WARM := Color(1.0, 0.62, 0.28)
+	var P := CYBER_DIR + "platforms/"
 
-	# 奥のビル群（暗い箱・上にネオンの縁）。左右に高低差をつける
-	var blds := [
-		{"p": Vector3(-6.5, 3.0, -9.5), "s": Vector3(5.0, 6.0, 2.0)},
-		{"p": Vector3(-1.5, 4.0, -10.5), "s": Vector3(4.0, 8.0, 2.0)},
-		{"p": Vector3(3.5, 3.2, -9.8), "s": Vector3(4.5, 6.4, 2.0)},
-		{"p": Vector3(7.5, 4.5, -10.0), "s": Vector3(4.0, 9.0, 2.0)},
-	]
-	for b in blds:
-		_add_box(b["p"], b["s"], Color(0.07, 0.08, 0.12), 0.7)
-	# ビル壁面のネオンの横ライン
-	_emissive_box(Vector3(-6.5, 4.6, -8.5), Vector3(4.6, 0.16, 0.05), NEON_CYAN, 4.0)
-	_emissive_box(Vector3(3.5, 4.8, -8.8), Vector3(4.0, 0.16, 0.05), NEON_MAGENTA, 4.0)
-	_emissive_box(Vector3(7.5, 6.0, -9.0), Vector3(3.6, 0.16, 0.05), NEON_CYAN, 4.0)
+	# 奥のビル群：プラットフォームブロックを積んでビル壁に（top=y0で下に伸びる形状を活かす）
+	_add_gltf(P + "Platform_4x4.gltf", Vector3(-6.0, 3.6, -10.0), 1.8, 0)
+	_add_gltf(P + "Platform_4x4.gltf", Vector3(6.0, 4.2, -10.5), 1.9, 0)
+	_add_gltf(P + "Platform_4x2.gltf", Vector3(0.0, 4.6, -11.0), 1.8, 0)
+	_add_gltf(P + "Platform_4x1.gltf", Vector3(-2.5, 1.2, -8.5), 1.4, 0)
+	_add_gltf(P + "Platform_4x1.gltf", Vector3(2.8, 1.2, -8.5), 1.4, 0)
 
-	# 縦のネオン看板（中華街のタテ看板イメージ）
-	_emissive_box(Vector3(-4.2, 3.2, -7.6), Vector3(0.5, 3.2, 0.18), NEON_MAGENTA, 3.5)
-	_emissive_box(Vector3(5.6, 2.8, -7.2), Vector3(0.5, 2.8, 0.18), NEON_CYAN, 3.5)
-	_emissive_box(Vector3(1.2, 3.6, -8.0), Vector3(0.42, 3.6, 0.18), NEON_RED, 3.2)
+	# ビル上のディテール（AC/アンテナ/TV/コンピュータ/パイプ）
+	_add_gltf(P + "AC.gltf", Vector3(-6.5, 1.4, -8.4), 1.3, 20)
+	_add_gltf(P + "AC_Stacked.gltf", Vector3(6.4, 1.6, -8.6), 1.3, -15)
+	_add_gltf(P + "Antenna_1.gltf", Vector3(-5.0, 5.6, -9.8), 1.6, 0)
+	_add_gltf(P + "Antenna_2.gltf", Vector3(4.6, 6.4, -10.2), 1.6, 0)
+	_add_gltf(P + "Pipe_1.gltf", Vector3(0.0, 0.6, -8.2), 1.6, 0)
+	_add_gltf(P + "TV_1.gltf", Vector3(-3.4, 1.0, -7.8), 1.4, 18, 2.5)  # 発光させる
+	_add_gltf(P + "Computer_Large.gltf", Vector3(3.6, 0.9, -7.8), 1.4, -20)
 
-	# 店先「黒猫飯店」：暖色の庇＋赤い看板（左手前）
-	_add_box(Vector3(-5.2, 1.3, -3.5), Vector3(3.4, 2.6, 2.4), Color(0.10, 0.06, 0.06), 0.6)
-	_emissive_box(Vector3(-5.2, 2.9, -2.4), Vector3(3.2, 0.7, 0.2), NEON_RED, 3.0)      # 赤い看板
-	_emissive_box(Vector3(-5.2, 1.4, -2.35), Vector3(3.0, 1.4, 0.1), WARM, 1.6)         # 暖色の店内窓
-	_neon_light(Vector3(-5.0, 2.0, -1.6), WARM, 3.0, 7.0)                                # 店先の暖色光
+	# 街灯（通りの左右）
+	_add_gltf(P + "Light_Street_1.gltf", Vector3(-4.6, 0.0, -2.0), 1.6, 30, 2.0)
+	_add_gltf(P + "Light_Street_2.gltf", Vector3(4.6, 0.0, 0.5), 1.6, -30, 2.0)
 
-	# 赤提灯を通りに沿って吊るす（中華の象徴）
+	# ネオン看板（発光させて光らせる）。タテヨコ混在で中華街の密度
+	_add_gltf(P + "Sign_1.gltf", Vector3(-3.6, 3.2, -7.4), 2.6, 0, 3.0)
+	_add_gltf(P + "Sign_3.gltf", Vector3(3.4, 3.6, -7.6), 2.6, 0, 3.0)
+	_add_gltf(P + "Sign_Corner_1.gltf", Vector3(5.4, 2.6, -6.4), 2.2, -25, 3.0)
+	_add_gltf(P + "Sign_Small_2.gltf", Vector3(-5.2, 2.4, -5.6), 2.2, 25, 3.0)
+	_add_gltf(P + "Sign_2.gltf", Vector3(0.8, 4.2, -8.2), 2.4, 0, 3.0)
+
+	# 店先「黒猫飯店」：暖色の庇＋赤い看板（左手前。ドア＝Door）
+	_add_gltf(P + "Door.gltf", Vector3(-5.0, 0.0, -3.4), 2.2, 18)
+	_emissive_box(Vector3(-5.0, 2.9, -2.9), Vector3(2.6, 0.6, 0.18), NEON_RED, 3.0)  # 赤い看板
+	_neon_light(Vector3(-4.8, 2.0, -2.0), WARM, 3.0, 7.0)
+
+	# 赤提灯を通りに沿って吊るす（中華の象徴。キットに無いので自前発光）
 	for z in [-3.0, -1.0, 1.0, 3.0]:
-		_emissive_box(Vector3(-2.6, 3.4, z), Vector3(0.5, 0.7, 0.5), NEON_RED, 2.6)
-		_emissive_box(Vector3(2.6, 3.4, z + 1.0), Vector3(0.5, 0.7, 0.5), NEON_RED, 2.6)
+		_emissive_box(Vector3(-2.8, 3.4, z), Vector3(0.42, 0.6, 0.42), NEON_RED, 2.6)
+		_emissive_box(Vector3(2.8, 3.4, z + 1.0), Vector3(0.42, 0.6, 0.42), NEON_RED, 2.6)
 
-	# 通りを染めるネオンの点光源（シアン×マゼンタ×赤の対比）
+	# 通りを染めるネオンの点光源（シアン×マゼンタ×赤×暖色の対比）
 	_neon_light(Vector3(-4.0, 2.2, -1.0), NEON_MAGENTA, 4.0, 9.0)
 	_neon_light(Vector3(4.0, 2.2, -1.5), NEON_CYAN, 4.0, 9.0)
 	_neon_light(Vector3(0.0, 2.5, -6.0), NEON_RED, 3.0, 10.0)
@@ -378,6 +386,47 @@ func _enable_shadows(node: Node) -> void:
 		(node as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	for c in node.get_children():
 		_enable_shadows(c)
+
+
+const CYBER_DIR := "res://assets/third_party/cyberpunk_kit/"
+
+## 任意の glTF/glb モデルを配置（パス直指定）。glow_energy>0 でテクスチャを自発光させ
+## ネオン看板を光らせる（emission に albedo テクスチャを流用）。
+func _add_gltf(res_path: String, pos: Vector3, scale: float = 1.0, yaw_deg: float = 0.0, glow_energy: float = 0.0) -> void:
+	var ps := load(res_path)
+	if ps == null:
+		return
+	var inst := (ps as PackedScene).instantiate() as Node3D
+	if inst == null:
+		return
+	inst.position = pos
+	inst.scale = Vector3(scale, scale, scale)
+	inst.rotation_degrees = Vector3(0, yaw_deg, 0)
+	_sub.add_child(inst)
+	_enable_shadows(inst)
+	if glow_energy > 0.0:
+		_make_glow(inst, glow_energy)
+
+
+## モデルの各サーフェスを複製マテリアルにして自発光を付与（ネオン化）。
+func _make_glow(node: Node, energy: float) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		var msh := mi.mesh
+		if msh != null:
+			for s in msh.get_surface_count():
+				var base: Material = mi.get_active_material(s)
+				var m: StandardMaterial3D = (base.duplicate() if base is StandardMaterial3D else StandardMaterial3D.new())
+				m.emission_enabled = true
+				m.emission_energy_multiplier = energy
+				if m.albedo_texture != null:
+					m.emission_texture = m.albedo_texture  # 模様のまま光らせる
+					m.emission = Color(1, 1, 1)
+				else:
+					m.emission = m.albedo_color
+				mi.set_surface_override_material(s, m)
+	for c in node.get_children():
+		_make_glow(c, energy)
 
 
 ## 中庭のレイアウト。Kenney Nature Kit（CC0）で木・柵・岩・茂み・花・石畳を配置。
