@@ -56,6 +56,28 @@ ANIM_DEFS = {
             "f5=mid stride returning"
         ),
     },
+    "walk_front": {
+        "frames": 4,
+        "desc": (
+            "walk cycle FACING THE VIEWER (front view, walking toward the camera, "
+            "we see the character's face the whole time): "
+            "f0=standing neutral facing forward feet together, "
+            "f1=left foot steps toward viewer arms swing slightly opposite gentle bob, "
+            "f2=passing mid-stride feet together upright, "
+            "f3=right foot steps toward viewer arms swing opposite"
+        ),
+    },
+    "walk_back": {
+        "frames": 4,
+        "desc": (
+            "walk cycle FACING AWAY from the camera (back view, walking away, "
+            "we see the character's BACK and back of the head the whole time, no face): "
+            "f0=standing neutral seen from behind feet together, "
+            "f1=left foot steps forward away arms swing slightly gentle bob, "
+            "f2=passing mid-stride feet together upright, "
+            "f3=right foot steps forward away arms swing opposite"
+        ),
+    },
     "attack": {
         "frames": 4,
         "desc": (
