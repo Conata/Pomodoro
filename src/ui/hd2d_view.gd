@@ -42,6 +42,7 @@ var _player_pos := Vector3(0, 0, 4.0)
 var _player_anim: ChibiAnim
 var _player_flip := false
 var _player_light: OmniLight3D = null  # 主人公追従のキーライト（cyberpunk のみ）
+var _player_shadow: MeshInstance3D = null  # 主人公追従のブロブシャドウ
 var _npc_sprites: Array[Sprite3D] = []
 var _npc_anims: Array[ChibiAnim] = []
 var _tex_cache := {}
@@ -104,6 +105,7 @@ func _build_world() -> void:
 	# ── 小物（テーマで切替）──
 	if THEME == "cyberpunk":
 		_build_props_cyberpunk()
+		_build_particles()  # 漂うボクセル粒子で空気の粒子感
 	else:
 		_build_props()
 
@@ -111,6 +113,17 @@ func _build_world() -> void:
 	_cam = Camera3D.new()
 	_cam.fov = 42.0
 	_cam.current = true
+	# 被写界深度（tilt-shift風）。手前と奥をぼかしてミニチュア感＝HD-2Dの決め手。
+	# ※ DOF は Forward+ / Mobile レンダラでのみ有効（GL Compatibility では無視される）。
+	var attrs := CameraAttributesPractical.new()
+	attrs.dof_blur_far_enabled = true
+	attrs.dof_blur_far_distance = 16.0
+	attrs.dof_blur_far_transition = 6.0
+	attrs.dof_blur_near_enabled = true
+	attrs.dof_blur_near_distance = 4.0
+	attrs.dof_blur_near_transition = 3.0
+	attrs.dof_blur_amount = 0.12
+	_cam.attributes = attrs
 	_sub.add_child(_cam)
 	_update_camera(true)
 
@@ -251,6 +264,41 @@ func _emissive_box(pos: Vector3, sz: Vector3, col: Color, energy: float = 3.0, y
 	_sub.add_child(mi)
 
 
+## 漂うボクセル粒子（小さな発光キューブ）。空気の粒子感＝HD-2Dのアトモスフィア。
+## CPUParticles3D なのでどのレンダラでも動く（GL Compatibility 可）。
+func _build_particles() -> void:
+	var cube := BoxMesh.new()
+	cube.size = Vector3(0.06, 0.06, 0.06)  # 小さなボクセル
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.albedo_color = Color(0.7, 0.95, 1.0)
+	m.emission_enabled = true
+	m.emission = Color(0.6, 0.9, 1.0)
+	m.emission_energy_multiplier = 2.2  # glow に拾わせて発光させる
+	m.vertex_color_use_as_albedo = true
+	cube.material = m
+
+	var p := CPUParticles3D.new()
+	p.mesh = cube
+	p.amount = 150
+	p.lifetime = 7.0
+	p.preprocess = 4.0  # 最初から空間に散らばった状態で開始
+	p.randomness = 1.0
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+	p.emission_box_extents = Vector3(GROUND_HALF, 3.0, GROUND_HALF)
+	p.direction = Vector3(0, 1, 0)
+	p.spread = 25.0
+	p.gravity = Vector3(0.2, 0.25, 0.0)  # ゆっくり上方へ漂う
+	p.initial_velocity_min = 0.1
+	p.initial_velocity_max = 0.5
+	p.scale_amount_min = 0.5
+	p.scale_amount_max = 1.6
+	# 明滅（生成時に色のばらつき：シアン〜白〜淡橙）
+	p.color = Color(0.8, 0.95, 1.0, 0.9)
+	p.position = Vector3(0, 2.5, -1.0)
+	_sub.add_child(p)
+
+
 ## ネオンの点光源（濡れた路面・キャラ周辺を色で染める）。
 func _neon_light(pos: Vector3, col: Color, energy: float, rng: float) -> void:
 	var o := OmniLight3D.new()
@@ -376,6 +424,7 @@ func _build_player() -> void:
 	_player_anim = ChibiAnim.new(PLAYER_ID)
 	_player = _make_billboard()
 	_sub.add_child(_player)
+	_player_shadow = _add_blob_shadow(_player_pos)
 	# 主人公に追従する控えめなキーライト（暗い夜でも主役を読めるように）。
 	if THEME == "cyberpunk":
 		_player_light = OmniLight3D.new()
@@ -396,6 +445,47 @@ func _build_npcs() -> void:
 		_sub.add_child(spr)
 		_npc_sprites.append(spr)
 		_npc_anims.append(anim)
+		# 足元のブロブシャドウ（ビルボードの落ち影は不安定なので明示的に接地影を置く）
+		_add_blob_shadow(base_pos)
+
+
+## 足元の楕円ソフトシャドウ。ビルボードは光源視点で薄くなり落ち影が不安定なため、
+## HD-2D の定番どおり板の影テクスチャを地面に寝かせて確実に接地させる。
+var _blob_tex: Texture2D = null
+
+func _add_blob_shadow(pos: Vector3, w: float = 1.5) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var q := PlaneMesh.new()  # XZ 平面（法線+Y）＝地面に寝た板
+	q.size = Vector2(w, w)
+	mi.mesh = q
+	mi.position = pos + Vector3(0, 0.03, 0)
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_texture = _get_blob_tex()
+	m.albedo_color = Color(0, 0, 0, 0.55)
+	m.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED  # z-fight 回避
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_sub.add_child(mi)
+	return mi
+
+
+## 中心が濃く外周が透明になる放射状の影テクスチャ。
+func _get_blob_tex() -> Texture2D:
+	if _blob_tex != null:
+		return _blob_tex
+	var n := 48
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	var c := (n - 1) * 0.5
+	for y in n:
+		for x in n:
+			var d := Vector2(x - c, y - c).length() / c
+			var a := clampf(1.0 - d, 0.0, 1.0)
+			a = a * a  # 中心を濃く、外周をなだらかに
+			img.set_pixel(x, y, Color(0, 0, 0, a))
+	_blob_tex = ImageTexture.create_from_image(img)
+	return _blob_tex
 
 
 ## 共通のビルボード Sprite3D を生成（Y 固定ビルボード＝直立したまま常にカメラを向く）。
@@ -449,6 +539,8 @@ func _process(delta: float) -> void:
 	_player.position = _player_pos + Vector3(0, _sprite_half_h(), 0)
 	if _player_light != null:
 		_player_light.position = _player_pos + Vector3(0, 2.2, 0.8)
+	if _player_shadow != null:
+		_player_shadow.position = _player_pos + Vector3(0, 0.03, 0)
 
 	# ── NPC は待機モーション ──
 	for i in _npc_sprites.size():
