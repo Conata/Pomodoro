@@ -89,18 +89,22 @@ func _draw() -> void:
 	var font := get_theme_default_font()
 	_hits.clear()
 
-	# ===== トップバー（最小・半透明） =====
-	# メニュー（左）
-	_icon(font, Vector2(34, 34), 22, "≡", PINK, "menu")
+	# ===== トップバー（薄い帯＋アイコン） =====
+	var tb := Rect2(0, 0, sz.x, 60)
+	draw_rect(tb, Color(0.02, 0.02, 0.05, 0.55))
+	draw_rect(Rect2(0, 60, sz.x, 1.5), Color(PINK.r, PINK.g, PINK.b, 0.4))
+	_icon(font, Vector2(34, 30), 21, "≡", PINK, "menu")
 	# 右：猫 / 設定 / ベル
-	_icon(font, Vector2(sz.x - 34, 34), 22, "猫", PINK, "cat")
-	_icon(font, Vector2(sz.x - 88, 34), 22, "設定", CYAN, "settings")
-	_icon(font, Vector2(sz.x - 142, 34), 22, "報", GOLD, "bell")
+	_icon(font, Vector2(sz.x - 34, 30), 21, "猫", PINK, "cat")
+	_icon(font, Vector2(sz.x - 86, 30), 21, "設定", CYAN, "settings")
+	_icon(font, Vector2(sz.x - 138, 30), 21, "報", GOLD, "bell")
 
-	# ===== 探索入口ポータル（右・縦書き＋紫の渦） =====
-	var pc := Vector2(sz.x - 52, sz.y * 0.34)
-	_hit(Rect2(pc.x - 50, pc.y - 60, 100, 150), "depart")
-	var pr := 34.0 + 3.0 * sin(_t * 2.2)
+	# ===== 探索入口ポータル（右端・縦書き＋紫の渦） =====
+	var pc := Vector2(sz.x - 56, sz.y * 0.42)
+	_hit(Rect2(pc.x - 52, pc.y - 56, 104, 170), "depart")
+	# うっすら枠
+	_panel(Rect2(pc.x - 50, pc.y - 54, 100, 168), Color(0.05, 0.03, 0.10, 0.45), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.5), 14)
+	var pr := 38.0 + 3.0 * sin(_t * 2.2)
 	draw_circle(pc, pr + 8, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.12))
 	draw_arc(pc, pr, _t * 1.6, _t * 1.6 + TAU * 0.78, 36, PURPLE, 3.0)
 	draw_arc(pc, pr * 0.6, -_t * 2.2, -_t * 2.2 + TAU * 0.62, 28, PINK, 2.5)

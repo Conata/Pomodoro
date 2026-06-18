@@ -78,11 +78,11 @@ func _ready() -> void:
 		_cam_dist_target = 11.5
 	elif stage_theme == "strip":
 		# 横帯：パーティ左(-X)・敵右(+X)。低く近い広角で横長に映す
-		_player_pos = Vector3(-4.4, 0, 0.5)  # 主人公はパーティ左端
-		_cam_target_override = Vector3(0, 1.0, 0.0)
-		_cam_height = 2.6
-		_cam_dist = 5.2
-		_cam_dist_target = 5.2
+		_player_pos = Vector3(-4.0, 0, 0.4)  # 主人公はパーティ左端
+		_cam_target_override = Vector3(0.5, 0.9, 0.3)
+		_cam_height = 2.9
+		_cam_dist = 6.2
+		_cam_dist_target = 6.2
 	_build_viewport()
 	_build_world()
 	_build_player()
@@ -554,8 +554,23 @@ func _build_props_home() -> void:
 	_emissive_box(Vector3(-2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), PINK, 2.8)  # タテ看板
 	_emissive_box(Vector3(2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), NEON_CYAN, 2.6)  # 対のシアン
 	# 赤提灯を店先に吊るす（中華）
-	for x in [-2.6, -0.9, 0.9, 2.6]:
+	for x in [-3.4, -2.0, -0.7, 0.7, 2.0, 3.4]:
 		_emissive_box(Vector3(x, 2.7, -0.4), Vector3(0.42, 0.6, 0.42), NEON_RED, 2.6)
+	# 「千客万来」の赤い札（黒猫飯店サインの下）
+	_emissive_box(Vector3(0.0, 2.45, -2.5), Vector3(1.7, 0.46, 0.15), NEON_RED, 2.4)
+
+	# ── カウンター裏の酒瓶棚（バーらしさ。色とりどりの小瓶＋棚板）──
+	var bottle_cols := [
+		Color(0.95, 0.6, 0.3), Color(0.4, 0.85, 0.6), Color(0.85, 0.4, 0.55),
+		Color(0.5, 0.65, 0.95), Color(0.95, 0.82, 0.4),
+	]
+	_add_box(Vector3(0.0, 1.30, -3.2), Vector3(7.6, 0.06, 0.3), Color(0.22, 0.14, 0.09), 0.5)  # 棚板
+	_add_box(Vector3(0.0, 1.86, -3.2), Vector3(7.6, 0.06, 0.3), Color(0.22, 0.14, 0.09), 0.5)
+	for row in 2:
+		var sy := 1.5 + row * 0.56
+		for i in 9:
+			_emissive_box(Vector3(-3.6 + i * 0.9, sy, -3.12), Vector3(0.15, 0.4, 0.12),
+					bottle_cols[i % bottle_cols.size()], 1.4)
 
 	# ── 手前：パーティテーブル（光る紫＝編成卓）。参照の中央テーブル ──
 	const PURPLE := Color(0.65, 0.3, 1.0)
@@ -596,15 +611,24 @@ func _build_enemies() -> void:
 		_spawn_enemy(e)
 
 
-## 横帯（フィールド）の小物：奥に薄くネオン、右(+X)に敵を横並び。
+## 横帯（フィールド）の小物：左右に足場、右に宝箱、奥に薄くネオン、右(+X)に敵を横並び。
 func _build_props_strip() -> void:
 	var P := CYBER_DIR + "platforms/"
+	# 奥のネオン（薄く）
 	_add_gltf(P + "Sign_1.gltf", Vector3(-2.0, 2.2, -4.0), 2.2, 0, 2.2)
 	_add_gltf(P + "Sign_3.gltf", Vector3(2.2, 2.4, -4.2), 2.2, 0, 2.2)
 	_neon_light(Vector3(0, 2.2, -3.6), Color(0.3, 0.85, 1.0), 2.5, 8.0)
+	# 左右の足場（味方／敵が乗る台。中央に隙間）
+	_add_box(Vector3(-2.6, -0.15, 0.4), Vector3(4.4, 0.3, 2.6), Color(0.10, 0.10, 0.16), 0.5)
+	_add_box(Vector3(3.4, -0.15, 0.4), Vector3(4.0, 0.3, 2.6), Color(0.12, 0.08, 0.14), 0.5)
+	_emissive_box(Vector3(-2.6, 0.02, 1.6), Vector3(4.2, 0.04, 0.1), Color(0.3, 0.8, 1.0), 1.6)  # 味方足場の縁
+	_emissive_box(Vector3(3.4, 0.02, 1.6), Vector3(3.8, 0.04, 0.1), Color(0.8, 0.3, 0.9), 1.6)   # 敵足場の縁
+	# 右端の宝箱（金の発光箱）
+	_add_box(Vector3(5.6, 0.35, 0.3), Vector3(0.7, 0.6, 0.6), Color(0.25, 0.16, 0.05), 0.4)
+	_emissive_box(Vector3(5.6, 0.62, 0.3), Vector3(0.66, 0.16, 0.56), Color(1.0, 0.8, 0.3), 2.2)
 	# 敵（右に横並び・やや小さめ）
-	for e in [Vector3(1.8, 0, 0.2), Vector3(3.2, 0, 0.6), Vector3(4.6, 0, 0.2)]:
-		_spawn_enemy(e, 0.85)
+	for e in [Vector3(2.0, 0, 0.2), Vector3(3.4, 0, 0.6), Vector3(4.6, 0, 0.1)]:
+		_spawn_enemy(e, 0.8)
 
 
 const KENNEY_DIR := "res://assets/third_party/kenney_naturekit/models/"
