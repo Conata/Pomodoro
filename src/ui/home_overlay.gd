@@ -39,6 +39,8 @@ func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) ->
 
 
 func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
+	# 可読性のため 1px の影を敷く
+	draw_string(font, pos + Vector2(1, 1), s, ha, w, size, Color(0, 0, 0, 0.55))
 	draw_string(font, pos, s, ha, w, size, col)
 
 
@@ -50,8 +52,8 @@ func _neon(font: Font, pos: Vector2, s: String, size: int, col: Color) -> void:
 
 func _icon_btn(font: Font, center: Vector2, r: float, label: String, col: Color) -> void:
 	_panel(Rect2(center - Vector2(r, r), Vector2(r * 2, r * 2)), PANEL_BG2, col, r, 1.5)
-	var w := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
-	_txt(font, center + Vector2(-w * 0.5, 6), label, 15, TEXT)
+	var w := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+	_txt(font, center + Vector2(-w * 0.5, 6), label, 16, TEXT)
 
 
 func _draw() -> void:
@@ -59,55 +61,55 @@ func _draw() -> void:
 	var font := get_theme_default_font()
 
 	# ===== トップバー =====
-	var bar_h := 56.0
+	var bar_h := 66.0
 	_panel(Rect2(8, 8, sz.x - 16, bar_h), PANEL_BG, Color(PINK.r, PINK.g, PINK.b, 0.5), 12)
-	_neon(font, Vector2(22, 38), "黒猫飯店", 22, PINK)
-	_txt(font, Vector2(132, 36), "店舗ランク 1B", 14, TEXT_DIM)
+	_neon(font, Vector2(22, 46), "黒猫飯店", 27, PINK)
+	_txt(font, Vector2(168, 44), "店舗ランク 1B", 16, TEXT_DIM)
 	# 右側リソース
-	var rx := sz.x - 24
+	var rx := sz.x - 26
 	for item in [["石 1,280", CYAN], ["金 12,840", GOLD], ["活 120/120", Color(0.6, 1.0, 0.9)]]:
 		var s: String = item[0]
-		var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
-		rx -= w + 18
-		_txt(font, Vector2(rx, 36), s, 16, item[1])
+		var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
+		rx -= w + 20
+		_txt(font, Vector2(rx, 44), s, 18, item[1])
 
 	# ===== 左上：本日の依頼 =====
-	var qy := bar_h + 18
-	_panel(Rect2(8, qy, 232, 86), PANEL_BG, Color(GOLD.r, GOLD.g, GOLD.b, 0.4), 10)
-	_txt(font, Vector2(20, qy + 24), "本日の依頼", 15, GOLD)
-	_txt(font, Vector2(20, qy + 48), "質屋の試練に挑む", 14, TEXT, HORIZONTAL_ALIGNMENT_LEFT, 210)
-	_txt(font, Vector2(20, qy + 72), "報酬  120石  +2,400G", 13, TEXT_DIM)
+	var qy := bar_h + 22
+	_panel(Rect2(8, qy, 248, 98), PANEL_BG, Color(GOLD.r, GOLD.g, GOLD.b, 0.4), 10)
+	_txt(font, Vector2(22, qy + 28), "本日の依頼", 17, GOLD)
+	_txt(font, Vector2(22, qy + 54), "質屋の試練に挑む", 16, TEXT, HORIZONTAL_ALIGNMENT_LEFT, 224)
+	_txt(font, Vector2(22, qy + 80), "報酬  120石  +2,400G", 14, TEXT_DIM)
 
 	# ===== 右上：ピックアップ召喚（ガチャ） =====
-	_panel(Rect2(sz.x - 200, qy, 192, 70), PANEL_BG2, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.55), 10)
-	_txt(font, Vector2(sz.x - 188, qy + 24), "ピックアップ召喚", 13, PURPLE)
-	_neon(font, Vector2(sz.x - 188, qy + 50), "後悔のフユキ ↑UP", 14, PINK)
+	_panel(Rect2(sz.x - 218, qy, 210, 80), PANEL_BG2, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.55), 10)
+	_txt(font, Vector2(sz.x - 204, qy + 28), "ピックアップ召喚", 15, PURPLE)
+	_neon(font, Vector2(sz.x - 204, qy + 58), "後悔のフユキ ↑UP", 16, PINK)
 
 	# ===== 右サイド：アイコン列 =====
-	var iy := qy + 110
+	var iy := qy + 128
 	for it in [["日課", CYAN], ["任務", PINK], ["催事", GOLD]]:
-		_icon_btn(font, Vector2(sz.x - 36, iy), 26, it[0], it[1])
-		iy += 64
+		_icon_btn(font, Vector2(sz.x - 40, iy), 30, it[0], it[1])
+		iy += 74
 
 	# ===== 左サイド：占い / 編成 =====
-	_icon_btn(font, Vector2(40, sz.y * 0.46), 28, "占い", PURPLE)
-	_icon_btn(font, Vector2(40, sz.y * 0.46 + 70), 28, "編成", CYAN)
+	_icon_btn(font, Vector2(44, sz.y * 0.46), 32, "占い", PURPLE)
+	_icon_btn(font, Vector2(44, sz.y * 0.46 + 80), 32, "編成", CYAN)
 
 	# ===== 吹き出し（店番のセリフ） =====
 	_speech(font, Vector2(sz.x * 0.34, sz.y * 0.32), "いらっしゃいませ！")
 	_speech(font, Vector2(sz.x * 0.62, sz.y * 0.5), "次の探索、どこへ？")
 
 	# ===== 下部：今日のメニュー =====
-	var my := sz.y - 230
-	_panel(Rect2(8, my, 236, 150), PANEL_BG, Color(GOLD.r, GOLD.g, GOLD.b, 0.4), 10)
-	_txt(font, Vector2(20, my + 24), "今日のメニュー", 15, GOLD)
+	var my := sz.y - 256
+	_panel(Rect2(8, my, 252, 168), PANEL_BG, Color(GOLD.r, GOLD.g, GOLD.b, 0.4), 10)
+	_txt(font, Vector2(22, my + 28), "今日のメニュー", 17, GOLD)
 	var menu := [["麻婆豆腐", "+24"], ["黒猫ラーメン", "+18"], ["焼売のジャズ", "+12"], ["メンマみそ", "+15"]]
-	var ly := my + 48
+	var ly := my + 56
 	for m in menu:
-		_txt(font, Vector2(22, ly), String(m[0]), 14, TEXT)
-		_txt(font, Vector2(180, ly), String(m[1]), 14, Color(0.6, 1.0, 0.6))
-		ly += 24
-	_txt(font, Vector2(20, my + 144), "本日の売上  8,640G", 13, GOLD)
+		_txt(font, Vector2(24, ly), String(m[0]), 16, TEXT)
+		_txt(font, Vector2(190, ly), String(m[1]), 16, Color(0.6, 1.0, 0.6))
+		ly += 27
+	_txt(font, Vector2(22, my + 160), "本日の売上  8,640G", 15, GOLD)
 
 	# ===== 探索へ出発ポータル（右下） =====
 	var pc := Vector2(sz.x - 86, sz.y - 150)
@@ -117,27 +119,27 @@ func _draw() -> void:
 	draw_arc(pc, pr, _t * 1.5, _t * 1.5 + TAU * 0.75, 40, PURPLE, 3.0)
 	draw_arc(pc, pr * 0.62, -_t * 2.0, -_t * 2.0 + TAU * 0.6, 32, PINK, 2.5)
 	draw_circle(pc, pr * 0.34, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.8))
-	var dw := font.get_string_size("探索へ出発", HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
-	_neon(font, pc + Vector2(-dw * 0.5, pr + 26), "探索へ出発", 15, PINK)
+	var dw := font.get_string_size("探索へ出発", HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x
+	_neon(font, pc + Vector2(-dw * 0.5, pr + 28), "探索へ出発", 17, PINK)
 
 	# ===== 下部ナビ =====
-	var nav_h := 60.0
+	var nav_h := 70.0
 	var ny := sz.y - nav_h
-	_panel(Rect2(0, ny, sz.x, nav_h), Color(0.03, 0.035, 0.07, 0.95), Color(PINK.r, PINK.g, PINK.b, 0.4), 0, 1)
+	_panel(Rect2(0, ny, sz.x, nav_h), Color(0.03, 0.035, 0.07, 0.96), Color(PINK.r, PINK.g, PINK.b, 0.4), 0, 1)
 	var tabs := ["ホーム", "キャラ", "持ち物", "記録", "図鑑", "設定"]
 	var tw := sz.x / tabs.size()
 	for i in tabs.size():
 		var active := i == 0
 		var c := PINK if active else TEXT_DIM
-		var lw := font.get_string_size(tabs[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+		var lw := font.get_string_size(tabs[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x
 		if active:
-			_panel(Rect2(i * tw + 8, ny + 8, tw - 16, nav_h - 16), Color(PINK.r, PINK.g, PINK.b, 0.14), Color(PINK.r, PINK.g, PINK.b, 0.5), 8)
-		_txt(font, Vector2(i * tw + (tw - lw) * 0.5, ny + 38), tabs[i], 14, c)
+			_panel(Rect2(i * tw + 8, ny + 8, tw - 16, nav_h - 16), Color(PINK.r, PINK.g, PINK.b, 0.16), Color(PINK.r, PINK.g, PINK.b, 0.55), 8)
+		_txt(font, Vector2(i * tw + (tw - lw) * 0.5, ny + 44), tabs[i], 17, c)
 
 
 ## 角丸吹き出し（しっぽ付き）。
 func _speech(font: Font, anchor: Vector2, text: String) -> void:
-	var fs := 15
+	var fs := 17
 	var tw := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 	var pad := 10.0
 	var bw := tw + pad * 2
