@@ -100,7 +100,7 @@ func _draw() -> void:
 	_icon(font, Vector2(sz.x - 138, 30), 21, "報", GOLD, "bell")
 
 	# ===== 探索入口ポータル（右端・縦書き＋紫の渦） =====
-	var pc := Vector2(sz.x - 56, sz.y * 0.42)
+	var pc := Vector2(sz.x - 56, sz.y * 0.47)
 	_hit(Rect2(pc.x - 52, pc.y - 56, 104, 170), "depart")
 	# うっすら枠
 	_panel(Rect2(pc.x - 50, pc.y - 54, 100, 168), Color(0.05, 0.03, 0.10, 0.45), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.5), 14)

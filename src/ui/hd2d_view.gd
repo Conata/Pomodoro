@@ -64,8 +64,8 @@ func _ready() -> void:
 		set_anchors_preset(Control.PRESET_FULL_RECT)
 	# テーマ別カメラ：home は店先を見るので低い角度（見下ろしを弱める）
 	if stage_theme == "home":
-		_player_pos = Vector3(0, 0, 3.8)   # 主人公は手前のパーティテーブル
-		_cam_target_override = Vector3(0, 0.4, 0.6)  # 店全体（カウンター〜テーブル）が入る注視点
+		_player_pos = Vector3(0, 0, 2.6)   # 主人公はパーティテーブル（VN窓に被らない位置へ）
+		_cam_target_override = Vector3(0, 0.8, 0.2)  # カウンター/バーを主役に
 		_cam_height = 6.0
 		_cam_dist = 12.0
 		_cam_dist_target = 12.0
@@ -77,12 +77,12 @@ func _ready() -> void:
 		_cam_dist = 11.5
 		_cam_dist_target = 11.5
 	elif stage_theme == "strip":
-		# 横帯：パーティ左(-X)・敵右(+X)。低く近い広角で横長に映す
-		_player_pos = Vector3(-4.0, 0, 0.4)  # 主人公はパーティ左端
-		_cam_target_override = Vector3(0.5, 0.9, 0.3)
-		_cam_height = 2.9
-		_cam_dist = 6.2
-		_cam_dist_target = 6.2
+		# 横帯：パーティ左(-X)・敵右(+X)。中央に間合いを取り対峙感を出す
+		_player_pos = Vector3(-4.6, 0, 0.4)  # 主人公はパーティ左端
+		_cam_target_override = Vector3(0.2, 0.9, 0.2)
+		_cam_height = 2.8
+		_cam_dist = 5.6
+		_cam_dist_target = 5.6
 	_build_viewport()
 	_build_world()
 	_build_player()
@@ -572,11 +572,11 @@ func _build_props_home() -> void:
 			_emissive_box(Vector3(-3.6 + i * 0.9, sy, -3.12), Vector3(0.15, 0.4, 0.12),
 					bottle_cols[i % bottle_cols.size()], 1.4)
 
-	# ── 手前：パーティテーブル（光る紫＝編成卓）。参照の中央テーブル ──
+	# ── パーティテーブル（光る紫＝編成卓）。VN窓に被らないよう奥めに小さく ──
 	const PURPLE := Color(0.65, 0.3, 1.0)
-	_add_box(Vector3(0.0, 0.32, 3.4), Vector3(3.0, 0.64, 2.0), Color(0.10, 0.08, 0.14), 0.4)  # 卓本体
-	_emissive_box(Vector3(0.0, 0.66, 3.4), Vector3(2.7, 0.12, 1.7), PURPLE, 2.6)  # 天面の発光
-	_neon_light(Vector3(0.0, 1.4, 3.4), PURPLE, 3.5, 6.0)  # 卓からの紫光
+	_add_box(Vector3(0.0, 0.30, 2.6), Vector3(2.4, 0.6, 1.4), Color(0.10, 0.08, 0.14), 0.4)  # 卓本体
+	_emissive_box(Vector3(0.0, 0.62, 2.6), Vector3(2.1, 0.12, 1.1), PURPLE, 2.6)  # 天面の発光
+	_neon_light(Vector3(0.0, 1.3, 2.6), PURPLE, 3.2, 5.5)  # 卓からの紫光
 
 	# ── 店内の暖色光（カウンター裏）＋提灯＋窓外のネオンで寒暖対比 ──
 	_neon_light(Vector3(0.0, 2.0, -2.8), WARM, 4.0, 8.0)
@@ -618,16 +618,16 @@ func _build_props_strip() -> void:
 	_add_gltf(P + "Sign_1.gltf", Vector3(-2.0, 2.2, -4.0), 2.2, 0, 2.2)
 	_add_gltf(P + "Sign_3.gltf", Vector3(2.2, 2.4, -4.2), 2.2, 0, 2.2)
 	_neon_light(Vector3(0, 2.2, -3.6), Color(0.3, 0.85, 1.0), 2.5, 8.0)
-	# 左右の足場（味方／敵が乗る台。中央に隙間）
-	_add_box(Vector3(-2.6, -0.15, 0.4), Vector3(4.4, 0.3, 2.6), Color(0.10, 0.10, 0.16), 0.5)
-	_add_box(Vector3(3.4, -0.15, 0.4), Vector3(4.0, 0.3, 2.6), Color(0.12, 0.08, 0.14), 0.5)
-	_emissive_box(Vector3(-2.6, 0.02, 1.6), Vector3(4.2, 0.04, 0.1), Color(0.3, 0.8, 1.0), 1.6)  # 味方足場の縁
-	_emissive_box(Vector3(3.4, 0.02, 1.6), Vector3(3.8, 0.04, 0.1), Color(0.8, 0.3, 0.9), 1.6)   # 敵足場の縁
+	# 左右の足場（味方／敵が乗る台。中央に間合い＝対峙の溝）
+	_add_box(Vector3(-3.4, -0.15, 0.4), Vector3(4.6, 0.3, 2.6), Color(0.10, 0.10, 0.16), 0.5)
+	_add_box(Vector3(3.8, -0.15, 0.4), Vector3(4.4, 0.3, 2.6), Color(0.12, 0.08, 0.14), 0.5)
+	_emissive_box(Vector3(-3.4, 0.02, 1.62), Vector3(4.4, 0.04, 0.1), Color(0.3, 0.8, 1.0), 1.8)  # 味方足場の縁
+	_emissive_box(Vector3(3.8, 0.02, 1.62), Vector3(4.2, 0.04, 0.1), Color(0.9, 0.3, 0.8), 1.8)   # 敵足場の縁
 	# 右端の宝箱（金の発光箱）
-	_add_box(Vector3(5.6, 0.35, 0.3), Vector3(0.7, 0.6, 0.6), Color(0.25, 0.16, 0.05), 0.4)
-	_emissive_box(Vector3(5.6, 0.62, 0.3), Vector3(0.66, 0.16, 0.56), Color(1.0, 0.8, 0.3), 2.2)
+	_add_box(Vector3(6.0, 0.35, 0.3), Vector3(0.7, 0.6, 0.6), Color(0.25, 0.16, 0.05), 0.4)
+	_emissive_box(Vector3(6.0, 0.62, 0.3), Vector3(0.66, 0.16, 0.56), Color(1.0, 0.8, 0.3), 2.2)
 	# 敵（右に横並び・やや小さめ）
-	for e in [Vector3(2.0, 0, 0.2), Vector3(3.4, 0, 0.6), Vector3(4.6, 0, 0.1)]:
+	for e in [Vector3(2.6, 0, 0.2), Vector3(3.9, 0, 0.6), Vector3(5.1, 0, 0.1)]:
 		_spawn_enemy(e, 0.8)
 
 
@@ -775,8 +775,8 @@ const HOME_NPCS := [
 	{"id": "nurse",  "pos": Vector3(-2.4, 0.0, -2.6), "flip": false},  # 店番
 	{"id": "mil",    "pos": Vector3(0.0, 0.0, -2.6),  "flip": false},  # 店番（店長）
 	{"id": "muu",    "pos": Vector3(2.4, 0.0, -2.6),  "flip": false},  # 店番
-	{"id": "doctor", "pos": Vector3(-2.0, 0.0, 3.2),  "flip": false},  # パーティ
-	{"id": "yuzuki", "pos": Vector3(2.0, 0.0, 3.2),   "flip": false},  # パーティ
+	{"id": "doctor", "pos": Vector3(-2.1, 0.0, 2.2),  "flip": false},  # パーティ
+	{"id": "yuzuki", "pos": Vector3(2.1, 0.0, 2.2),   "flip": false},  # パーティ
 ]
 
 
@@ -790,9 +790,9 @@ const DIVE_NPCS := [
 
 # 横帯（フィールド）のパーティ配置：左(-X)に横並び。主人公は別途 _player_pos。
 const STRIP_NPCS := [
-	{"id": "mil",    "pos": Vector3(-3.0, 0.0, 0.2), "flip": false},
-	{"id": "nurse",  "pos": Vector3(-1.8, 0.0, 0.6), "flip": false},
-	{"id": "doctor", "pos": Vector3(-0.6, 0.0, 0.2), "flip": false},
+	{"id": "mil",    "pos": Vector3(-3.6, 0.0, 0.2), "flip": false},
+	{"id": "nurse",  "pos": Vector3(-2.6, 0.0, 0.6), "flip": false},
+	{"id": "doctor", "pos": Vector3(-1.7, 0.0, 0.2), "flip": false},
 ]
 
 
