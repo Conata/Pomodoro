@@ -44,6 +44,7 @@ var _player_anim: ChibiAnim
 var _player_flip := false
 var _player_light: OmniLight3D = null  # 主人公追従のキーライト（cyberpunk のみ）
 var _player_shadow: MeshInstance3D = null  # 主人公追従のブロブシャドウ
+var _enemy_nodes: Array = []           # 潜航の敵プール（set_dive_state で出し入れ）
 var _npc_sprites: Array[Sprite3D] = []
 var _npc_anims: Array[ChibiAnim] = []
 var _tex_cache := {}
@@ -585,30 +586,86 @@ func _build_props_home() -> void:
 
 
 ## 紫の炎モンスター1体（暗い球体＋発光コア＋点光源＋接地影）。
-func _spawn_enemy(e: Vector3, scl: float = 1.0) -> void:
+func _spawn_enemy(e: Vector3, scl: float = 1.0) -> Node3D:
 	var col := Color(0.72, 0.25, 1.0)
+	var root := Node3D.new()
+	root.position = e
+	_sub.add_child(root)
+	# 本体（暗い球＋紫発光）
 	var mi := MeshInstance3D.new()
 	var sm := SphereMesh.new()
 	sm.radius = 0.7 * scl
 	sm.height = 1.5 * scl
 	mi.mesh = sm
-	mi.position = e + Vector3(0, 0.85 * scl, 0)
+	mi.position = Vector3(0, 0.85 * scl, 0)
 	var m := StandardMaterial3D.new()
 	m.albedo_color = Color(0.08, 0.03, 0.12)
 	m.emission_enabled = true
 	m.emission = col
 	m.emission_energy_multiplier = 1.8
 	mi.material_override = m
-	_sub.add_child(mi)
-	_emissive_box(e + Vector3(0, 1.9 * scl, 0), Vector3(0.5, 0.8, 0.5) * scl, col, 3.0)  # 炎コア
-	_neon_light(e + Vector3(0, 1.2 * scl, 0), col, 3.2, 6.5)
-	_add_blob_shadow(e, 1.5 * scl)
+	root.add_child(mi)
+	# 炎コア（発光ボックス）
+	var core := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.5, 0.8, 0.5) * scl
+	core.mesh = bm
+	core.position = Vector3(0, 1.9 * scl, 0)
+	var cm := StandardMaterial3D.new()
+	cm.albedo_color = col
+	cm.emission_enabled = true
+	cm.emission = col
+	cm.emission_energy_multiplier = 3.0
+	core.material_override = cm
+	core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(core)
+	# 点光源
+	var o := OmniLight3D.new()
+	o.position = Vector3(0, 1.2 * scl, 0)
+	o.light_color = col
+	o.light_energy = 3.2
+	o.omni_range = 6.5
+	root.add_child(o)
+	# 接地影
+	var sh := _make_blob_mesh(1.5 * scl)
+	sh.position = Vector3(0, 0.03, 0)
+	root.add_child(sh)
+	return root
 
 
-## 潜航の敵（奥 z<0＝画面上方）。
+## ブロブ影メッシュ（ツリー未追加・呼び出し側で add_child）。
+func _make_blob_mesh(w: float) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var q := PlaneMesh.new()
+	q.size = Vector2(w, w)
+	mi.mesh = q
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_texture = _get_blob_tex()
+	m.albedo_color = Color(0, 0, 0, 0.55)
+	m.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
+
+
+## 潜航の敵プール（最大数を奥に並べ、最初は非表示。set_dive_state で出し入れ）。
 func _build_enemies() -> void:
-	for e in [Vector3(0.0, 0, -2.6), Vector3(-2.9, 0, -3.4), Vector3(2.9, 0, -3.2)]:
-		_spawn_enemy(e)
+	var slots := [
+		Vector3(0.0, 0, -2.6), Vector3(-2.9, 0, -3.4), Vector3(2.9, 0, -3.2),
+		Vector3(-1.5, 0, -4.2), Vector3(1.5, 0, -4.4),
+	]
+	for e in slots:
+		var node := _spawn_enemy(e)
+		node.visible = false
+		_enemy_nodes.append(node)
+
+
+## main から毎フレーム：sim の mob 数＆戦闘中フラグで敵の出し入れを同期。
+func set_dive_state(mob_count: int, in_combat: bool) -> void:
+	for i in _enemy_nodes.size():
+		_enemy_nodes[i].visible = in_combat and i < mob_count
 
 
 ## 横帯（フィールド）の小物：左右に足場、右に宝箱、奥に薄くネオン、右(+X)に敵を横並び。
@@ -822,19 +879,8 @@ func _build_npcs() -> void:
 var _blob_tex: Texture2D = null
 
 func _add_blob_shadow(pos: Vector3, w: float = 1.5) -> MeshInstance3D:
-	var mi := MeshInstance3D.new()
-	var q := PlaneMesh.new()  # XZ 平面（法線+Y）＝地面に寝た板
-	q.size = Vector2(w, w)
-	mi.mesh = q
+	var mi := _make_blob_mesh(w)
 	mi.position = pos + Vector3(0, 0.03, 0)
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.albedo_texture = _get_blob_tex()
-	m.albedo_color = Color(0, 0, 0, 0.55)
-	m.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED  # z-fight 回避
-	mi.material_override = m
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_sub.add_child(mi)
 	return mi
 

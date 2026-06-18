@@ -10,7 +10,9 @@ const DIVE := "res://dive_screen.tscn"
 var sim: KuroSim = null
 var _current: Node = null
 var _dive_overlay: Node = null   # 潜航中のみ。毎フレーム set_data で更新
+var _dive_stage: Node = null     # 潜航中のみ。敵の出し入れを同期
 var _in_dive := false
+var _speed := 1                  # 潜航の早送り倍率（fast コマンドで 1→2→3 巡回）
 var _home_data: Dictionary = {}  # ホーム表示データ（日数/金/セリフ）
 
 
@@ -21,9 +23,12 @@ func _ready() -> void:
 	_goto(HOME)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not _in_dive or sim == null:
 		return
+	# 早送り：アンカーを余分に巻き戻して「より多くの時間が経った」ことにする
+	if _speed > 1 and bool(sim.state["run"]["active"]):
+		sim.state["run"]["anchor"] = float(sim.state["run"]["anchor"]) - float(_speed - 1) * delta
 	# KuroSim を実時間アンカーで駆動（タブ非アクティブでも正確：旧メインと同方式）
 	_catch_up(Time.get_unix_time_from_system())
 	_update_dive_ui()
@@ -72,9 +77,13 @@ func _goto(path: String) -> void:
 		_current.queue_free()
 		_current = null
 	_dive_overlay = null
+	_dive_stage = null
+	_speed = 1
 	_in_dive = (path == DIVE)
 	_current = load(path).instantiate()
 	add_child(_current)
+	if _in_dive:
+		_dive_stage = _current.get_node_or_null("Stage")
 	var overlay := _current.get_node_or_null("Overlay")
 	if overlay != null:
 		if overlay.has_signal("action_pressed"):
@@ -97,15 +106,20 @@ func _on_home_action(id: String) -> void:
 			print("[home] action: ", id)
 
 
-## 潜航のコマンド（KuroSim はオート戦闘。一時停止で撤退して店へ）。
+## 潜航のコマンド。KuroSim はオート戦闘なので、fast=早送り倍率、pause=撤退を実効化。
+## 攻撃/スキル/防御/アイテムの手動発動は KuroSim 側 API（手動アクション）が要るため当面ログ。
 func _on_dive_command(id: String) -> void:
 	match id:
 		"pause":
 			if sim != null and bool(sim.state["run"]["active"]):
 				sim.abandon_run()
 			_goto(HOME)
+		"fast":
+			_speed = (_speed % 3) + 1   # 1→2→3→1
+		"auto":
+			pass                         # 既定でオート
 		_:
-			print("[dive] command: ", id)
+			print("[dive] command(未接続: 要KuroSim手動アクションAPI): ", id)
 
 
 ## 潜航オーバーレイへ KuroSim の実データを流し込む。
@@ -123,6 +137,9 @@ func _update_dive_ui() -> void:
 		tot += hp
 		mx += mhp
 		party.append({"name": String(g.get("name", gid)), "hp": hp, "mhp": mhp, "sp": 100, "msp": 100})
+	# 3D ステージの敵を sim の mob 数＆戦闘フラグに同期
+	if _dive_stage != null and _dive_stage.has_method("set_dive_state"):
+		_dive_stage.set_dive_state((sim.state["mobs"] as Array).size(), bool(sim.state["in_combat"]))
 	var run: Dictionary = sim.state["run"]
 	var remain := maxf(float(run["duration"]) - float(run["elapsed"]), 0.0)
 	var prog := fmod(float(sim.state["dist"]), KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN
