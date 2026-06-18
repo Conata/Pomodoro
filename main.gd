@@ -6,11 +6,13 @@ extends Control
 
 const HOME := "res://home_screen.tscn"
 const DIVE := "res://dive_screen.tscn"
+const MENU := "res://menu_screen.tscn"
 
 var sim: KuroSim = null
 var _current: Node = null
 var _dive_overlay: Node = null   # 潜航中のみ。毎フレーム set_data で更新
 var _dive_stage: Node = null     # 潜航中のみ。敵の出し入れを同期
+var _menu_overlay: Node = null   # メニュー（メンバー/市場/経営/工房）表示中のみ
 var _in_dive := false
 var _speed := 1                  # 潜航の早送り倍率（fast コマンドで 1→2→3 巡回）
 var _home_data: Dictionary = {}  # ホーム表示データ（日数/金/セリフ）
@@ -78,6 +80,7 @@ func _goto(path: String) -> void:
 		_current = null
 	_dive_overlay = null
 	_dive_stage = null
+	_menu_overlay = null
 	_speed = 1
 	_in_dive = (path == DIVE)
 	_current = load(path).instantiate()
@@ -88,6 +91,9 @@ func _goto(path: String) -> void:
 	if overlay != null:
 		if overlay.has_signal("action_pressed"):
 			overlay.action_pressed.connect(_on_home_action)
+			if overlay.has_method("bind"):
+				overlay.bind(sim)              # メニュー：KuroSim を参照させて実データ描画
+				_menu_overlay = overlay
 			if overlay.has_method("set_data") and not _home_data.is_empty():
 				overlay.set_data(_home_data)   # ホーム：実データ反映（日数/金/セリフ）
 		if overlay.has_signal("command_pressed"):
@@ -95,7 +101,9 @@ func _goto(path: String) -> void:
 			_dive_overlay = overlay
 
 
-## ホームのUI操作（仕入れへ で仕入れ開始）。
+## ホーム／メニューのUI操作。
+## フッターナビ（home/member/market/management/workshop）＝画面遷移、
+## それ以外の "動詞:パラメータ" はメニュー各パネルの操作（KuroSim を実際に駆動）。
 func _on_home_action(id: String) -> void:
 	match id:
 		"pomodoro":
@@ -106,8 +114,87 @@ func _on_home_action(id: String) -> void:
 			# クイック仕入れ（80秒）
 			sim.start_run("quick", 1.0, Time.get_unix_time_from_system(), "仕入れ")
 			_goto(DIVE)
+		"home":
+			# フッター「ホーム」＝店（HD-2D ホーム）へ。既にホームならセリフだけ戻す。
+			_say_home("「おかえり。今日も飯店、開けるよ。」")
+		"member", "market", "management", "workshop":
+			_open_menu(id)
+		"menu", "cat":
+			# ホーム上部の ≡／猫 はメニュー（メンバー）への近道。
+			_open_menu("member")
+		"settings", "bell":
+			# 設定・通知は未実装（旧版から未移植）。
+			print("[home] action(未実装): ", id)
 		_:
-			print("[home] action: ", id)
+			_on_menu_action(id)
+
+
+## メニュー画面を開く（既に開いていればパネル切替のみ＝タブ感覚で軽量）。
+func _open_menu(panel: String) -> void:
+	if panel == "market" and sim != null:
+		sim.maybe_rotate_ship(Time.get_unix_time_from_system())  # 入店時に交易船を更新
+	if _menu_overlay != null and is_instance_valid(_menu_overlay):
+		_menu_overlay.set_panel(panel)
+	else:
+		_goto(MENU)
+		if _menu_overlay != null:
+			_menu_overlay.set_panel(panel)
+
+
+## メニュー各パネルの操作（"動詞:パラメータ"）。KuroSim を駆動して再描画する。
+func _on_menu_action(id: String) -> void:
+	if sim == null:
+		return
+	var parts := id.split(":")
+	var verb := parts[0]
+	# パラメータ付きの動詞は引数欠落なら無視（不正IDでの添字アクセス防止）。
+	var need := {"buy": 2, "ship": 2, "keeper": 2, "menu": 2, "renov": 2, "skill": 3, "tree": 3, "talk": 3}
+	if need.has(verb) and parts.size() < int(need[verb]):
+		return
+	var toast := ""
+	match verb:
+		"buy":
+			var r: Dictionary = sim.market_buy(int(parts[1]))
+			toast = String(r.get("text", "ゴールドが足りない")) if not r.is_empty() else "ゴールドが足りない"
+		"ship":
+			toast = "交易船から購入した" if sim.buy_ship(int(parts[1])) else "買えなかった"
+		"keeper":
+			sim.set_keeper(parts[1])
+			toast = "店番を %s に" % KuroData.GIRLS[parts[1]]["name"]
+		"menu":
+			toast = "献立を更新" if sim.toggle_menu(parts[1]) else "枠がいっぱい／未所持"
+		"door":
+			var m: Dictionary = sim.state["morning"]
+			m["door"] = "closed" if m["door"] == "open" else "open"
+			toast = "扉の方針：%s" % ("開ける" if m["door"] == "open" else "見送る")
+		"renov":
+			toast = "改装「%s」を解放" % KuroData.RENOV_NODES[parts[1]]["name"] if sim.unlock_renov(parts[1]) else "ゴールドが足りない"
+		"skill":
+			toast = "スキルを更新" if sim.equip_skill(parts[1], parts[2]) else "スキル枠がいっぱい"
+		"tree":
+			toast = "育成ノードを解放" if sim.tree_unlock(parts[1], parts[2]) else "欠片が足りない／条件未達"
+		"talk":
+			sim.complete_talk(parts[1], int(parts[2]))
+			toast = "%s との会話を解放（♥+6）" % KuroData.GIRLS[parts[1]]["name"]
+		_:
+			print("[menu] action: ", id)
+			return
+	sim.drain_events()  # ログイベントは破棄（トーストで代替）
+	if _menu_overlay != null and is_instance_valid(_menu_overlay):
+		if toast != "" and _menu_overlay.has_method("set_toast"):
+			_menu_overlay.set_toast(toast)
+		_menu_overlay.queue_redraw()
+
+
+## ホームのVNセリフを差し替えて、現在のホームオーバーレイへ即時反映する。
+func _say_home(vn_line: String) -> void:
+	if _menu_overlay != null or _in_dive:
+		_goto(HOME)
+	_refresh_home_data(vn_line)
+	if _current != null:
+		var overlay := _current.get_node_or_null("Overlay")
+		if overlay != null and overlay.has_method("set_data"):
+			overlay.set_data(_home_data)
 
 
 ## 潜航のコマンド。KuroSim はオート戦闘なので、fast=早送り倍率、pause=撤退を実効化。
