@@ -21,6 +21,26 @@ signal action_pressed(id: String)
 var _t := 0.0
 var _hits: Array = []   # {rect: Rect2, id: String}（_draw で毎フレーム再構築）
 
+# ── 表示データ（main.gd から set_data() で差し込む。既定はプレースホルダ）──
+var shop_rank := "店舗ランク 1B"
+var res_gems := "1,280"
+var res_gold := "12,840"
+var res_energy := "120/120"
+var quest_body := "質屋の試練に挑む"
+var quest_reward := "報酬  120石  +2,400G"
+var gacha_pickup := "後悔のフユキ ↑UP"
+var sales := "8,640G"
+var menu := [["麻婆豆腐", "+24"], ["黒猫ラーメン", "+18"], ["焼売のジャズ", "+12"], ["メンマみそ", "+15"]]
+var speeches := ["いらっしゃいませ！", "次の探索、どこへ？"]
+
+
+## main.gd から実データを流し込む（キー＝上記プロパティ名）。
+func set_data(d: Dictionary) -> void:
+	for k in d:
+		if k in self:
+			set(k, d[k])
+	queue_redraw()
+
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -90,10 +110,10 @@ func _draw() -> void:
 	var bar_h := 66.0
 	_panel(Rect2(8, 8, sz.x - 16, bar_h), PANEL_BG, Color(PINK.r, PINK.g, PINK.b, 0.5), 12)
 	_neon(font, Vector2(22, 46), "黒猫飯店", 27, PINK)
-	_txt(font, Vector2(168, 44), "店舗ランク 1B", 16, TEXT_DIM)
+	_txt(font, Vector2(168, 44), shop_rank, 16, TEXT_DIM)
 	# 右側リソース
 	var rx := sz.x - 26
-	for item in [["石 1,280", CYAN], ["金 12,840", GOLD], ["活 120/120", Color(0.6, 1.0, 0.9)]]:
+	for item in [["石 " + res_gems, CYAN], ["金 " + res_gold, GOLD], ["活 " + res_energy, Color(0.6, 1.0, 0.9)]]:
 		var s: String = item[0]
 		var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
 		rx -= w + 20
@@ -104,14 +124,14 @@ func _draw() -> void:
 	_hit(Rect2(8, qy, 248, 98), "quest")
 	_panel(Rect2(8, qy, 248, 98), PANEL_BG, Color(GOLD.r, GOLD.g, GOLD.b, 0.4), 10)
 	_txt(font, Vector2(22, qy + 28), "本日の依頼", 17, GOLD)
-	_txt(font, Vector2(22, qy + 54), "質屋の試練に挑む", 16, TEXT, HORIZONTAL_ALIGNMENT_LEFT, 224)
-	_txt(font, Vector2(22, qy + 80), "報酬  120石  +2,400G", 14, TEXT_DIM)
+	_txt(font, Vector2(22, qy + 54), quest_body, 16, TEXT, HORIZONTAL_ALIGNMENT_LEFT, 224)
+	_txt(font, Vector2(22, qy + 80), quest_reward, 14, TEXT_DIM)
 
 	# ===== 右上：ピックアップ召喚（ガチャ） =====
 	_hit(Rect2(sz.x - 218, qy, 210, 80), "gacha")
 	_panel(Rect2(sz.x - 218, qy, 210, 80), PANEL_BG2, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.55), 10)
 	_txt(font, Vector2(sz.x - 204, qy + 28), "ピックアップ召喚", 15, PURPLE)
-	_neon(font, Vector2(sz.x - 204, qy + 58), "後悔のフユキ ↑UP", 16, PINK)
+	_neon(font, Vector2(sz.x - 204, qy + 58), gacha_pickup, 16, PINK)
 
 	# ===== 右サイド：アイコン列 =====
 	var iy := qy + 128
@@ -127,20 +147,21 @@ func _draw() -> void:
 	_hit(Rect2(12, sz.y * 0.46 + 48, 64, 64), "party")
 
 	# ===== 吹き出し（店番のセリフ） =====
-	_speech(font, Vector2(sz.x * 0.34, sz.y * 0.32), "いらっしゃいませ！")
-	_speech(font, Vector2(sz.x * 0.62, sz.y * 0.5), "次の探索、どこへ？")
+	var sp_pos := [Vector2(sz.x * 0.34, sz.y * 0.32), Vector2(sz.x * 0.62, sz.y * 0.5)]
+	for i in mini(speeches.size(), sp_pos.size()):
+		if String(speeches[i]) != "":
+			_speech(font, sp_pos[i], String(speeches[i]))
 
 	# ===== 下部：今日のメニュー =====
 	var my := sz.y - 256
 	_panel(Rect2(8, my, 252, 168), PANEL_BG, Color(GOLD.r, GOLD.g, GOLD.b, 0.4), 10)
 	_txt(font, Vector2(22, my + 28), "今日のメニュー", 17, GOLD)
-	var menu := [["麻婆豆腐", "+24"], ["黒猫ラーメン", "+18"], ["焼売のジャズ", "+12"], ["メンマみそ", "+15"]]
 	var ly := my + 56
 	for m in menu:
 		_txt(font, Vector2(24, ly), String(m[0]), 16, TEXT)
 		_txt(font, Vector2(190, ly), String(m[1]), 16, Color(0.6, 1.0, 0.6))
 		ly += 27
-	_txt(font, Vector2(22, my + 160), "本日の売上  8,640G", 15, GOLD)
+	_txt(font, Vector2(22, my + 160), "本日の売上  " + sales, 15, GOLD)
 
 	# ===== 探索へ出発ポータル（右下） =====
 	var pc := Vector2(sz.x - 86, sz.y - 150)

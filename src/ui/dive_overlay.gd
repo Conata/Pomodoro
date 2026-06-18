@@ -16,13 +16,25 @@ const SP_COL := Color(0.4, 0.7, 1.0)
 const TEXT := Color(0.96, 0.95, 0.98)
 const TEXT_DIM := Color(0.72, 0.74, 0.82)
 
-# パーティ（表示名・現HP・最大HP・現SP・最大SP）
-const PARTY := [
+# ── 表示データ（main.gd / KuroSim から set_data() で差し込む。既定はプレースホルダ）──
+var party: Array = [
 	{"name": "ミル", "hp": 320, "mhp": 420, "sp": 80, "msp": 100},
 	{"name": "ナース", "hp": 280, "mhp": 360, "sp": 60, "msp": 100},
 	{"name": "キリコ", "hp": 300, "mhp": 400, "sp": 100, "msp": 100},
 	{"name": "ドクター", "hp": 210, "mhp": 450, "sp": 70, "msp": 100},
 ]
+var player_lv := "Lv.12"
+var player_hp := 1.0          # 0〜1
+var player_exp := 0.63        # 0〜1
+var quest_text := "中央ゲートへ進む  0/1"
+
+
+## main.gd / KuroSim から実データを流し込む。
+func set_data(d: Dictionary) -> void:
+	for k in d:
+		if k in self:
+			set(k, d[k])
+	queue_redraw()
 const COMMANDS := [
 	{"label": "攻撃", "sub": "通常攻撃", "col": Color(1.0, 0.5, 0.35), "id": "attack"},
 	{"label": "スキル", "sub": "SP 20", "col": CYAN, "id": "skill"},
@@ -89,10 +101,10 @@ func _draw() -> void:
 	var bar_h := 64.0
 	_panel(Rect2(8, 8, sz.x - 16, bar_h), PANEL_BG, Color(CYAN.r, CYAN.g, CYAN.b, 0.45), 12)
 	_txt(font, Vector2(22, 32), "プレイヤー", 16, TEXT)
-	_txt(font, Vector2(22, 54), "Lv.12", 15, GOLD)
-	_bar(Rect2(112, 20, 180, 12), 1.0, HP_COL)
-	_txt(font, Vector2(300, 32), "120 / 120", 14, TEXT_DIM)
-	_bar(Rect2(112, 40, 180, 8), 0.63, Color(0.5, 0.85, 1.0))  # EXP
+	_txt(font, Vector2(22, 54), player_lv, 15, GOLD)
+	_bar(Rect2(112, 20, 180, 12), player_hp, HP_COL)
+	_txt(font, Vector2(300, 32), "%d%%" % int(player_hp * 100.0), 14, TEXT_DIM)
+	_bar(Rect2(112, 40, 180, 8), player_exp, Color(0.5, 0.85, 1.0))  # EXP
 	# 右：AUTO / 倍速 / 一時停止
 	var bx := sz.x - 20
 	for it in [["||", "pause"], ["AUTO", "auto"], ["≫", "fast"]]:
@@ -106,7 +118,7 @@ func _draw() -> void:
 	var qy := bar_h + 16
 	_panel(Rect2(8, qy, 250, 44), Color(0.05, 0.05, 0.09, 0.7), Color(GOLD.r, GOLD.g, GOLD.b, 0.35), 8)
 	_txt(font, Vector2(20, qy + 19), "メインクエスト", 13, GOLD)
-	_txt(font, Vector2(20, qy + 38), "中央ゲートへ進む  0/1", 14, TEXT)
+	_txt(font, Vector2(20, qy + 38), quest_text, 14, TEXT)
 
 	# ===== 下部：パーティカード＋コマンド =====
 	var foot_h := 212.0
@@ -115,9 +127,9 @@ func _draw() -> void:
 
 	# パーティカード（横4）
 	var cy := fy + 12
-	var cw := (sz.x - 24) / PARTY.size()
-	for i in PARTY.size():
-		var d: Dictionary = PARTY[i]
+	var cw := (sz.x - 24) / maxi(party.size(), 1)
+	for i in party.size():
+		var d: Dictionary = party[i]
 		var cx := 12 + i * cw
 		_panel(Rect2(cx + 3, cy, cw - 6, 86), Color(0.08, 0.07, 0.12, 0.92), Color(PINK.r, PINK.g, PINK.b, 0.3), 8)
 		_txt(font, Vector2(cx + 12, cy + 24), String(d["name"]), 15, TEXT)
