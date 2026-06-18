@@ -950,34 +950,38 @@ func _process(delta: float) -> void:
 		if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): iv.x -= 1.0
 		if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): iv.x += 1.0
 	var moving := iv != Vector2.ZERO
+	var player_move := Vector3.ZERO
 	if moving:
 		# カメラ相対移動（カメラを回しても W=画面奥 のまま操作できる）
 		var basis := Basis(Vector3.UP, _cam_yaw)
 		var fwd := basis * Vector3(0, 0, -1)
 		var right := basis * Vector3(1, 0, 0)
-		var world_move := (fwd * -iv.y + right * iv.x).normalized()
-		_player_pos.x = clampf(_player_pos.x + world_move.x * MOVE_SPEED * delta, -GROUND_HALF, GROUND_HALF)
-		_player_pos.z = clampf(_player_pos.z + world_move.z * MOVE_SPEED * delta, -GROUND_HALF, GROUND_HALF)
-		# 画面上の左右で向きを反転（カメラの右ベクトルとの内積で判定）
-		var screen_x := world_move.dot(right)
-		if absf(screen_x) > 0.01:
-			_player_flip = screen_x < 0.0
+		player_move = (fwd * -iv.y + right * iv.x).normalized()
+		_player_pos.x = clampf(_player_pos.x + player_move.x * MOVE_SPEED * delta, -GROUND_HALF, GROUND_HALF)
+		_player_pos.z = clampf(_player_pos.z + player_move.z * MOVE_SPEED * delta, -GROUND_HALF, GROUND_HALF)
 
-	# ── プレイヤーのアニメ更新（歩行/待機）と描画 ──
-	_player_anim.update_params(1.0 if (moving or _force_moving) else 0.0)
-	_player_anim.tick(delta)
-	_player.texture = _tex(_player_anim.current_path())
-	_player.flip_h = _player_flip
+	# ── プレイヤーの描画（移動中は方向別歩行シート、停止は待機）──
+	var pw := _walk_texture(PLAYER_ID, player_move) if moving else {"tex": null}
+	if pw["tex"] != null:
+		_apply_walk(_player, pw)
+		_player_flip = bool(pw["flip"])
+	else:
+		_reset_billboard(_player)
+		_player_anim.update_params(1.0 if (moving or _force_moving) else 0.0)
+		_player_anim.tick(delta)
+		_player.texture = _tex(_player_anim.current_path())
+		_player.flip_h = _player_flip
 	_player.position = _player_pos + Vector3(0, _sprite_half_h(), 0)
 	if _player_light != null:
 		_player_light.position = _player_pos + Vector3(0, 2.2, 0.8)
 	if _player_shadow != null:
 		_player_shadow.position = _player_pos + Vector3(0, 0.03, 0)
 
-	# ── NPC：home は基準位置の周りを徘徊、それ以外は待機 ──
+	# ── NPC：home は基準位置の周りを徘徊（方向別歩行）、それ以外は待機 ──
 	var wander := stage_theme == "home"
 	for i in _npc_sprites.size():
 		var nmoving := false
+		var nmove := Vector3.ZERO
 		if wander:
 			var to: Vector3 = _npc_target[i] - _npc_pos[i]
 			to.y = 0.0
@@ -986,16 +990,19 @@ func _process(delta: float) -> void:
 				if randf() < 0.7:
 					_npc_target[i] = _npc_base[i] + Vector3(randf_range(-1.3, 1.3), 0, randf_range(-1.0, 1.0))
 			else:
-				var step: Vector3 = to.normalized() * 0.9 * delta
-				_npc_pos[i] += step
+				nmove = to.normalized()
+				_npc_pos[i] += nmove * 0.9 * delta
 				nmoving = true
-				if absf(step.x) > 0.001:
-					_npc_flip[i] = step.x < 0.0
 			_npc_sprites[i].position = _npc_pos[i] + Vector3(0, _sprite_half_h(), 0)
-			_npc_sprites[i].flip_h = bool(_npc_flip[i])
 			if i < _npc_shadow.size() and _npc_shadow[i] != null:
 				_npc_shadow[i].position = _npc_pos[i] + Vector3(0, 0.03, 0)
-		_npc_anims[i].update_params(1.0 if nmoving else 0.0)
+		if nmoving:
+			var w := _walk_texture(_npc_anims[i].char_id, nmove)
+			if w["tex"] != null:
+				_apply_walk(_npc_sprites[i], w)
+				continue
+		_reset_billboard(_npc_sprites[i])
+		_npc_anims[i].update_params(1.0 if nmoving else 0.0)  # 方向別が無ければ run/idle
 		_npc_anims[i].tick(delta)
 		_npc_sprites[i].texture = _tex(_npc_anims[i].current_path())
 
@@ -1042,3 +1049,73 @@ func _tex(path: String) -> Texture2D:
 			t = load(SPRITE_DIR + PLAYER_ID + "/idle_f0.png") if ResourceLoader.exists(SPRITE_DIR + PLAYER_ID + "/idle_f0.png") else null
 		_tex_cache[path] = t
 	return _tex_cache[path]
+
+
+## 単純ロード（フォールバックなし）。方向別スプライト存在判定に使う。
+func _tex_opt(path: String) -> Texture2D:
+	if not _tex_cache.has(path):
+		_tex_cache[path] = load(path) if ResourceLoader.exists(path) else null
+	return _tex_cache[path]
+
+
+## カメラ相対の移動方向 → 歩行スプライトの向き [anim名, 左右反転]。
+## カメラへ向かう＝正面(walk_front)、離れる＝背面(walk_back)、横は正面/背面＋反転。
+func _walk_dir(world_move: Vector3) -> Array:
+	var basis := Basis(Vector3.UP, _cam_yaw)
+	var into_screen := basis * Vector3(0, 0, -1)   # W で進む向き＝カメラから見て奥
+	var right := basis * Vector3(1, 0, 0)
+	var m := world_move.normalized()
+	var fd := m.dot(into_screen)   # >0: 奥へ＝背面 / <0: 手前へ＝正面
+	var rd := m.dot(right)
+	var anim := "walk_back" if fd > 0.35 else "walk_front"
+	return [anim, rd < 0.0]
+
+
+var _walk_count_cache: Dictionary = {}
+
+## <id>/<anim>_f<n>.png の連番数（キャッシュ）。0 なら未生成。
+func _walk_count(id: String, anim: String) -> int:
+	var key := id + "/" + anim
+	if _walk_count_cache.has(key):
+		return _walk_count_cache[key]
+	var n := 0
+	while ResourceLoader.exists(SPRITE_DIR + "%s/%s_f%d.png" % [id, anim, n]):
+		n += 1
+	_walk_count_cache[key] = n
+	return n
+
+
+## 移動方向 → 方向別歩行 {tex, flip, ph}。正規スペック（idle と同じ 144x192 連番:
+## walk_front_f<n>.png / walk_back_f<n>.png）が在れば使い、無ければ tex=null で
+## 呼び出し側が run/idle にフォールバック（素材が揃うまで現状維持・退行なし）。
+## ※横移動は walk_front＋反転で代用。既存の walk_front.png（別解像度シート）は使わない。
+func _walk_texture(id: String, world_move: Vector3) -> Dictionary:
+	var d := _walk_dir(world_move)
+	var anim: String = d[0]
+	var flip: bool = d[1]
+	for cand in [anim, "walk_front"]:
+		var n := _walk_count(id, cand)
+		if n > 0:
+			var fr := int(Time.get_ticks_msec() / 140) % n   # ~7fps
+			return {"tex": _tex_opt(SPRITE_DIR + "%s/%s_f%d.png" % [id, cand, fr]),
+					"flip": flip, "ph": PIXEL_SIZE}
+	return {"tex": null}
+
+
+## 方向別歩行スプライトをビルボードに適用。
+func _apply_walk(spr: Sprite3D, w: Dictionary) -> void:
+	spr.texture = w["tex"]
+	spr.vframes = 1
+	spr.hframes = 1
+	spr.frame = 0
+	spr.pixel_size = float(w["ph"])
+	spr.flip_h = bool(w["flip"])
+
+
+## ビルボードを通常（単一フレーム・既定 pixel_size）に戻す。
+func _reset_billboard(spr: Sprite3D) -> void:
+	if spr.hframes != 1 or spr.pixel_size != PIXEL_SIZE:
+		spr.hframes = 1
+		spr.vframes = 1
+		spr.frame = 0
+		spr.pixel_size = PIXEL_SIZE
