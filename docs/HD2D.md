@@ -60,3 +60,15 @@ NPC（doctor / nurse / mil / muu / yuzuki）が中庭に立ち、カメラは斜
   逆にリメイク参照のような高精細路線なら現状のフル解像度のままでよい。
 - **タイルシフト風 DOF**：手前/奥をぼかすと一気にミニチュア感が出るが、GL Compatibility では非対応のため Forward+ 切替が前提。
 - 桜・芝・ベンチなどの 3D 小物や、ビルボードの草を増やすと参照画像の中庭の密度に近づく。
+
+## レンダリング確認（プレビュー）
+
+Godot 4.6（GL Compatibility・ソフトウェアGL）でオフスクリーン撮影した実画面。
+撮影は `tools/hd2d_shot.gd`（`xvfb-run … -s tools/hd2d_shot.gd`）。
+
+| 全体俯瞰 | 正面 | 回転 |
+|---|---|---|
+| ![overview](hd2d/overview.png) | ![front](hd2d/front.png) | ![rotated](hd2d/rotated.png) |
+
+ビルボードのピクセルキャラが 3D の中庭に立ち、足元に影が落ち、傾けた周回カメラ＋
+ヴィネットで HD-2D として成立している。中庭の小物は Kenney Nature Kit（CC0）。

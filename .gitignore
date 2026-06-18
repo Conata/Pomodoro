@@ -13,3 +13,4 @@ secrets*
 # 生成途中の生データ（keying前の元画像など）
 assets/**/_raw/
 tools/_out/
+_out/hd2d_shot_*.png

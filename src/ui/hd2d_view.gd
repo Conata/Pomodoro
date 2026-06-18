@@ -22,11 +22,11 @@ const GROUND_HALF := 14.0          # 地面の半径（移動制限）
 
 # 中庭に立たせる NPC：{id, 位置, 向き}
 const NPCS := [
-	{"id": "doctor", "pos": Vector3(-4.0, 0.0, -3.0), "flip": false},
-	{"id": "nurse",  "pos": Vector3(4.0, 0.0, -3.0),  "flip": true},
-	{"id": "mil",    "pos": Vector3(-6.0, 0.0, 2.0),  "flip": false},
-	{"id": "muu",    "pos": Vector3(6.0, 0.0, 2.0),   "flip": true},
-	{"id": "yuzuki", "pos": Vector3(0.0, 0.0, -6.5),  "flip": false},
+	{"id": "doctor", "pos": Vector3(-2.6, 0.0, -2.0), "flip": false},
+	{"id": "nurse",  "pos": Vector3(2.6, 0.0, -2.0),  "flip": true},
+	{"id": "mil",    "pos": Vector3(-3.4, 0.0, 3.0),  "flip": false},
+	{"id": "muu",    "pos": Vector3(3.4, 0.0, 3.5),   "flip": true},
+	{"id": "yuzuki", "pos": Vector3(1.2, 0.0, -5.5),  "flip": false},
 ]
 
 const CAM_HEIGHT := 8.0            # カメラの高さ（高/距離 で見下ろし角が決まる ≈ 42°）
@@ -48,6 +48,8 @@ var _cam_yaw := 0.0                # 現在のヨー角（rad）
 var _cam_yaw_target := 0.0         # Q/E で ±90° 刻みの目標
 var _cam_dist := 9.0
 var _cam_dist_target := 9.0
+var _force_moving := false         # スクショ撮影用：入力なしでも歩行アニメを再生
+var _cam_height := CAM_HEIGHT       # カメラ高さ（俯瞰アングル時に上げる）
 
 
 func _ready() -> void:
@@ -98,11 +100,13 @@ func _build_world() -> void:
 	sky_mat.ground_bottom_color = Color(0.55, 0.55, 0.58)
 	sky.sky_material = sky_mat
 	env.sky = sky
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 1.0
+	# 環境光は暖色フラットにして影が青緑に転ぶのを防ぐ（コントラストも上げる）
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.62, 0.60, 0.55)
+	env.ambient_light_energy = 0.55
 	env.glow_enabled = true
-	env.glow_intensity = 0.4
-	env.glow_bloom = 0.05
+	env.glow_intensity = 0.25
+	env.glow_bloom = 0.0
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 
 	var we := WorldEnvironment.new()
@@ -111,25 +115,15 @@ func _build_world() -> void:
 
 	# ── 太陽光（影あり・斜め上から）──
 	var sun := DirectionalLight3D.new()
-	sun.rotation_degrees = Vector3(-55.0, -40.0, 0.0)
-	sun.light_energy = 1.15
-	sun.light_color = Color(1.0, 0.96, 0.88)
+	sun.rotation_degrees = Vector3(-52.0, -35.0, 0.0)
+	sun.light_energy = 1.35  # 明るく・コントラスト強め（白飛びは避ける）
+	sun.light_color = Color(1.0, 0.95, 0.85)
 	sun.shadow_enabled = true
-	sun.shadow_blur = 2.0  # 柔らかい影（オクトラ風）
+	sun.shadow_blur = 1.5  # 柔らかい影（オクトラ風）
 	_sub.add_child(sun)
 
-	# ── 地面（タイルテクスチャを敷いた平面）──
-	var plane := MeshInstance3D.new()
-	var pm := PlaneMesh.new()
-	pm.size = Vector2(GROUND_HALF * 2.0 + 4.0, GROUND_HALF * 2.0 + 4.0)
-	plane.mesh = pm
-	var gmat := StandardMaterial3D.new()
-	gmat.albedo_texture = _make_tile_texture()
-	gmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	gmat.uv1_scale = Vector3(16.0, 16.0, 1.0)
-	gmat.roughness = 0.95
-	plane.material_override = gmat
-	_sub.add_child(plane)
+	# ── 地面：Kenney の草タイル（1x1）を MultiMesh で敷き詰め（Kenney と質感を統一・1ドローコール）──
+	_build_ground_tiles()
 
 	# ── 中庭の小物：Kenney Nature Kit（CC0）の glTF モデルを配置 ──
 	_build_props()
@@ -142,16 +136,32 @@ func _build_world() -> void:
 	_update_camera(true)
 
 
-## チェッカー＋ノイズの簡易タイルテクスチャをコードで生成（外部アセット不要）。
-func _make_tile_texture() -> ImageTexture:
+## 地面（PlaneMesh ＋ 自前のやわらかいタイル質感）。色を完全に制御できるので
+## テーマ（自然/サイバーパンク等）に合わせて調整しやすい。
+func _build_ground_tiles() -> void:
+	var plane := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(GROUND_HALF * 2.0 + 8.0, GROUND_HALF * 2.0 + 8.0)
+	plane.mesh = pm
+	var gmat := StandardMaterial3D.new()
+	gmat.albedo_texture = _make_ground_texture()
+	gmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	gmat.uv1_scale = Vector3(18.0, 18.0, 1.0)
+	gmat.roughness = 0.92
+	plane.material_override = gmat
+	plane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_sub.add_child(plane)
+
+
+## やわらかい二色タイルの地面テクスチャ（低コントラストの草緑）。
+func _make_ground_texture() -> ImageTexture:
 	var n := 32
 	var img := Image.create(n, n, false, Image.FORMAT_RGB8)
 	for y in n:
 		for x in n:
 			var checker := ((x / 16) + (y / 16)) % 2 == 0
-			var base := Color(0.52, 0.60, 0.42) if checker else Color(0.46, 0.54, 0.38)
-			# 軽いざらつき
-			var j := (float((x * 7 + y * 13) % 17) / 17.0 - 0.5) * 0.06
+			var base := Color(0.40, 0.50, 0.30) if checker else Color(0.36, 0.46, 0.27)
+			var j := (float((x * 7 + y * 13) % 17) / 17.0 - 0.5) * 0.05
 			img.set_pixel(x, y, Color(base.r + j, base.g + j, base.b + j))
 	return ImageTexture.create_from_image(img)
 
@@ -197,38 +207,40 @@ func _enable_shadows(node: Node) -> void:
 
 ## 中庭のレイアウト。Kenney Nature Kit（CC0）で木・柵・岩・茂み・花・石畳を配置。
 func _build_props() -> void:
-	# 奥の木立（高めの木を perimeter に。fall 系で色味に変化）
-	_add_model("tree_default", Vector3(-8, 0, -8), 2.6, 20)
-	_add_model("tree_default_fall", Vector3(8, 0, -8.5), 2.8, -30)
-	_add_model("tree_oak", Vector3(-10.5, 0, -2), 2.4, 0)
-	_add_model("tree_thin", Vector3(10.5, 0, -1), 2.6, 15)
-	_add_model("tree_default_fall", Vector3(-9, 0, 6), 2.3, 200)
-	_add_model("tree_oak", Vector3(9.5, 0, 6.5), 2.5, 120)
-	_add_model("tree_pineTallA", Vector3(0, 0, -10.5), 3.0, 0)
+	# 木立：縦画面は横が狭いので中央寄り(x≈±4)＆大きめ(約3.5倍=キャラの倍以上)に。
+	# 奥(z<0)に大きく、手前(z>0)はやや小さく＝奥行き感。
+	_add_model("tree_default", Vector3(-4.5, 0, -8), 3.8, 20)
+	_add_model("tree_oak", Vector3(4.5, 0, -8.5), 3.6, -30)
+	_add_model("tree_pineTallA", Vector3(-1.5, 0, -10), 4.2, 0)
+	_add_model("tree_default_fall", Vector3(2.0, 0, -10.5), 3.4, 40)  # 秋色アクセント
+	_add_model("tree_thin", Vector3(-6.0, 0, -4), 3.2, 15)
+	_add_model("tree_oak", Vector3(6.0, 0, -3), 3.0, 120)
+	_add_model("tree_default_fall", Vector3(-5.0, 0, 7), 2.6, 200)    # 手前は小さめ
+	_add_model("tree_default", Vector3(5.0, 0, 7.5), 2.6, 90)
 
 	# 背景の柵（奥の境界。1ユニット幅を 1.5 倍で並べる）
-	for i in range(-4, 5):
-		_add_model("fence_simple", Vector3(i * 1.5, 0, -9.5), 1.5, 0)
+	for i in range(-3, 4):
+		_add_model("fence_simple", Vector3(i * 1.5, 0, -9.0), 1.5, 0)
 
 	# 中央の石畳パス（プレイヤーの通り道）
-	for z in range(-3, 6):
+	for z in range(-4, 7):
 		_add_model("ground_pathTile", Vector3(0, 0.02, z * 1.0), 1.0, 0)
 
-	# 岩・石（中景のアクセント）
-	_add_model("rock_largeA", Vector3(-5, 0, 3), 1.8, 40)
-	_add_model("rock_largeC", Vector3(6, 0, 2.5), 1.6, 200)
-	_add_model("stone_smallB", Vector3(-2.5, 0, 5), 1.4, 0)
+	# 岩・石（中景のアクセント。パスを避けて左右に）
+	_add_model("rock_largeA", Vector3(-3.5, 0, 3), 1.8, 40)
+	_add_model("rock_largeC", Vector3(3.8, 0, 2.5), 1.6, 200)
+	_add_model("stone_smallB", Vector3(-2.6, 0, 5.5), 1.4, 0)
 
-	# 茂み・草・花（足元の密度）
+	# 茂み・草・花（足元の密度。パスの左右に寄せる）
 	for d in [
-		{"m": "plant_bushLarge", "p": Vector3(-4, 0, -2), "s": 1.6},
-		{"m": "plant_bushDetailed", "p": Vector3(5, 0, -3), "s": 1.6},
-		{"m": "grass_large", "p": Vector3(-2, 0, 1), "s": 1.6},
-		{"m": "grass_large", "p": Vector3(3, 0, 4), "s": 1.6},
-		{"m": "flower_redA", "p": Vector3(-3.2, 0, 2), "s": 1.8},
-		{"m": "flower_yellowB", "p": Vector3(2.2, 0, -1), "s": 1.8},
-		{"m": "flower_purpleC", "p": Vector3(4, 0, 1.5), "s": 1.8},
-		{"m": "mushroom_redGroup", "p": Vector3(-6, 0, -4), "s": 1.6},
+		{"m": "plant_bushLarge", "p": Vector3(-3.0, 0, -2), "s": 1.8},
+		{"m": "plant_bushDetailed", "p": Vector3(3.2, 0, -3), "s": 1.8},
+		{"m": "grass_large", "p": Vector3(-1.6, 0, 1), "s": 1.8},
+		{"m": "grass_large", "p": Vector3(1.8, 0, 4.5), "s": 1.8},
+		{"m": "flower_redA", "p": Vector3(-2.2, 0, 2.2), "s": 2.0},
+		{"m": "flower_yellowB", "p": Vector3(1.8, 0, -1), "s": 2.0},
+		{"m": "flower_purpleC", "p": Vector3(2.6, 0, 1.5), "s": 2.0},
+		{"m": "mushroom_redGroup", "p": Vector3(-3.4, 0, -4), "s": 1.8},
 	]:
 		_add_model(String(d["m"]), d["p"], float(d["s"]), 0)
 
@@ -280,7 +292,6 @@ func _process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): iv.x += 1.0
 	var moving := iv != Vector2.ZERO
 	if moving:
-		iv = iv.normalized()
 		# カメラ相対移動（カメラを回しても W=画面奥 のまま操作できる）
 		var basis := Basis(Vector3.UP, _cam_yaw)
 		var fwd := basis * Vector3(0, 0, -1)
@@ -294,7 +305,7 @@ func _process(delta: float) -> void:
 			_player_flip = screen_x < 0.0
 
 	# ── プレイヤーのアニメ更新（歩行/待機）と描画 ──
-	_player_anim.update_params(1.0 if moving else 0.0)
+	_player_anim.update_params(1.0 if (moving or _force_moving) else 0.0)
 	_player_anim.tick(delta)
 	_player.texture = _tex(_player_anim.current_path())
 	_player.flip_h = _player_flip
@@ -318,7 +329,7 @@ func _update_camera(instant: bool) -> void:
 	else:
 		_cam_yaw = lerp_angle(_cam_yaw, _cam_yaw_target, 0.12)
 		_cam_dist = lerpf(_cam_dist, _cam_dist_target, 0.12)
-	var offset := Basis(Vector3.UP, _cam_yaw) * Vector3(0, CAM_HEIGHT, _cam_dist)
+	var offset := Basis(Vector3.UP, _cam_yaw) * Vector3(0, _cam_height, _cam_dist)
 	var target := _player_pos + offset
 	if instant:
 		_cam.position = target
