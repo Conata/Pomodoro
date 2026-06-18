@@ -192,9 +192,10 @@ func _build_env_cyberpunk() -> void:
 	_sub.add_child(moon)
 
 
-## 地面（PlaneMesh ＋ 自前のやわらかいタイル質感）。色を完全に制御できるので
-## テーマ（自然/サイバーパンク等）に合わせて調整しやすい。
+## 地面。cyberpunk はキットの Platform 天面をタイル状に敷いて「キット由来の床」にする
+## （隙間/光漏れ防止に暗いベース板を一枚下に敷く）。nature/フォールバックは PlaneMesh。
 func _build_ground_tiles() -> void:
+	# ベース板（必ず一枚。cyberpunk は暗い濡れアスファルト、nature は草）
 	var plane := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
 	pm.size = Vector2(GROUND_HALF * 2.0 + 8.0, GROUND_HALF * 2.0 + 8.0)
@@ -204,7 +205,6 @@ func _build_ground_tiles() -> void:
 	gmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	gmat.uv1_scale = Vector3(18.0, 18.0, 1.0)
 	if THEME == "cyberpunk":
-		# 濡れたアスファルト：暗く・つるっとさせてネオンの映り込み（スペキュラ）を出す
 		gmat.roughness = 0.28
 		gmat.metallic = 0.25
 	else:
@@ -212,6 +212,15 @@ func _build_ground_tiles() -> void:
 	plane.material_override = gmat
 	plane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_sub.add_child(plane)
+
+	# cyberpunk：キットの Platform_4x4 の天面を床として敷き詰める（キット由来の床）
+	if THEME == "cyberpunk":
+		var step := 4.0  # Platform_4x4 のフットプリント(~4.5)に合わせ少し詰めて隙間を消す
+		var n := int(ceil((GROUND_HALF + 2.0) / step))
+		for ix in range(-n, n + 1):
+			for iz in range(-n, n + 1):
+				_add_gltf(CYBER_DIR + "platforms/Platform_4x4.gltf",
+						Vector3(ix * step, 0.0, iz * step), 1.0, 0)
 
 
 ## 地面テクスチャ。テーマで草緑／濡れアスファルトを切替。
