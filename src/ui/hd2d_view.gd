@@ -55,16 +55,18 @@ var _cam_dist := 9.0
 var _cam_dist_target := 9.0
 var _force_moving := false         # スクショ撮影用：入力なしでも歩行アニメを再生
 var _cam_height := CAM_HEIGHT       # カメラ高さ（俯瞰アングル時に上げる）
+var _cam_target_override = null      # Vector3 指定で注視点を固定（home の据置構図用）
 
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	# テーマ別カメラ：home は店先を見るので低い角度（見下ろしを弱める）
 	if stage_theme == "home":
-		_player_pos = Vector3(0, 0, -2.6)  # オーナーはカウンター裏
-		_cam_height = 5.5
-		_cam_dist = 13.0
-		_cam_dist_target = 13.0
+		_player_pos = Vector3(0, 0, 3.8)   # 主人公は手前のパーティテーブル
+		_cam_target_override = Vector3(0, 0.4, 0.6)  # 店全体（カウンター〜テーブル）が入る注視点
+		_cam_height = 6.0
+		_cam_dist = 12.0
+		_cam_dist_target = 12.0
 	_build_viewport()
 	_build_world()
 	_build_player()
@@ -481,21 +483,25 @@ func _build_props_home() -> void:
 	# 背後の店内壁（暖色で発光させて「店内の灯り」）
 	_add_box(Vector3(0.0, 1.8, -3.6), Vector3(8.0, 3.6, 0.4), Color(0.18, 0.10, 0.06), 0.6)
 	_emissive_box(Vector3(0.0, 1.7, -3.35), Vector3(6.4, 2.0, 0.1), WARM, 1.2)  # 暖色の店内窓
-	# 赤いネオン看板「黒猫飯店」（カウンター上）
-	_emissive_box(Vector3(0.0, 3.4, -2.6), Vector3(4.4, 0.8, 0.2), NEON_RED, 3.2)
-	_emissive_box(Vector3(-2.6, 3.0, -2.4), Vector3(0.4, 1.6, 0.18), NEON_RED, 2.6)  # タテ看板
+	# ピンクのネオン看板「黒猫飯店」（カウンター上・店の主役サイン）
+	const PINK := Color(1.0, 0.32, 0.72)
+	_emissive_box(Vector3(0.0, 3.5, -2.6), Vector3(4.8, 0.9, 0.2), PINK, 3.4)
+	_emissive_box(Vector3(-2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), PINK, 2.8)  # タテ看板
+	_emissive_box(Vector3(2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), NEON_CYAN, 2.6)  # 対のシアン
 	# 赤提灯を店先に吊るす（中華）
 	for x in [-2.6, -0.9, 0.9, 2.6]:
 		_emissive_box(Vector3(x, 2.7, -0.4), Vector3(0.42, 0.6, 0.42), NEON_RED, 2.6)
 
-	# ── 店内の暖色光（カウンター裏）＋提灯の赤い光 ──
-	_neon_light(Vector3(0.0, 2.0, -2.8), WARM, 4.0, 8.0)
-	_neon_light(Vector3(-2.4, 2.4, -0.4), NEON_RED, 1.8, 5.0)
-	_neon_light(Vector3(2.4, 2.4, -0.4), NEON_RED, 1.8, 5.0)
+	# ── 手前：パーティテーブル（光る紫＝編成卓）。参照の中央テーブル ──
+	const PURPLE := Color(0.65, 0.3, 1.0)
+	_add_box(Vector3(0.0, 0.32, 3.4), Vector3(3.0, 0.64, 2.0), Color(0.10, 0.08, 0.14), 0.4)  # 卓本体
+	_emissive_box(Vector3(0.0, 0.66, 3.4), Vector3(2.7, 0.12, 1.7), PURPLE, 2.6)  # 天面の発光
+	_neon_light(Vector3(0.0, 1.4, 3.4), PURPLE, 3.5, 6.0)  # 卓からの紫光
 
-	# ── 手前：客席（丸椅子＝箱）──
-	for sx in [-2.4, 2.4]:
-		_add_box(Vector3(sx, 0.35, 1.6), Vector3(0.7, 0.7, 0.7), Color(0.12, 0.12, 0.16), 0.6)
+	# ── 店内の暖色光（カウンター裏）＋提灯＋窓外のネオンで寒暖対比 ──
+	_neon_light(Vector3(0.0, 2.0, -2.8), WARM, 4.0, 8.0)
+	_neon_light(Vector3(-2.6, 2.4, -0.4), NEON_RED, 1.8, 5.0)
+	_neon_light(Vector3(2.6, 2.4, -0.4), PINK, 1.8, 5.0)
 
 
 const KENNEY_DIR := "res://assets/third_party/kenney_naturekit/models/"
@@ -637,13 +643,13 @@ func _build_player() -> void:
 		_sub.add_child(_player_light)
 
 
-# ホーム（黒猫飯店）のキャラ配置：店番（カウンター裏 z<-2）＋客（手前 z>1）。
+# ホーム（黒猫飯店）のキャラ配置：店番（カウンター裏 z=-2.6）＋パーティ（手前の紫テーブル z≈3-4）。
 const HOME_NPCS := [
-	{"id": "nurse",  "pos": Vector3(-2.7, 0.0, -2.6), "flip": false},  # 店番
-	{"id": "mil",    "pos": Vector3(2.7, 0.0, -2.6),  "flip": false},  # 店番
-	{"id": "muu",    "pos": Vector3(-2.3, 0.0, 1.4),  "flip": false},  # 客
-	{"id": "doctor", "pos": Vector3(2.3, 0.0, 1.4),   "flip": false},  # 客
-	{"id": "yuzuki", "pos": Vector3(0.0, 0.0, 2.6),   "flip": false},  # 客
+	{"id": "nurse",  "pos": Vector3(-2.4, 0.0, -2.6), "flip": false},  # 店番
+	{"id": "mil",    "pos": Vector3(0.0, 0.0, -2.6),  "flip": false},  # 店番（店長）
+	{"id": "muu",    "pos": Vector3(2.4, 0.0, -2.6),  "flip": false},  # 店番
+	{"id": "doctor", "pos": Vector3(-2.0, 0.0, 3.2),  "flip": false},  # パーティ
+	{"id": "yuzuki", "pos": Vector3(2.0, 0.0, 3.2),   "flip": false},  # パーティ
 ]
 
 
@@ -775,13 +781,15 @@ func _update_camera(instant: bool) -> void:
 	else:
 		_cam_yaw = lerp_angle(_cam_yaw, _cam_yaw_target, 0.12)
 		_cam_dist = lerpf(_cam_dist, _cam_dist_target, 0.12)
+	# 注視点：通常はプレイヤー追従、home は固定注視点（据置構図）
+	var look: Vector3 = _cam_target_override if _cam_target_override != null else _player_pos
 	var offset := Basis(Vector3.UP, _cam_yaw) * Vector3(0, _cam_height, _cam_dist)
-	var target := _player_pos + offset
+	var target := look + offset
 	if instant:
 		_cam.position = target
 	else:
 		_cam.position = _cam.position.lerp(target, 0.18)
-	_cam.look_at(_player_pos + Vector3(0, 1.0, 0), Vector3.UP)
+	_cam.look_at(look + Vector3(0, 1.0, 0), Vector3.UP)
 
 
 ## 画面端を暗く落とすヴィネットを 3D 描画の上に重ねる。
