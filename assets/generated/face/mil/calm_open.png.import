@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b0jgv3gcqtnuj"
-valid=false
+uid="uid://ddxceaobc5hms"
+path="res://.godot/imported/calm_open.png-9eb6489e8e09486714c74876fc17685c.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
 source_file="res://assets/generated/face/mil/calm_open.png"
+dest_files=["res://.godot/imported/calm_open.png-9eb6489e8e09486714c74876fc17685c.ctex"]
 
 [params]
 

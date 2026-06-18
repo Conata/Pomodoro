@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dac8jh4prqut1"
-valid=false
+uid="uid://c5xb3usm57xwb"
+path="res://.godot/imported/neutral_open.png-d9e67628f76a0cabc4b0159e2ad58294.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
 source_file="res://assets/generated/face/mil/neutral_open.png"
+dest_files=["res://.godot/imported/neutral_open.png-d9e67628f76a0cabc4b0159e2ad58294.ctex"]
 
 [params]
 

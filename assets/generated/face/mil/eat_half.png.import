@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dsguh5lxon8ke"
-valid=false
+uid="uid://k14pvj3sa2rk"
+path="res://.godot/imported/eat_half.png-36bdaffeb06e10c5810b0c02aef8aa58.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
 source_file="res://assets/generated/face/mil/eat_half.png"
+dest_files=["res://.godot/imported/eat_half.png-36bdaffeb06e10c5810b0c02aef8aa58.ctex"]
 
 [params]
 

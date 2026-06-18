@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dv25ul3e1j1ex"
-valid=false
+uid="uid://b2tmufsoylf4x"
+path="res://.godot/imported/surprise_open.png-ebc11ba55c733d448df867a28c12c1a3.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
 source_file="res://assets/generated/face/mil/surprise_open.png"
+dest_files=["res://.godot/imported/surprise_open.png-ebc11ba55c733d448df867a28c12c1a3.ctex"]
 
 [params]
 

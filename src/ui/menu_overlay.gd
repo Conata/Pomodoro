@@ -41,6 +41,7 @@ var _toast := ""
 var _toast_t := 0.0
 var _t := 0.0
 var _hits: Array = []
+var _tex: Dictionary = {}      # アイコン/立ち絵テクスチャのキャッシュ（path -> Texture2D|null）
 
 
 func _ready() -> void:
@@ -122,6 +123,28 @@ func _tw(font: Font, s: String, size: int) -> float:
 	return font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
 
 
+## アセットをキャッシュ付きで取得（無ければ null）。
+func _icon(path: String) -> Texture2D:
+	if not _tex.has(path):
+		_tex[path] = load(path) if ResourceLoader.exists(path) else null
+	return _tex[path]
+
+
+## アイコンを rect 内にアスペクト維持で描く。存在すれば true（呼び出し側の文字fallback判定用）。
+func _draw_icon(path: String, rect: Rect2, modulate := Color(1, 1, 1, 1)) -> bool:
+	var tex := _icon(path)
+	if tex == null:
+		return false
+	var ts := tex.get_size()
+	if ts.x <= 0.0 or ts.y <= 0.0:
+		return false
+	var scale := minf(rect.size.x / ts.x, rect.size.y / ts.y)
+	var dst := ts * scale
+	var pos := rect.position + (rect.size - dst) * 0.5
+	draw_texture_rect(tex, Rect2(pos, dst), false, modulate)
+	return true
+
+
 ## ラベル付きボタン。enabled=false は灰色＆非ヒット。
 func _btn(font: Font, rect: Rect2, label: String, col: Color, id: String, enabled := true, size := 16) -> void:
 	var c := col if enabled else Color(0.4, 0.4, 0.45)
@@ -191,10 +214,16 @@ func _draw_member(font: Font, sz: Vector2) -> void:
 				col if active else Color(col.r, col.g, col.b, 0.35), 9, 2.0 if active else 1.0)
 		if active:
 			draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 3), col)
+		# 顔アイコン（無ければ名前のみ）
+		var drew := _draw_icon("res://assets/generated/face/%s/neutral_open.png" % id,
+				Rect2(r.position.x + (cw - 32) * 0.5, r.position.y + 4, 32, 32),
+				Color(1, 1, 1, 1.0 if active else 0.8))
 		var nm := String(g["name"])
-		_txt(font, Vector2(r.position.x + (cw - _tw(font, nm, 14)) * 0.5, r.position.y + 24), nm, 14, TEXT if active else TEXT_DIM)
-		var af := "♥%d" % sim.aff(id)
-		_txt(font, Vector2(r.position.x + (cw - _tw(font, af, 12)) * 0.5, r.position.y + 44), af, 12, PINK)
+		var ny := r.position.y + (49.0 if drew else 26.0)
+		_txt(font, Vector2(r.position.x + (cw - _tw(font, nm, 13)) * 0.5, ny), nm, 13, TEXT if active else TEXT_DIM)
+		if not drew:
+			var af := "♥%d" % sim.aff(id)
+			_txt(font, Vector2(r.position.x + (cw - _tw(font, af, 12)) * 0.5, r.position.y + 46), af, 12, PINK)
 		_hit(r, "_selg:" + id)
 
 	# 選択中の子の詳細カード
@@ -203,18 +232,21 @@ func _draw_member(font: Font, sz: Vector2) -> void:
 	y += 70
 	var card := Rect2(12, y, sz.x - 24, 118)
 	_panel(card, Color(0.06, 0.06, 0.1, 0.92), Color(g["color"].r, g["color"].g, g["color"].b, 0.5), 12)
-	_txt(font, Vector2(26, y + 28), String(g["name"]), 22, g["color"])
-	_txt(font, Vector2(26, y + 52), String(g["role"]), 13, TEXT_DIM)
+	# 立ち絵（左・無ければテキストだけ左寄せ）
+	var has_portrait := _draw_icon("res://assets/portraits/%s.png" % gid, Rect2(18, y + 7, 80, 104))
+	var tx := 110.0 if has_portrait else 26.0
+	_txt(font, Vector2(tx, y + 28), String(g["name"]), 22, g["color"])
+	_txt(font, Vector2(tx, y + 52), String(g["role"]), 13, TEXT_DIM)
 	# ステータス
-	_txt(font, Vector2(26, y + 80), "攻 %d" % int(sim.girl_atk(gid)), 16, Color(1.0, 0.6, 0.45))
-	_txt(font, Vector2(140, y + 80), "HP %d" % int(sim.girl_maxhp(gid)), 16, GREEN)
+	_txt(font, Vector2(tx, y + 80), "攻 %d" % int(sim.girl_atk(gid)), 16, Color(1.0, 0.6, 0.45))
+	_txt(font, Vector2(tx + 96, y + 80), "HP %d" % int(sim.girl_maxhp(gid)), 16, GREEN)
 	# 好感度バー
-	_txt(font, Vector2(26, y + 104), "好感度", 13, TEXT_DIM)
-	_bar(Rect2(86, y + 92, sz.x - 24 - 86 - 60, 14), sim.aff(gid) / 100.0, PINK)
-	_txt(font, Vector2(sz.x - 24 - 50, y + 104), "%d/100" % sim.aff(gid), 13, PINK)
+	_txt(font, Vector2(tx, y + 104), "♥", 14, PINK)
+	_bar(Rect2(tx + 22, y + 92, sz.x - 24 - tx - 22 - 56, 14), sim.aff(gid) / 100.0, PINK)
+	_txt(font, Vector2(sz.x - 24 - 48, y + 104), "%d/100" % sim.aff(gid), 13, PINK)
 	# 店番シナジー
-	_txt(font, Vector2(sz.x - 24 - 220, y + 28), "店番:%s" % String(g["synergy"]), 12, GOLD)
-	_txt(font, Vector2(sz.x - 24 - 220, y + 46), String(g["synergy_desc"]), 11, TEXT_DIM)
+	_txt(font, Vector2(sz.x - 24 - 210, y + 28), "店番:%s" % String(g["synergy"]), 12, GOLD)
+	_txt(font, Vector2(sz.x - 24 - 210, y + 46), String(g["synergy_desc"]), 11, TEXT_DIM)
 
 	# スキル（装備枠）
 	y += 132
@@ -231,8 +263,12 @@ func _draw_member(font: Font, sz: Vector2) -> void:
 		var r := Rect2(rx, ry, (sz.x - 24) * 0.5 - 8, 38)
 		var on: bool = sid in eq
 		_panel(r, Color(0.08, 0.08, 0.12, 0.95), CYAN if on else Color(0.4, 0.42, 0.5, 0.6), 8, 2.0 if on else 1.0)
-		_txt(font, Vector2(rx + 10, ry + 17), String(def["name"]), 14, TEXT if on else TEXT_DIM)
-		_txt(font, Vector2(rx + 10, ry + 33), "CD%.0fs  %s" % [float(def["cd"]), ("装備中" if on else "タップで装備")], 11,
+		# スキルアイコン（doctor/nurse 等は未用意 → テキストのみ）
+		var has_icon := _draw_icon("res://assets/generated/skill/%s.png" % sid, Rect2(rx + 6, ry + 5, 28, 28),
+				Color(1, 1, 1, 1.0 if on else 0.7))
+		var stx := rx + (40.0 if has_icon else 10.0)
+		_txt(font, Vector2(stx, ry + 17), String(def["name"]), 14, TEXT if on else TEXT_DIM)
+		_txt(font, Vector2(stx, ry + 33), "CD%.0fs  %s" % [float(def["cd"]), ("装備中" if on else "タップで装備")], 11,
 				CYAN if on else TEXT_DIM)
 		_hit(r, "skill:%s:%s" % [gid, sid])
 		col2 += 1
@@ -282,9 +318,15 @@ func _effect_label(eff: Dictionary) -> String:
 func _draw_market(font: Font, sz: Vector2) -> void:
 	var y := HEADER_H + 16.0
 	var s: Dictionary = sim.state
-	# 在庫
-	var stock := "在庫  乾物%d ・ 肉%d ・ 海鮮%d" % [int(s["stock"]["dry"]), int(s["stock"]["meat"]), int(s["stock"]["sea"])]
-	_txt(font, Vector2(16, y), stock, 14, TEXT_DIM)
+	# 在庫（素材アイコン＋数）
+	_txt(font, Vector2(16, y + 4), "在庫", 14, TEXT_DIM)
+	var ix := 64.0
+	for ing in ["dry", "meat", "sea"]:
+		var cnt := int(s["stock"][ing])
+		var drew := _draw_icon("res://assets/generated/ing/%s.png" % ing, Rect2(ix, y - 8, 26, 26))
+		_txt(font, Vector2(ix + (28.0 if drew else 0.0), y + 4),
+				str(cnt) if drew else "%s%d" % [KuroData.ING_NAMES[ing], cnt], 14, TEXT)
+		ix += 74.0 if drew else 88.0
 	y += 28
 
 	# 闇市（固定3品）
@@ -326,8 +368,13 @@ func _draw_market(font: Font, sz: Vector2) -> void:
 			sub = "%s ・ %s" % [SimItems.GRADES[grade]["name"], SimItems.affix_text(item)]
 			col = KuroData.equip_grade_color(grade)
 		_panel(r, Color(0.05, 0.07, 0.09, 0.92), Color(col.r, col.g, col.b, 0.45), 10)
-		_txt(font, Vector2(26, y + 24), label, 15, col)
-		_txt(font, Vector2(26, y + 44), "%s   %dG" % [sub, int(entry["price"])], 13, TEXT_DIM)
+		# 装備はスロットアイコン（武器/防具/装飾）を添える
+		var tx := 26.0
+		if entry["type"] != "pet":
+			if _draw_icon("res://assets/generated/equip/%s.png" % String(entry["item"]["slot"]), Rect2(18, y + 10, 36, 36), col):
+				tx = 62.0
+		_txt(font, Vector2(tx, y + 24), label, 15, col)
+		_txt(font, Vector2(tx, y + 44), "%s   %dG" % [sub, int(entry["price"])], 13, TEXT_DIM)
 		var can: bool = int(s["gold"]) >= int(entry["price"])
 		_btn(font, Rect2(sz.x - 24 - 100, y + 13, 94, 32), "買う", col, "ship:%d" % i, can, 15)
 		y += 64
@@ -363,9 +410,15 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 		_panel(r, Color(col.r * 0.16, col.g * 0.16, col.b * 0.2, 0.95),
 				col if active else Color(col.r, col.g, col.b, 0.3), 8, 2.0 if active else 1.0)
 		var nm := String(g["name"])
-		_txt(font, Vector2(r.position.x + (cw - _tw(font, nm, 13)) * 0.5, r.position.y + 22), nm, 13, TEXT if active else TEXT_DIM)
 		var apt := "適性%.0f%%" % (float(g["keeper_apt"]) * 100)
-		_txt(font, Vector2(r.position.x + (cw - _tw(font, apt, 10)) * 0.5, r.position.y + 40), apt, 10, GOLD if active else TEXT_DIM)
+		var drew := _draw_icon("res://assets/generated/face/%s/neutral_open.png" % id,
+				Rect2(r.position.x + 4, r.position.y + 13, 24, 24), Color(1, 1, 1, 1.0 if active else 0.8))
+		if drew:
+			_txt(font, Vector2(r.position.x + 30, r.position.y + 22), nm, 12, TEXT if active else TEXT_DIM)
+			_txt(font, Vector2(r.position.x + 30, r.position.y + 40), apt, 10, GOLD if active else TEXT_DIM)
+		else:
+			_txt(font, Vector2(r.position.x + (cw - _tw(font, nm, 13)) * 0.5, r.position.y + 22), nm, 13, TEXT if active else TEXT_DIM)
+			_txt(font, Vector2(r.position.x + (cw - _tw(font, apt, 10)) * 0.5, r.position.y + 40), apt, 10, GOLD if active else TEXT_DIM)
 		_hit(r, "keeper:" + id)
 	# 選択店番のシナジー
 	var kg: Dictionary = KuroData.GIRLS[m["keeper"]]
@@ -400,8 +453,12 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 		_panel(r, Color(0.07, 0.07, 0.1, 0.95) if not on else Color(tcol.r * 0.2, tcol.g * 0.18, tcol.b * 0.2, 0.95),
 				tcol if on else Color(0.4, 0.4, 0.46, 0.6), 8, 2.0 if on else 1.0)
 		var star := int(s["recipes"].get(rid, 1))
-		_txt(font, Vector2(rx + 8, ry + 20), String(rec["name"]), 13, TEXT if on else TEXT_DIM)
-		_txt(font, Vector2(rx + 8, ry + 37), "%s ☆%d  %dG" % [String(rec["taste"]), star, int(rec["base"])], 10, tcol if on else TEXT_DIM)
+		# 料理アイコン
+		var has_food := _draw_icon("res://assets/generated/food/%s.png" % rid, Rect2(rx + 6, ry + 6, 32, 32),
+				Color(1, 1, 1, 1.0 if on else 0.7))
+		var ftx := rx + (44.0 if has_food else 8.0)
+		_txt(font, Vector2(ftx, ry + 20), String(rec["name"]), 13, TEXT if on else TEXT_DIM)
+		_txt(font, Vector2(ftx, ry + 37), "%s ☆%d  %dG" % [String(rec["taste"]), star, int(rec["base"])], 10, tcol if on else TEXT_DIM)
 		_hit(r, "menu:" + rid)
 
 
@@ -443,13 +500,16 @@ func _draw_workshop(font: Font, sz: Vector2) -> void:
 		var col := GREEN if is_owned else (GOLD if can else (PURPLE if avail else Color(0.4, 0.4, 0.46)))
 		var r := Rect2(c - Vector2(rad, rad), Vector2(rad * 2, rad * 2))
 		_panel(r, Color(col.r * 0.16, col.g * 0.16, col.b * 0.2, 0.96), col, rad, 2.0 if (is_owned or avail) else 1.0)
-		var nm := String(node["name"])
-		# 名前は2文字ずつ折り返して小さく
-		_txt(font, Vector2(c.x - _tw(font, nm, 11) * 0.5, c.y - 2), nm, 11, TEXT if (is_owned or avail) else TEXT_DIM)
-		if not is_owned:
-			var cs := "%d" % int(node["cost"]) if int(node["cost"]) > 0 else ""
-			if cs != "":
-				_txt(font, Vector2(c.x - _tw(font, cs, 11) * 0.5, c.y + 16), cs, 11, GOLD if can else TEXT_DIM)
+		# 改装アイコン（無ければ名前テキスト）
+		var lit := is_owned or avail
+		var has_icon := _draw_icon("res://assets/generated/renov/%s.png" % nid, Rect2(c.x - 19, c.y - 22, 38, 38),
+				Color(1, 1, 1, 1.0 if lit else 0.4))
+		if not has_icon:
+			var nm := String(node["name"])
+			_txt(font, Vector2(c.x - _tw(font, nm, 11) * 0.5, c.y - 2), nm, 11, TEXT if lit else TEXT_DIM)
+		if not is_owned and int(node["cost"]) > 0:
+			var cs := "%d" % int(node["cost"])
+			_txt(font, Vector2(c.x - _tw(font, cs, 11) * 0.5, c.y + 19), cs, 11, GOLD if can else TEXT_DIM)
 		if avail:
 			_hit(r, "renov:" + nid)
 

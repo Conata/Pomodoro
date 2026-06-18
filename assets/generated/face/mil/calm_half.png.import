@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dqg5qlmbmiian"
-valid=false
+uid="uid://clqfrn8ubyxlc"
+path="res://.godot/imported/calm_half.png-cdf90612f59e50afef317a90bc2e4dca.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
 source_file="res://assets/generated/face/mil/calm_half.png"
+dest_files=["res://.godot/imported/calm_half.png-cdf90612f59e50afef317a90bc2e4dca.ctex"]
 
 [params]
 

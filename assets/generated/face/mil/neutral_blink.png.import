@@ -2,12 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dnt65fcln6yi8"
-valid=false
+uid="uid://bnu5e650bnwhc"
+path="res://.godot/imported/neutral_blink.png-57fe221c3e63e24c5dd80177f520f19e.ctex"
+metadata={
+"vram_texture": false
+}
 
 [deps]
 
 source_file="res://assets/generated/face/mil/neutral_blink.png"
+dest_files=["res://.godot/imported/neutral_blink.png-57fe221c3e63e24c5dd80177f520f19e.ctex"]
 
 [params]
 
