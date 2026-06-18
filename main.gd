@@ -11,11 +11,13 @@ var sim: KuroSim = null
 var _current: Node = null
 var _dive_overlay: Node = null   # 潜航中のみ。毎フレーム set_data で更新
 var _in_dive := false
+var _home_data: Dictionary = {}  # ホーム表示データ（日数/金/セリフ）
 
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	sim = KuroSim.new()           # フレッシュなゲーム状態（gold 120 / day 1）
+	_refresh_home_data("「いらっしゃい。今日はどこへ潜る？」")
 	_goto(HOME)
 
 
@@ -26,7 +28,30 @@ func _process(_delta: float) -> void:
 	_catch_up(Time.get_unix_time_from_system())
 	_update_dive_ui()
 	if not bool(sim.state["run"]["active"]):
-		_goto(HOME)               # 浮上＝店へ戻る
+		_surface()                # 浮上＝精算→翌朝→店へ
+
+
+## ホーム表示データを KuroSim から更新（日数・所持金・セリフ）。
+func _refresh_home_data(vn_line: String) -> void:
+	_home_data = {
+		"day_gold": "Day %d   金 %d" % [int(sim.state["day"]), int(sim.state["gold"])],
+		"line": vn_line,
+	}
+
+
+## 浮上：その日の営業を精算し、箱を開け、翌朝へ進めて店に戻る（1日ループ）。
+func _surface() -> void:
+	# 店番が客人/未設定でも keeper_apt を持つ既定に補正（クラッシュ防止）
+	var keeper: String = sim.state["morning"]["keeper"]
+	if not (KuroData.GIRLS.get(keeper, {}) as Dictionary).has("keeper_apt"):
+		sim.state["morning"]["keeper"] = "kiriko"
+	var summary: Dictionary = sim.close_day()
+	while not (sim.state["boxes"] as Array).is_empty():
+		if sim.open_box().is_empty():
+			break
+	sim.next_morning()
+	_refresh_home_data("「お疲れさま。今夜は %dG の売上だったよ」" % int(summary.get("gold", 0)))
+	_goto(HOME)
 
 
 ## 固定ステップのキャッチアップ（now － anchor 分だけ step を回す）。
@@ -54,6 +79,8 @@ func _goto(path: String) -> void:
 	if overlay != null:
 		if overlay.has_signal("action_pressed"):
 			overlay.action_pressed.connect(_on_home_action)
+			if overlay.has_method("set_data") and not _home_data.is_empty():
+				overlay.set_data(_home_data)   # ホーム：実データ反映（日数/金/セリフ）
 		if overlay.has_signal("command_pressed"):
 			overlay.command_pressed.connect(_on_dive_command)
 			_dive_overlay = overlay

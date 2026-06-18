@@ -21,6 +21,7 @@ const STRIP_H := 168.0   # 最下部 HD-2D フィールド帯の高さ（FieldSt
 # ── 表示データ（main.gd から set_data()）──
 var speaker := "フユキ"
 var line := "「後悔が騒いでるね。奥に潜って、静かにしてあげる。」"
+var day_gold := "Day 1   金 120"
 
 var _t := 0.0
 var _hits: Array = []
@@ -94,6 +95,7 @@ func _draw() -> void:
 	draw_rect(tb, Color(0.02, 0.02, 0.05, 0.55))
 	draw_rect(Rect2(0, 60, sz.x, 1.5), Color(PINK.r, PINK.g, PINK.b, 0.4))
 	_icon(font, Vector2(34, 30), 21, "≡", PINK, "menu")
+	_txt(font, Vector2(66, 38), day_gold, 16, GOLD)  # 日数・所持金（実データ）
 	# 右：猫 / 設定 / ベル
 	_icon(font, Vector2(sz.x - 34, 30), 21, "猫", PINK, "cat")
 	_icon(font, Vector2(sz.x - 86, 30), 21, "設定", CYAN, "settings")
