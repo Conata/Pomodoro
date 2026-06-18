@@ -111,9 +111,9 @@ func _draw() -> void:
 	draw_arc(pc, pr, _t * 1.6, _t * 1.6 + TAU * 0.78, 36, PURPLE, 3.0)
 	draw_arc(pc, pr * 0.6, -_t * 2.2, -_t * 2.2 + TAU * 0.62, 28, PINK, 2.5)
 	draw_circle(pc, pr * 0.34, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.85))
-	# 縦書き「探索入口」
+	# 縦書き「仕入れへ」（深層へ食材を獲りに行く＝仕入れ）
 	var vy := pc.y + pr + 16.0
-	for ch in "探索入口":
+	for ch in "仕入れへ":
 		_txt(font, Vector2(pc.x - 9, vy), ch, 17, PINK)
 		vy += 22.0
 
