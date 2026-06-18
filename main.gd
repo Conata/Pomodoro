@@ -10,20 +10,25 @@ const DIVE := "res://dive_screen.tscn"
 var sim: KuroSim = null
 var _current: Node = null
 var _dive_overlay: Node = null   # 潜航中のみ。毎フレーム set_data で更新
+var _dive_stage: Node = null     # 潜航中のみ。敵の出し入れを同期
 var _in_dive := false
+var _speed := 1                  # 潜航の早送り倍率（fast コマンドで 1→2→3 巡回）
 var _home_data: Dictionary = {}  # ホーム表示データ（日数/金/セリフ）
 
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	sim = KuroSim.new()           # フレッシュなゲーム状態（gold 120 / day 1）
-	_refresh_home_data("「いらっしゃい。今日はどこへ潜る？」")
+	_refresh_home_data("「いらっしゃい。今日はどこで仕入れる？」")
 	_goto(HOME)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not _in_dive or sim == null:
 		return
+	# 早送り：アンカーを余分に巻き戻して「より多くの時間が経った」ことにする
+	if _speed > 1 and bool(sim.state["run"]["active"]):
+		sim.state["run"]["anchor"] = float(sim.state["run"]["anchor"]) - float(_speed - 1) * delta
 	# KuroSim を実時間アンカーで駆動（タブ非アクティブでも正確：旧メインと同方式）
 	_catch_up(Time.get_unix_time_from_system())
 	_update_dive_ui()
@@ -72,9 +77,13 @@ func _goto(path: String) -> void:
 		_current.queue_free()
 		_current = null
 	_dive_overlay = null
+	_dive_stage = null
+	_speed = 1
 	_in_dive = (path == DIVE)
 	_current = load(path).instantiate()
 	add_child(_current)
+	if _in_dive:
+		_dive_stage = _current.get_node_or_null("Stage")
 	var overlay := _current.get_node_or_null("Overlay")
 	if overlay != null:
 		if overlay.has_signal("action_pressed"):
@@ -86,26 +95,40 @@ func _goto(path: String) -> void:
 			_dive_overlay = overlay
 
 
-## ホームのUI操作（探索入口で潜航開始）。
+## ホームのUI操作（仕入れへ で仕入れ開始）。
 func _on_home_action(id: String) -> void:
 	match id:
+		"pomodoro":
+			# 25分ポモドーロ集中＝仕入れ（早送り/早期終了は仕入れ画面のボタンで）
+			sim.start_run("pomo", 25.0, Time.get_unix_time_from_system(), "集中仕入れ")
+			_goto(DIVE)
 		"depart", "field":
-			# クイックダイブ（80秒）を開始して潜航画面へ
-			sim.start_run("quick", 1.0, Time.get_unix_time_from_system(), "探索")
+			# クイック仕入れ（80秒）
+			sim.start_run("quick", 1.0, Time.get_unix_time_from_system(), "仕入れ")
 			_goto(DIVE)
 		_:
 			print("[home] action: ", id)
 
 
-## 潜航のコマンド（KuroSim はオート戦闘。一時停止で撤退して店へ）。
+## 潜航のコマンド。KuroSim はオート戦闘なので、fast=早送り倍率、pause=撤退を実効化。
+## 攻撃/スキル/防御/アイテムの手動発動は KuroSim 側 API（手動アクション）が要るため当面ログ。
 func _on_dive_command(id: String) -> void:
 	match id:
-		"pause":
+		"home", "pause":
+			# 中断して店へ戻る（撤退）
 			if sim != null and bool(sim.state["run"]["active"]):
 				sim.abandon_run()
 			_goto(HOME)
+		"finish":
+			# 早期終了＝今すぐ浮上（残り時間を飛ばして正常終了→精算）
+			var run: Dictionary = sim.state["run"]
+			if bool(run["active"]):
+				run["elapsed"] = float(run["duration"])
+				sim.step(KuroData.SIM_DT)   # 終端処理を発火（次フレームの _process が _surface）
+		"fast":
+			_speed = (_speed % 3) + 1        # 1→2→3→1
 		_:
-			print("[dive] command: ", id)
+			print("[dive] command(未接続: 要KuroSim手動アクションAPI): ", id)
 
 
 ## 潜航オーバーレイへ KuroSim の実データを流し込む。
@@ -123,6 +146,9 @@ func _update_dive_ui() -> void:
 		tot += hp
 		mx += mhp
 		party.append({"name": String(g.get("name", gid)), "hp": hp, "mhp": mhp, "sp": 100, "msp": 100})
+	# 3D ステージの敵を sim の mob 数＆戦闘フラグに同期
+	if _dive_stage != null and _dive_stage.has_method("set_dive_state"):
+		_dive_stage.set_dive_state((sim.state["mobs"] as Array).size(), bool(sim.state["in_combat"]))
 	var run: Dictionary = sim.state["run"]
 	var remain := maxf(float(run["duration"]) - float(run["elapsed"]), 0.0)
 	var prog := fmod(float(sim.state["dist"]), KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN
@@ -131,5 +157,6 @@ func _update_dive_ui() -> void:
 		"player_lv": "B%d" % sim.current_floor(),
 		"player_hp": (tot / mx) if mx > 0.0 else 0.0,
 		"player_exp": prog,
-		"quest_text": "深層 B%d  残り %d秒" % [sim.current_floor(), int(remain)],
+		"quest_text": "仕入れ中  B%d  残り %d秒" % [sim.current_floor(), int(remain)],
+		"speed_mult": _speed,
 	})
