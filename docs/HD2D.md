@@ -17,8 +17,12 @@ SSAO/被写界深度（DOF）など重い後処理は使わない方針。
 - 画面本体：`src/ui/hd2d_view.gd`
 - 起動シーン：`hd2d_test.tscn`（エディタで開いて **F6** で直接実行）
 
-WASD / 矢印キーでプレイヤー（kiriko）を中庭で歩かせ、NPC（doctor / nurse / mil / muu / yuzuki）が立つ。
-カメラは斜め見下ろしで追従する。
+操作：
+- **WASD / 矢印** … プレイヤー（kiriko）移動（カメラ相対）
+- **Q / E** … カメラを 90° 左右回転（オクトラ風にワールドが主人公の周りを回る）
+- **R / F** … ズームイン / アウト
+
+NPC（doctor / nurse / mil / muu / yuzuki）が中庭に立ち、カメラは斜め見下ろしで追従する。
 
 ## 押さえた要点（Godot での HD-2D 定石）
 
@@ -28,8 +32,16 @@ WASD / 矢印キーでプレイヤー（kiriko）を中庭で歩かせ、NPC（d
 | **ニアレストフィルタ** | `texture_filter = NEAREST` | ドット絵をぼかさずくっきり |
 | **アルファスシザー** | `alpha_cut = ALPHA_CUT_DISCARD` | 深度バッファに書き込まれ前後ソートが正しくなる＋シルエットの影を落とせる |
 | **影** | `cast_shadow = ON` ＋ `DirectionalLight3D.shadow_enabled` | 接地感。半透明のままだと影が出ない／ソートが崩れる |
-| **傾けた perspective カメラ** | `fov ≈ 42`, 上 6.5・後ろ 7.5 から見下ろし | オクトラ系のアングル |
-| **控えめな glow** | `Environment.glow_*` | HD-2D の柔らかい発光感 |
+| **傾けた perspective カメラ** | `fov ≈ 42`, 高さ 8・距離 9（見下ろし ≈ 42°） | オクトラ系のアングル |
+| **回転＋ズームカメラ** | Q/E で 90° 回転・R/F でズーム（周回リグ） | ワールドが主人公の周りを回るオクトラの操作感 |
+| **ヴィネット** | 全画面 ColorRect ＋ `hd2d_vignette.gdshader` | 画面端を暗く落とすオクトラの定番。レンダラ非依存 |
+| **柔らかい影** | `DirectionalLight3D.shadow_blur` | 接地の影をふんわり |
+| **控えめな glow** | `Environment.glow_*`（bloom 0.05） | HD-2D の柔らかい発光感 |
+
+> 参考：[GSansigolo/SimpleHD2D](https://github.com/GSansigolo/SimpleHD2D)（Godot 4.1, Forward+）。
+> 回転カメラ（SpringArm3D + Q/E 回転 / R/F ズーム）・ヴィネット・控えめ glow の構成を踏襲。
+> 同リポジトリは **被写界深度（DOF, tilt-shift 風）と SSIL** も使うが、これらは **Forward+ 専用**で
+> 本プロジェクトの GL Compatibility では出ない。寄せたい場合はレンダラ切替が前提（下記）。
 
 ## 既存ゲームへの組み込み方針（次の段階）
 
