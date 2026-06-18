@@ -59,7 +59,9 @@ var _cam_target_override = null      # Vector3 指定で注視点を固定（hom
 
 
 func _ready() -> void:
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# 配置は親/シーン側の anchors に従う（フルレクト指定が無ければ自分でフル）。
+	if get_anchor(SIDE_RIGHT) == 0.0 and get_anchor(SIDE_BOTTOM) == 0.0:
+		set_anchors_preset(Control.PRESET_FULL_RECT)
 	# テーマ別カメラ：home は店先を見るので低い角度（見下ろしを弱める）
 	if stage_theme == "home":
 		_player_pos = Vector3(0, 0, 3.8)   # 主人公は手前のパーティテーブル
@@ -74,6 +76,13 @@ func _ready() -> void:
 		_cam_height = 6.5
 		_cam_dist = 11.5
 		_cam_dist_target = 11.5
+	elif stage_theme == "strip":
+		# 横帯：パーティ左(-X)・敵右(+X)。低く近い広角で横長に映す
+		_player_pos = Vector3(-4.4, 0, 0.5)  # 主人公はパーティ左端
+		_cam_target_override = Vector3(0, 1.0, 0.0)
+		_cam_height = 2.6
+		_cam_dist = 5.2
+		_cam_dist_target = 5.2
 	_build_viewport()
 	_build_world()
 	_build_player()
@@ -111,7 +120,7 @@ func _build_viewport() -> void:
 func _build_world() -> void:
 	# ── 環境・太陽光（テーマで切替）──
 	match stage_theme:
-		"cyberpunk", "dive": _build_env_cyberpunk()
+		"cyberpunk", "dive", "strip": _build_env_cyberpunk()
 		"home": _build_env_home()
 		_: _build_env_nature()
 
@@ -130,6 +139,8 @@ func _build_world() -> void:
 			_build_props_cyberpunk()
 			_build_particles()
 			_build_enemies()
+		"strip":
+			_build_props_strip()
 		_:
 			_build_props()
 
@@ -295,9 +306,9 @@ func _find_meshinst(node: Node) -> MeshInstance3D:
 	return null
 
 
-## 暗い夜の路面系テーマ（cyberpunk/home/dive）か。
+## 暗い夜の路面系テーマ（cyberpunk/home/dive/strip）か。
 func _is_dark() -> bool:
-	return stage_theme == "cyberpunk" or stage_theme == "home" or stage_theme == "dive"
+	return stage_theme in ["cyberpunk", "home", "dive", "strip"]
 
 
 ## 地面テクスチャ。テーマで草緑／濡れアスファルトを切替。
@@ -558,27 +569,42 @@ func _build_props_home() -> void:
 	_neon_light(Vector3(2.6, 2.4, -0.4), PINK, 1.8, 5.0)
 
 
-## 潜航の敵（紫の炎モンスター・プレースホルダ）。奥(z<0)に配置＝画面上方に出る。
-## 暗い球体＋紫の発光コア＋点光源で、参照の炎の敵を簡易再現。
-func _build_enemies() -> void:
+## 紫の炎モンスター1体（暗い球体＋発光コア＋点光源＋接地影）。
+func _spawn_enemy(e: Vector3, scl: float = 1.0) -> void:
 	var col := Color(0.72, 0.25, 1.0)
+	var mi := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.7 * scl
+	sm.height = 1.5 * scl
+	mi.mesh = sm
+	mi.position = e + Vector3(0, 0.85 * scl, 0)
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.08, 0.03, 0.12)
+	m.emission_enabled = true
+	m.emission = col
+	m.emission_energy_multiplier = 1.8
+	mi.material_override = m
+	_sub.add_child(mi)
+	_emissive_box(e + Vector3(0, 1.9 * scl, 0), Vector3(0.5, 0.8, 0.5) * scl, col, 3.0)  # 炎コア
+	_neon_light(e + Vector3(0, 1.2 * scl, 0), col, 3.2, 6.5)
+	_add_blob_shadow(e, 1.5 * scl)
+
+
+## 潜航の敵（奥 z<0＝画面上方）。
+func _build_enemies() -> void:
 	for e in [Vector3(0.0, 0, -2.6), Vector3(-2.9, 0, -3.4), Vector3(2.9, 0, -3.2)]:
-		var mi := MeshInstance3D.new()
-		var sm := SphereMesh.new()
-		sm.radius = 0.7
-		sm.height = 1.5
-		mi.mesh = sm
-		mi.position = e + Vector3(0, 0.85, 0)
-		var m := StandardMaterial3D.new()
-		m.albedo_color = Color(0.08, 0.03, 0.12)
-		m.emission_enabled = true
-		m.emission = col
-		m.emission_energy_multiplier = 1.8
-		mi.material_override = m
-		_sub.add_child(mi)
-		_emissive_box(e + Vector3(0, 1.9, 0), Vector3(0.5, 0.8, 0.5), col, 3.0)  # 炎コア
-		_neon_light(e + Vector3(0, 1.2, 0), col, 3.2, 6.5)
-		_add_blob_shadow(e, 1.5)
+		_spawn_enemy(e)
+
+
+## 横帯（フィールド）の小物：奥に薄くネオン、右(+X)に敵を横並び。
+func _build_props_strip() -> void:
+	var P := CYBER_DIR + "platforms/"
+	_add_gltf(P + "Sign_1.gltf", Vector3(-2.0, 2.2, -4.0), 2.2, 0, 2.2)
+	_add_gltf(P + "Sign_3.gltf", Vector3(2.2, 2.4, -4.2), 2.2, 0, 2.2)
+	_neon_light(Vector3(0, 2.2, -3.6), Color(0.3, 0.85, 1.0), 2.5, 8.0)
+	# 敵（右に横並び・やや小さめ）
+	for e in [Vector3(1.8, 0, 0.2), Vector3(3.2, 0, 0.6), Vector3(4.6, 0, 0.2)]:
+		_spawn_enemy(e, 0.85)
 
 
 const KENNEY_DIR := "res://assets/third_party/kenney_naturekit/models/"
@@ -738,12 +764,22 @@ const DIVE_NPCS := [
 ]
 
 
+# 横帯（フィールド）のパーティ配置：左(-X)に横並び。主人公は別途 _player_pos。
+const STRIP_NPCS := [
+	{"id": "mil",    "pos": Vector3(-3.0, 0.0, 0.2), "flip": false},
+	{"id": "nurse",  "pos": Vector3(-1.8, 0.0, 0.6), "flip": false},
+	{"id": "doctor", "pos": Vector3(-0.6, 0.0, 0.2), "flip": false},
+]
+
+
 func _build_npcs() -> void:
 	var roster: Array = NPCS
 	if stage_theme == "home":
 		roster = HOME_NPCS
 	elif stage_theme == "dive":
 		roster = DIVE_NPCS
+	elif stage_theme == "strip":
+		roster = STRIP_NPCS
 	for d in roster:
 		var anim := ChibiAnim.new(String(d["id"]))
 		var spr := _make_billboard()
