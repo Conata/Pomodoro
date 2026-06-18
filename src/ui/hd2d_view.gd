@@ -44,6 +44,8 @@ var _player_anim: ChibiAnim
 var _player_flip := false
 var _player_light: OmniLight3D = null  # 主人公追従のキーライト（cyberpunk のみ）
 var _player_shadow: MeshInstance3D = null  # 主人公追従のブロブシャドウ
+var _player_rim: Sprite3D = null   # ネオンのリム発光（環境光に馴染ませる）
+var _player_refl: Sprite3D = null  # 濡れ床への擬似反射
 var _enemy_nodes: Array = []           # 潜航の敵プール（set_dive_state で出し入れ）
 var _npc_sprites: Array[Sprite3D] = []
 var _npc_anims: Array[ChibiAnim] = []
@@ -52,6 +54,13 @@ var _npc_pos: Array = []        # home の徘徊：現在位置
 var _npc_target: Array = []     # home の徘徊：目標位置
 var _npc_flip: Array = []
 var _npc_shadow: Array = []     # home の徘徊：影（追従）
+var _npc_rim: Array = []        # 各 NPC のリム発光（無効時 null）
+var _npc_refl: Array = []       # 各 NPC の擬似反射（無効時 null）
+# リム発光／擬似反射の設定（テーマ別に _ready で決定）
+var _rim_on := true
+var _rim_col := Color(0.45, 0.85, 1.0, 0.22)
+var _refl_on := false
+var _refl_col := Color(0.5, 0.7, 1.0, 0.30)
 var _intro_t := 0.0            # カメラ導入（ズームイン）の経過
 var _tex_cache := {}
 var _pulse := 0.0
@@ -69,6 +78,14 @@ func _ready() -> void:
 	# 配置は親/シーン側の anchors に従う（フルレクト指定が無ければ自分でフル）。
 	if get_anchor(SIDE_RIGHT) == 0.0 and get_anchor(SIDE_BOTTOM) == 0.0:
 		set_anchors_preset(Control.PRESET_FULL_RECT)
+	# テーマ別リム発光／擬似反射：濡れた夜の街は反射＋冷色リム、店は暖色リム、自然はリム無し
+	match stage_theme:
+		"home":
+			_rim_col = Color(1.0, 0.55, 0.72, 0.20); _refl_on = false
+		"cyberpunk", "dive", "strip":
+			_rim_col = Color(0.45, 0.85, 1.0, 0.22); _refl_on = true
+		_:
+			_rim_on = false; _refl_on = false
 	# テーマ別カメラ：home は店先を見るので低い角度（見下ろしを弱める）
 	if stage_theme == "home":
 		_player_pos = Vector3(0, 0, 2.6)   # 主人公はパーティテーブル（VN窓に被らない位置へ）
@@ -419,6 +436,113 @@ func _neon_light(pos: Vector3, col: Color, energy: float, rng: float) -> void:
 	_sub.add_child(o)
 
 
+## 中心が濃く外周へなだらかに消える白いソフト円（湯気/リム/反射に流用）。
+var _soft_tex: Texture2D = null
+
+func _get_soft_tex() -> Texture2D:
+	if _soft_tex != null:
+		return _soft_tex
+	var n := 64
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	var c := (n - 1) * 0.5
+	for y in n:
+		for x in n:
+			var dd := Vector2(x - c, y - c).length() / c
+			var a := clampf(1.0 - dd, 0.0, 1.0)
+			a = a * a * (3.0 - 2.0 * a)  # smoothstep でふんわり
+			img.set_pixel(x, y, Color(1, 1, 1, a))
+	_soft_tex = ImageTexture.create_from_image(img)
+	return _soft_tex
+
+
+## 立ち上る湯気/蒸気（鍋・蒸籠・路面の排気）。柔らかい白い粒が昇りながら膨らんで消える。
+## CPUParticles3D なのでどのレンダラでも動く（GL Compatibility 可）。
+func _build_steam(pos: Vector3, extents: Vector3, col: Color, amount: int = 22, rise: float = 1.0) -> void:
+	var quad := QuadMesh.new()
+	quad.size = Vector2(0.7, 0.7)
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD  # 暗い夜に淡く光って馴染む
+	m.albedo_texture = _get_soft_tex()
+	m.albedo_color = col
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	m.billboard_keep_scale = true
+	m.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	quad.material = m
+
+	var p := CPUParticles3D.new()
+	p.mesh = quad
+	p.position = pos
+	p.amount = amount
+	p.lifetime = 3.6
+	p.preprocess = 3.0
+	p.randomness = 1.0
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+	p.emission_box_extents = extents
+	p.direction = Vector3(0, 1, 0)
+	p.spread = 12.0
+	p.gravity = Vector3(0.05, 0.55 * rise, 0.0)
+	p.initial_velocity_min = 0.25 * rise
+	p.initial_velocity_max = 0.7 * rise
+	p.scale_amount_min = 0.7
+	p.scale_amount_max = 1.4
+	var sc := Curve.new()
+	sc.add_point(Vector2(0.0, 0.35))
+	sc.add_point(Vector2(1.0, 1.6))
+	p.scale_amount_curve = sc
+	var g := Gradient.new()
+	g.set_offset(0, 0.0); g.set_color(0, Color(col.r, col.g, col.b, 0.0))
+	g.add_point(0.25, Color(col.r, col.g, col.b, 0.8))
+	g.set_offset(g.get_point_count() - 1, 1.0)
+	g.set_color(g.get_point_count() - 1, Color(col.r, col.g, col.b, 0.0))
+	p.color_ramp = g
+	_sub.add_child(p)
+
+
+## 縦に伸びるソフトな光芒テクスチャ（上=明 → 下=減衰、左右端もなだらかに消える）。
+var _shaft_tex: Texture2D = null
+
+func _get_shaft_tex() -> Texture2D:
+	if _shaft_tex != null:
+		return _shaft_tex
+	var w := 32
+	var h := 96
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	for y in h:
+		var vy := float(y) / float(h - 1)
+		var va := clampf(1.0 - vy, 0.0, 1.0)
+		va = va * va                       # 上ほど明るく、下へ二次で減衰
+		for x in w:
+			var ux := absf(float(x) / float(w - 1) - 0.5) * 2.0
+			var ha := clampf(1.0 - ux, 0.0, 1.0)
+			ha = ha * ha * (3.0 - 2.0 * ha)  # 左右端をなだらかに
+			img.set_pixel(x, y, Color(1, 1, 1, va * ha))
+	_shaft_tex = ImageTexture.create_from_image(img)
+	return _shaft_tex
+
+
+## 光芒（ゴッドレイ）。ネオン看板や窓から差す埃っぽい光の筋を、加算の板で擬似的に。
+func _light_shaft(pos: Vector3, sz: Vector2, col: Color, yaw_deg: float = 0.0, tilt_deg: float = 0.0) -> void:
+	var mi := MeshInstance3D.new()
+	var q := QuadMesh.new()
+	q.size = sz
+	mi.mesh = q
+	mi.position = pos
+	mi.rotation_degrees = Vector3(tilt_deg, yaw_deg, 0.0)
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	m.albedo_texture = _get_shaft_tex()
+	m.albedo_color = col
+	m.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_sub.add_child(mi)
+
+
 ## サイバーパンクの通り。プロップは Quaternius Cyberpunk Game Kit（CC0）の実モデルのみで構成。
 ## 自前の発光ボックス（提灯/看板）は使わず、キットの Sign/Light を発光させてネオンにする。
 ## 照明（ネオン点光源・キーライト）・粒子・影は描画要素として別途。
@@ -500,6 +624,16 @@ func _build_props_cyberpunk() -> void:
 	_neon_light(Vector3(4.8, 2.0, -0.5), NEON_MAGENTA, 3.0, 8.0)
 	_neon_light(Vector3(-4.6, 1.6, 1.0), NEON_CYAN, 2.4, 7.0)
 	_neon_light(Vector3(1.5, 1.6, 3.0), NEON_CYAN, 2.2, 7.0)
+
+	# ── 光芒（看板/街灯から差す埃っぽい光の筋）──
+	_light_shaft(Vector3(-3.8, 2.4, -6.6), Vector2(2.2, 5.0), Color(NEON_MAGENTA.r, NEON_MAGENTA.g, NEON_MAGENTA.b, 0.16), 8, 8)
+	_light_shaft(Vector3(3.8, 2.6, -6.8), Vector2(2.2, 5.2), Color(NEON_CYAN.r, NEON_CYAN.g, NEON_CYAN.b, 0.16), -8, 8)
+	_light_shaft(Vector3(0.0, 3.0, -7.8), Vector2(2.6, 6.0), Color(NEON_CYAN.r, NEON_CYAN.g, NEON_CYAN.b, 0.12), 0, 6)
+
+	# ── 路面の排気/スチーム（手前と中景。サイバーパンクの定番）──
+	_build_steam(Vector3(-3.4, 0.1, 1.6), Vector3(0.5, 0.1, 0.4), Color(0.55, 0.8, 1.0, 0.5), 18, 1.1)
+	_build_steam(Vector3(3.0, 0.1, -0.6), Vector3(0.5, 0.1, 0.4), Color(0.9, 0.55, 0.85, 0.45), 16, 1.0)
+	_build_steam(Vector3(0.4, 0.1, 3.2), Vector3(0.6, 0.1, 0.4), Color(0.7, 0.9, 1.0, 0.4), 14, 0.9)
 
 
 ## ホーム（黒猫飯店）の環境。設計の肝＝「店内の暖色 × 窓の外の冷たいネオン都市」の寒暖対比。
@@ -595,6 +729,16 @@ func _build_props_home() -> void:
 	_neon_light(Vector3(0.0, 2.0, -2.8), WARM, 4.0, 8.0)
 	_neon_light(Vector3(-2.6, 2.4, -0.4), NEON_RED, 1.8, 5.0)
 	_neon_light(Vector3(2.6, 2.4, -0.4), PINK, 1.8, 5.0)
+
+	# ── 厨房の湯気（鍋・蒸籠から立ち上る。中華飯店の象徴）──
+	_build_steam(Vector3(-2.2, 1.2, -1.1), Vector3(0.45, 0.05, 0.25), Color(1.0, 0.85, 0.6, 0.5), 16, 1.0)
+	_build_steam(Vector3(0.0, 1.2, -1.1), Vector3(0.5, 0.05, 0.25), Color(1.0, 0.9, 0.7, 0.55), 18, 1.05)
+	_build_steam(Vector3(2.2, 1.2, -1.1), Vector3(0.45, 0.05, 0.25), Color(1.0, 0.85, 0.6, 0.5), 16, 1.0)
+
+	# ── 光芒（店内の暖色窓 → 手前へ、窓外ネオン → 室内へ）──
+	_light_shaft(Vector3(0.0, 1.9, -3.0), Vector2(5.0, 3.2), Color(WARM.r, WARM.g, WARM.b, 0.12), 0, -10)
+	_light_shaft(Vector3(-4.2, 2.6, -8.8), Vector2(2.0, 5.0), Color(NEON_MAGENTA.r, NEON_MAGENTA.g, NEON_MAGENTA.b, 0.14), 10, 6)
+	_light_shaft(Vector3(4.2, 2.6, -9.0), Vector2(2.0, 5.0), Color(NEON_CYAN.r, NEON_CYAN.g, NEON_CYAN.b, 0.14), -10, 6)
 
 
 ## 紫の炎モンスター1体（暗い球体＋発光コア＋点光源＋接地影）。
@@ -828,6 +972,12 @@ func _build_player() -> void:
 	_player_anim = ChibiAnim.new(PLAYER_ID)
 	_player = _make_billboard()
 	_sub.add_child(_player)
+	if _rim_on:
+		_player_rim = _make_aura(_rim_col, false)
+		_sub.add_child(_player_rim)
+	if _refl_on:
+		_player_refl = _make_aura(_refl_col, true)
+		_sub.add_child(_player_refl)
 	_player_shadow = _add_blob_shadow(_player_pos)
 	# 主人公に追従する控えめなキーライト（暗い夜でも主役を読めるように）。
 	if _is_dark():
@@ -886,6 +1036,17 @@ func _build_npcs() -> void:
 		_npc_pos.append(base_pos)
 		_npc_target.append(base_pos)
 		_npc_flip.append(bool(d["flip"]))
+		# リム発光／擬似反射（テーマで有効化。無効時は null を並べて添字を揃える）
+		var rim: Sprite3D = null
+		if _rim_on:
+			rim = _make_aura(_rim_col, false)
+			_sub.add_child(rim)
+		_npc_rim.append(rim)
+		var refl: Sprite3D = null
+		if _refl_on:
+			refl = _make_aura(_refl_col, true)
+			_sub.add_child(refl)
+		_npc_refl.append(refl)
 		# 足元のブロブシャドウ（home は徘徊に追従させる）
 		_npc_shadow.append(_add_blob_shadow(base_pos))
 
@@ -931,6 +1092,42 @@ func _make_billboard() -> Sprite3D:
 	spr.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD  # 影を落とし、輪郭をくっきり
 	spr.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 	return spr
+
+
+## リム発光／擬似反射に使う半透明ビルボード（Y固定・非影・常時手前）。
+## Sprite3D は加算ブレンドを持たないので、低アルファのアルファブレンドで淡く乗せる。
+func _make_aura(tint: Color, flip_v: bool) -> Sprite3D:
+	var s := Sprite3D.new()
+	s.pixel_size = PIXEL_SIZE
+	s.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	s.shaded = false
+	s.double_sided = true
+	s.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	s.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED  # 半透明（DISCARD だとアルファが効かない）
+	s.modulate = tint
+	s.flip_v = flip_v
+	s.no_depth_test = true
+	s.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return s
+
+
+## 本体ビルボードに rim/refl ビルボードのテクスチャ・フレーム・位置を毎フレーム同期。
+## refl は足元(y=0)を軸に上下ミラー（flip_v）して濡れ床の反射に見せる。
+func _sync_aura(main: Sprite3D, aura: Sprite3D, is_refl: bool) -> void:
+	if aura == null:
+		return
+	aura.visible = main.visible
+	aura.texture = main.texture
+	aura.hframes = main.hframes
+	aura.vframes = main.vframes
+	aura.frame = main.frame
+	aura.flip_h = main.flip_h
+	if is_refl:
+		aura.pixel_size = main.pixel_size
+		aura.position = Vector3(main.position.x, -main.position.y + 0.04, main.position.z)
+	else:
+		aura.pixel_size = main.pixel_size * 1.05   # わずかに大きくして縁に色を滲ませる
+		aura.position = main.position
 
 
 func _sprite_half_h() -> float:
@@ -1025,6 +1222,13 @@ func _process(delta: float) -> void:
 		_npc_anims[i].tick(delta)
 		_npc_sprites[i].texture = _tex(_npc_anims[i].current_path())
 
+	# ── リム発光／擬似反射を本体ビルボードへ同期（テクスチャ/フレーム/位置）──
+	_sync_aura(_player, _player_rim, false)
+	_sync_aura(_player, _player_refl, true)
+	for i in _npc_sprites.size():
+		_sync_aura(_npc_sprites[i], _npc_rim[i] if i < _npc_rim.size() else null, false)
+		_sync_aura(_npc_sprites[i], _npc_refl[i] if i < _npc_refl.size() else null, true)
+
 	_update_camera(false)
 
 
@@ -1049,14 +1253,31 @@ func _update_camera(instant: bool) -> void:
 
 
 ## 画面端を暗く落とすヴィネットを 3D 描画の上に重ねる。
+## 全画面ポスト処理（擬似ティルトシフト DoF ＋ ヴィネット）。
+## 3D を描く SubViewportContainer の上に重ね、hint_screen_texture で読んでぼかす。
 func _build_vignette() -> void:
 	var rect := ColorRect.new()
 	rect.set_anchors_preset(Control.PRESET_FULL_RECT)
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var mat := ShaderMaterial.new()
-	mat.shader = load("res://src/ui/hd2d_vignette.gdshader")
-	mat.set_shader_parameter("strength", 0.55)
-	mat.set_shader_parameter("radius", 0.9)
+	mat.shader = load("res://src/ui/hd2d_post.gdshader")
+	# テーマ別に焦点帯を調整：home は主役(カウンター)が画面中央やや上、
+	# strip(横帯)は左右対峙で中央、それ以外は見下ろし構図で中央やや下。
+	var focus := 0.52
+	var fsize := 0.16
+	var blur := 2.4
+	if stage_theme == "home":
+		focus = 0.46
+		fsize = 0.18
+	elif stage_theme == "strip":
+		focus = 0.5
+		fsize = 0.22
+		blur = 1.8
+	mat.set_shader_parameter("focus_center", focus)
+	mat.set_shader_parameter("focus_size", fsize)
+	mat.set_shader_parameter("blur_strength", blur)
+	mat.set_shader_parameter("vig_strength", 0.5)
+	mat.set_shader_parameter("vig_radius", 0.92)
 	rect.material = mat
 	add_child(rect)
 
