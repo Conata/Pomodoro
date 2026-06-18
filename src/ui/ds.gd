@@ -155,16 +155,32 @@ static func panel(ci: CanvasItem, rect: Rect2, bg: Color, border: Color, radius 
 	ci.draw_style_box(sb, rect)
 
 
-## 落ち影つきテキスト（可読性：1px のインク影）。
+## 任意のサイズ指定を型スケール5段（12/15/18/22/40）の最寄りへ丸める。
+## 「描画される文字は必ず5段のどれか」をシステムとして保証する強制装置。
+## 呼び出し側は DS.T_* を渡すのが正だが、生の数値でも自動でスケールへ吸着する。
+static func snap_size(n: int) -> int:
+	if n < 14:
+		return T_MICRO    # 12
+	if n < 17:
+		return T_BODY     # 15
+	if n < 20:
+		return T_SUB      # 18
+	if n < 31:
+		return T_HEAD     # 22
+	return T_DISPLAY      # 40
+
+
+## 落ち影つきテキスト（可読性：1px のインク影）。サイズは型スケールへ吸着。
 static func txt(ci: CanvasItem, font: Font, pos: Vector2, s: String, size: int, col: Color,
 		ha := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
-	ci.draw_string(font, pos + Vector2(1, 1), s, ha, w, size, INK)
-	ci.draw_string(font, pos, s, ha, w, size, col)
+	var sz := snap_size(size)
+	ci.draw_string(font, pos + Vector2(1, 1), s, ha, w, sz, INK)
+	ci.draw_string(font, pos, s, ha, w, sz, col)
 
 
-## 文字幅（中央寄せ計算用）。
+## 文字幅（中央寄せ計算用）。描画と同じく型スケールへ吸着させ整合を保つ。
 static func tw(font: Font, s: String, size: int) -> float:
-	return font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	return font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, snap_size(size)).x
 
 
 ## 比率バー（地＋塗り）。ratio 0〜1。

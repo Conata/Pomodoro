@@ -88,7 +88,7 @@ func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORI
 
 func _icon(font: Font, c: Vector2, r: float, label: String, col: Color, id: String) -> void:
 	_panel(Rect2(c - Vector2(r, r), Vector2(r * 2, r * 2)), Color(0.05, 0.05, 0.09, 0.85), col, r, 1.5)
-	var w := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+	var w := DS.tw(font, label, 15)
 	_txt(font, c + Vector2(-w * 0.5, 6), label, 15, TEXT)
 	_hit(Rect2(c - Vector2(r, r), Vector2(r * 2, r * 2)), id)
 
@@ -138,10 +138,10 @@ func _draw() -> void:
 	_panel(cta, Color(PINK.r * 0.22, PINK.g * 0.16, PINK.b * 0.24, 0.96),
 			Color(PINK.r, PINK.g, PINK.b, 0.6 + 0.3 * pulse), 16, 2.0)
 	var ct := "▶  集中する（25分）"
-	var ctw := font.get_string_size(ct, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
+	var ctw := DS.tw(font, ct, 19)
 	_txt(font, Vector2(cta.position.x + (cta.size.x - ctw) * 0.5, cta.position.y + 30), ct, 19, TEXT)
 	var ctsub := "じっくり潜る・本編"
-	var ctsw := font.get_string_size(ctsub, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+	var ctsw := DS.tw(font, ctsub, 12)
 	_txt(font, Vector2(cta.position.x + (cta.size.x - ctsw) * 0.5, cta.position.y + 52), ctsub, 12, TEXT_DIM)
 
 	# ===== VN セリフ窓（フィールド帯の上） =====
@@ -166,7 +166,7 @@ func _draw() -> void:
 	# フィールド帯のラベル（ここは店先の“眺め”。タップで仕入れへ）
 	_txt(font, Vector2(18, fy + 22), "店先のながめ", 13, Color(CYAN.r, CYAN.g, CYAN.b, 0.85))
 	var hint := "タップで仕入れへ →"
-	var hw := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+	var hw := DS.tw(font, hint, 12)
 	_txt(font, Vector2(sz.x - 18 - hw, fy + 22), hint, 12, TEXT_DIM)
 
 	# ===== 最下部：各主要機能へのフッターナビ =====
@@ -194,8 +194,8 @@ func _footer(font: Font, sz: Vector2) -> void:
 		var gcol := col if active else Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.9)
 		var cx := x0 + cw * 0.5
 		var glyph := String(e["icon"])
-		var gw := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x
+		var gw := DS.tw(font, glyph, 22)
 		_txt(font, Vector2(cx - gw * 0.5, fy + 28), glyph, 22, gcol)
 		var label := String(e["label"])
-		var lw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+		var lw := DS.tw(font, label, 11)
 		_txt(font, Vector2(cx - lw * 0.5, fy + 48), label, 11, gcol)
