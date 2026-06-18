@@ -231,11 +231,13 @@ func _draw_member(font: Font, sz: Vector2) -> void:
 		col2 += 1
 	y += 12 + int((known.size() + 1) / 2) * 44 + 14
 
-	# 育成ツリー（記憶の欠片）
-	_txt(font, Vector2(20, y), "育成ツリー（記憶の欠片で解放）", 15, PURPLE)
-	y += 18
+	# 育成ツリー（記憶の欠片）。ワンスクリーン：下端（フッター直上）へ寄せ画面を使い切る。
 	var nodes: Array = KuroData.GIRL_TREES.get(gid, [])
 	var owned: Array = sim.state["girls"][gid].get("tree", [])
+	var tree_h := 18 + nodes.size() * 46
+	y = maxf(y + 8, sz.y - FOOTER_H - float(tree_h) - 8.0)
+	_txt(font, Vector2(20, y), "育成ツリー（記憶の欠片で解放）", 15, PURPLE)
+	y += 18
 	for node in nodes:
 		var nid := String(node["id"])
 		var r := Rect2(12, y, sz.x - 24, 40)
@@ -410,8 +412,10 @@ func _draw_workshop(font: Font, sz: Vector2) -> void:
 	var nodes: Dictionary = KuroData.RENOV_NODES
 	var ox := sz.x * 0.5
 	var cell := 92.0
-	var oy := y + 3 * cell + 30.0   # y=-3 が一番上に来るよう原点を下げる
-	var map_bottom := oy + 3 * cell + 40.0
+	# ワンスクリーン：ツリーマップを利用可能領域の中央へ、凡例は下端へ寄せて画面を使い切る。
+	var legend_top := sz.y - FOOTER_H - 48.0
+	var span := 3 * cell + 30.0                       # 中心から端ノード＋半径ぶん
+	var oy := clampf((y + legend_top) * 0.5, y + span, legend_top - span)
 
 	# 接続線（prev → node）
 	for nid in nodes:
@@ -446,8 +450,8 @@ func _draw_workshop(font: Font, sz: Vector2) -> void:
 		if avail:
 			_hit(r, "renov:" + nid)
 
-	# 凡例＋現在の効果サマリ
-	var ly := map_bottom
+	# 凡例＋現在の効果サマリ（下端固定）
+	var ly := legend_top
 	_txt(font, Vector2(16, ly), "緑=解放済 / 金=今買える / 紫=前提達成 / 灰=未開放", 12, TEXT_DIM)
 	ly += 22
 	var sm := "効果合計  攻+%d%% ・ HP+%d%% ・ 金+%d%% ・ 看板+%d" % [
