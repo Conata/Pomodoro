@@ -19,6 +19,8 @@ const PLAYER_ID := "kiriko"
 const PIXEL_SIZE := 0.012          # Sprite3D の 1px = 何ワールド単位か（144x192 → 約1.7x2.3）
 const MOVE_SPEED := 4.0            # ワールド単位/秒
 const GROUND_HALF := 14.0          # 地面の半径（移動制限）
+# 画面テーマ。"cyberpunk"＝黒猫飯店の世界観（ネオン中華）。"nature"＝Kenney 中庭（PoC）。
+const THEME := "cyberpunk"
 
 # 中庭に立たせる NPC：{id, 位置, 向き}
 const NPCS := [
@@ -89,7 +91,31 @@ func _build_viewport() -> void:
 
 
 func _build_world() -> void:
-	# ── 環境（空・環境光・ゆるい glow で HD-2D の柔らかい光）──
+	# ── 環境・太陽光（テーマで切替）──
+	if THEME == "cyberpunk":
+		_build_env_cyberpunk()
+	else:
+		_build_env_nature()
+
+	# ── 地面 ──
+	_build_ground_tiles()
+
+	# ── 小物（テーマで切替）──
+	if THEME == "cyberpunk":
+		_build_props_cyberpunk()
+	else:
+		_build_props()
+
+	# ── カメラ（傾けた見下ろし・perspective）──
+	_cam = Camera3D.new()
+	_cam.fov = 42.0
+	_cam.current = true
+	_sub.add_child(_cam)
+	_update_camera(true)
+
+
+## 昼の自然光（Kenney 中庭 PoC 用）。空＋暖色環境光＋太陽。
+func _build_env_nature() -> void:
 	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
 	var sky := Sky.new()
@@ -100,40 +126,56 @@ func _build_world() -> void:
 	sky_mat.ground_bottom_color = Color(0.55, 0.55, 0.58)
 	sky.sky_material = sky_mat
 	env.sky = sky
-	# 環境光は暖色フラットにして影が青緑に転ぶのを防ぐ（コントラストも上げる）
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.62, 0.60, 0.55)
 	env.ambient_light_energy = 0.55
 	env.glow_enabled = true
 	env.glow_intensity = 0.25
-	env.glow_bloom = 0.0
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-
 	var we := WorldEnvironment.new()
 	we.environment = env
 	_sub.add_child(we)
 
-	# ── 太陽光（影あり・斜め上から）──
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-52.0, -35.0, 0.0)
-	sun.light_energy = 1.35  # 明るく・コントラスト強め（白飛びは避ける）
+	sun.light_energy = 1.35
 	sun.light_color = Color(1.0, 0.95, 0.85)
 	sun.shadow_enabled = true
-	sun.shadow_blur = 1.5  # 柔らかい影（オクトラ風）
+	sun.shadow_blur = 1.5
 	_sub.add_child(sun)
 
-	# ── 地面：Kenney の草タイル（1x1）を MultiMesh で敷き詰め（Kenney と質感を統一・1ドローコール）──
-	_build_ground_tiles()
 
-	# ── 中庭の小物：Kenney Nature Kit（CC0）の glTF モデルを配置 ──
-	_build_props()
+## サイバーパンクの夜（黒猫飯店の世界観）。暗い空＋弱い青い月光＋ネオンの強い glow＋フォグ。
+## ネオン本体は _build_props_cyberpunk() の発光マテリアル＋OmniLight3D が担う。
+func _build_env_cyberpunk() -> void:
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color(0.025, 0.03, 0.06)  # 深い藍の夜
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.18, 0.22, 0.40)  # 弱く青い環境光
+	env.ambient_light_energy = 0.35
+	# ネオンを滲ませる強めの glow（HDR 閾値で発光面だけ光らせる）
+	env.glow_enabled = true
+	env.glow_intensity = 0.9
+	env.glow_bloom = 0.18
+	env.glow_hdr_threshold = 0.85
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	# 奥行きの霧（ネオンの色を空気に乗せる）
+	env.fog_enabled = true
+	env.fog_light_color = Color(0.10, 0.13, 0.26)
+	env.fog_density = 0.025
+	var we := WorldEnvironment.new()
+	we.environment = env
+	_sub.add_child(we)
 
-	# ── カメラ（傾けた見下ろし・perspective）──
-	_cam = Camera3D.new()
-	_cam.fov = 42.0
-	_cam.current = true
-	_sub.add_child(_cam)
-	_update_camera(true)
+	# 弱い青白い月光（キャラのシルエットと接地影のために最低限）
+	var moon := DirectionalLight3D.new()
+	moon.rotation_degrees = Vector3(-58.0, -28.0, 0.0)
+	moon.light_energy = 0.45
+	moon.light_color = Color(0.55, 0.65, 0.95)
+	moon.shadow_enabled = true
+	moon.shadow_blur = 1.5
+	_sub.add_child(moon)
 
 
 ## 地面（PlaneMesh ＋ 自前のやわらかいタイル質感）。色を完全に制御できるので
@@ -147,36 +189,120 @@ func _build_ground_tiles() -> void:
 	gmat.albedo_texture = _make_ground_texture()
 	gmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	gmat.uv1_scale = Vector3(18.0, 18.0, 1.0)
-	gmat.roughness = 0.92
+	if THEME == "cyberpunk":
+		# 濡れたアスファルト：暗く・つるっとさせてネオンの映り込み（スペキュラ）を出す
+		gmat.roughness = 0.28
+		gmat.metallic = 0.25
+	else:
+		gmat.roughness = 0.92
 	plane.material_override = gmat
 	plane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_sub.add_child(plane)
 
 
-## やわらかい二色タイルの地面テクスチャ（低コントラストの草緑）。
+## 地面テクスチャ。テーマで草緑／濡れアスファルトを切替。
 func _make_ground_texture() -> ImageTexture:
 	var n := 32
 	var img := Image.create(n, n, false, Image.FORMAT_RGB8)
+	var cyber := THEME == "cyberpunk"
 	for y in n:
 		for x in n:
 			var checker := ((x / 16) + (y / 16)) % 2 == 0
-			var base := Color(0.40, 0.50, 0.30) if checker else Color(0.36, 0.46, 0.27)
-			var j := (float((x * 7 + y * 13) % 17) / 17.0 - 0.5) * 0.05
+			var base: Color
+			if cyber:
+				base = Color(0.06, 0.07, 0.10) if checker else Color(0.05, 0.055, 0.085)
+			else:
+				base = Color(0.40, 0.50, 0.30) if checker else Color(0.36, 0.46, 0.27)
+			var j := (float((x * 7 + y * 13) % 17) / 17.0 - 0.5) * 0.04
 			img.set_pixel(x, y, Color(base.r + j, base.g + j, base.b + j))
 	return ImageTexture.create_from_image(img)
 
 
-func _add_box(pos: Vector3, sz: Vector3, col: Color) -> void:
+func _add_box(pos: Vector3, sz: Vector3, col: Color, rough: float = 0.9, yaw: float = 0.0) -> void:
 	var mi := MeshInstance3D.new()
 	var bm := BoxMesh.new()
 	bm.size = sz
 	mi.mesh = bm
 	mi.position = pos
+	mi.rotation_degrees = Vector3(0, yaw, 0)
 	var m := StandardMaterial3D.new()
 	m.albedo_color = col
-	m.roughness = 0.9
+	m.roughness = rough
 	mi.material_override = m
 	_sub.add_child(mi)
+
+
+## 発光する箱（ネオン看板/提灯）。emission を glow_hdr_threshold 超えまで上げて滲ませる。
+func _emissive_box(pos: Vector3, sz: Vector3, col: Color, energy: float = 3.0, yaw: float = 0.0) -> void:
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = sz
+	mi.mesh = bm
+	mi.position = pos
+	mi.rotation_degrees = Vector3(0, yaw, 0)
+	var m := StandardMaterial3D.new()
+	m.albedo_color = col
+	m.emission_enabled = true
+	m.emission = col
+	m.emission_energy_multiplier = energy
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_sub.add_child(mi)
+
+
+## ネオンの点光源（濡れた路面・キャラ周辺を色で染める）。
+func _neon_light(pos: Vector3, col: Color, energy: float, rng: float) -> void:
+	var o := OmniLight3D.new()
+	o.position = pos
+	o.light_color = col
+	o.light_energy = energy
+	o.omni_range = rng
+	_sub.add_child(o)
+
+
+## サイバーパンク中華（黒猫飯店）の通り。暗い路面にネオン看板・赤提灯・店先の暖色。
+## 現状は仮のジオメトリ（箱）。Cyberpunk/中華キット導入後に差し替える前提。
+func _build_props_cyberpunk() -> void:
+	const NEON_CYAN := Color(0.2, 0.9, 1.0)
+	const NEON_MAGENTA := Color(1.0, 0.2, 0.7)
+	const NEON_RED := Color(1.0, 0.18, 0.12)
+	const WARM := Color(1.0, 0.62, 0.28)
+
+	# 奥のビル群（暗い箱・上にネオンの縁）。左右に高低差をつける
+	var blds := [
+		{"p": Vector3(-6.5, 3.0, -9.5), "s": Vector3(5.0, 6.0, 2.0)},
+		{"p": Vector3(-1.5, 4.0, -10.5), "s": Vector3(4.0, 8.0, 2.0)},
+		{"p": Vector3(3.5, 3.2, -9.8), "s": Vector3(4.5, 6.4, 2.0)},
+		{"p": Vector3(7.5, 4.5, -10.0), "s": Vector3(4.0, 9.0, 2.0)},
+	]
+	for b in blds:
+		_add_box(b["p"], b["s"], Color(0.07, 0.08, 0.12), 0.7)
+	# ビル壁面のネオンの横ライン
+	_emissive_box(Vector3(-6.5, 4.6, -8.5), Vector3(4.6, 0.16, 0.05), NEON_CYAN, 4.0)
+	_emissive_box(Vector3(3.5, 4.8, -8.8), Vector3(4.0, 0.16, 0.05), NEON_MAGENTA, 4.0)
+	_emissive_box(Vector3(7.5, 6.0, -9.0), Vector3(3.6, 0.16, 0.05), NEON_CYAN, 4.0)
+
+	# 縦のネオン看板（中華街のタテ看板イメージ）
+	_emissive_box(Vector3(-4.2, 3.2, -7.6), Vector3(0.5, 3.2, 0.18), NEON_MAGENTA, 3.5)
+	_emissive_box(Vector3(5.6, 2.8, -7.2), Vector3(0.5, 2.8, 0.18), NEON_CYAN, 3.5)
+	_emissive_box(Vector3(1.2, 3.6, -8.0), Vector3(0.42, 3.6, 0.18), NEON_RED, 3.2)
+
+	# 店先「黒猫飯店」：暖色の庇＋赤い看板（左手前）
+	_add_box(Vector3(-5.2, 1.3, -3.5), Vector3(3.4, 2.6, 2.4), Color(0.10, 0.06, 0.06), 0.6)
+	_emissive_box(Vector3(-5.2, 2.9, -2.4), Vector3(3.2, 0.7, 0.2), NEON_RED, 3.0)      # 赤い看板
+	_emissive_box(Vector3(-5.2, 1.4, -2.35), Vector3(3.0, 1.4, 0.1), WARM, 1.6)         # 暖色の店内窓
+	_neon_light(Vector3(-5.0, 2.0, -1.6), WARM, 3.0, 7.0)                                # 店先の暖色光
+
+	# 赤提灯を通りに沿って吊るす（中華の象徴）
+	for z in [-3.0, -1.0, 1.0, 3.0]:
+		_emissive_box(Vector3(-2.6, 3.4, z), Vector3(0.5, 0.7, 0.5), NEON_RED, 2.6)
+		_emissive_box(Vector3(2.6, 3.4, z + 1.0), Vector3(0.5, 0.7, 0.5), NEON_RED, 2.6)
+
+	# 通りを染めるネオンの点光源（シアン×マゼンタ×赤の対比）
+	_neon_light(Vector3(-4.0, 2.2, -1.0), NEON_MAGENTA, 4.0, 9.0)
+	_neon_light(Vector3(4.0, 2.2, -1.5), NEON_CYAN, 4.0, 9.0)
+	_neon_light(Vector3(0.0, 2.5, -6.0), NEON_RED, 3.0, 10.0)
+	_neon_light(Vector3(2.0, 1.8, 3.0), NEON_CYAN, 2.6, 8.0)
 
 
 const KENNEY_DIR := "res://assets/third_party/kenney_naturekit/models/"

@@ -39,6 +39,38 @@ HD-2D 探索画面の背景/地形を**自作せず**、ライセンスが明確
 
 ---
 
+## 1.5 サイバーパンク × 中華飯店（黒猫飯店の世界観）
+
+本作の本命テーマ。ネオン夜街＋中華要素。配布サイトはネットワーク制限で直 DL 不可のため、
+**Nature Kit 同様にユーザーがダウンロードしてアップロード**する運用を想定。
+
+### サイバーパンク／ネオン都市
+
+| 提供元 | パック | 形式 | ライセンス | 備考 |
+|---|---|---|---|---|
+| **Quaternius** | [Cyberpunk Game Kit](https://quaternius.com/packs/cyberpunkgamekit.html)（[poly.pizza](https://poly.pizza/bundle/Cyberpunk-Game-Kit-Hkfxa8K8zF)） | glTF/FBX/OBJ/Blend | **CC0** | **本命**。ネオン建物・モジュラー街・小物。クレジット不要 |
+| **Kenney** | [City Kit (Roads)](https://kenney.nl/assets/city-kit-roads) / [City Kit (Commercial)](https://kenney.nl/assets/city-kit-commercial) | glTF | **CC0** | 道路・ビルの土台。ネオンは自前 emission で足す |
+| **KayKit** | [City Builder Bits](https://kaylousberg.itch.io/city-builder-bits) | glTF/FBX/OBJ | **CC0** | 32+ のローポリ街パーツ |
+| monogon | [Voxel Cyberpunk City](https://itch.io/game-assets/free/tag-cyberpunk/tag-low-poly) | voxel | 要確認（多くは無料） | voxel 路線で HD-2D の質感に合う |
+
+### 中華／アジアの街・飯店
+
+| 提供元 | 内容 | ライセンス | 備考 |
+|---|---|---|---|
+| **Sketchfab** | [Low poly Chinese city](https://sketchfab.com/3d-models/low-poly-chinese-city-faf480ecd57d4c8e9a2836f5c02c4d00) ほか「chinese street/chinatown」 | **モデル毎**（CC0/CC-BY 要確認） | 提灯・看板・屋台。DL 可否とライセンスを個別確認 |
+| **Meshy** | [chinese タグ](https://www.meshy.ai/tags/chinese) 生成モデル | **CC0**（GLB/OBJ） | 提灯・門・飯店パーツを生成 DL |
+| **Poly Pizza** | 「lantern」「noodle」「chinese」検索 | CC0/CC-BY 混在 | 提灯・屋台・食器など小物 |
+
+> **有償だが定番**：Synty [POLYGON Sci-Fi Cyber City](https://syntystore.com/products/polygon-sci-fi-cyber-city)（サブスク）。
+> 質は高いが CC0 ではないので本作では非推奨。まず CC0 の Quaternius + 中華小物で組むのが筋。
+
+### 現状（仮組み）
+
+キット到着まで、`hd2d_view.gd` の `_build_props_cyberpunk()` が**発光ボックスの仮ジオメトリ**で
+ネオン看板・赤提灯・店先の暖色を再現し、**ライティングだけ先に確定**させている（下記プレビュー）。
+キットが入ったら箱を実モデルに差し替えるだけ。
+
+
 ## 2. voxel を自作したくなった場合のツール
 
 | ツール | 役割 | 備考 |
