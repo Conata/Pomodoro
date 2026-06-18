@@ -8,13 +8,14 @@ extends Control
 
 signal action_pressed(id: String)
 
-const PANEL_BG := Color(0.04, 0.04, 0.07, 0.78)
-const PINK := Color(1.0, 0.36, 0.72)
-const CYAN := Color(0.35, 0.92, 1.0)
-const PURPLE := Color(0.66, 0.4, 1.0)
-const GOLD := Color(1.0, 0.82, 0.4)
-const TEXT := Color(0.96, 0.95, 0.98)
-const TEXT_DIM := Color(0.75, 0.76, 0.84)
+# 色は DS（唯一の真実）から引く。画面固有のローカル定義は持たない。
+const PANEL_BG := DS.SURFACE
+const PINK := DS.PINK
+const CYAN := DS.CYAN
+const PURPLE := DS.PURPLE
+const GOLD := DS.GOLD
+const TEXT := DS.TEXT
+const TEXT_DIM := DS.TEXT_2
 
 const STRIP_H := 168.0   # 最下部 HD-2D フィールド帯の高さ（FieldStrip と一致させる）
 const FOOTER_H := 58.0   # 最下部フッターナビバーの高さ（旧版のボトムタブを踏襲）
@@ -76,18 +77,13 @@ func _hit(rect: Rect2, id: String) -> void:
 	_hits.append({"rect": rect, "id": id})
 
 
+# 描画の実体は DS に集約。各画面は self を渡すだけの薄いラッパー。
 func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = bg
-	sb.border_color = border
-	sb.set_border_width_all(int(bw))
-	sb.set_corner_radius_all(int(radius))
-	draw_style_box(sb, rect)
+	DS.panel(self, rect, bg, border, radius, bw)
 
 
 func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
-	draw_string(font, pos + Vector2(1, 1), s, ha, w, size, Color(0, 0, 0, 0.6))
-	draw_string(font, pos, s, ha, w, size, col)
+	DS.txt(self, font, pos, s, size, col, ha, w)
 
 
 func _icon(font: Font, c: Vector2, r: float, label: String, col: Color, id: String) -> void:

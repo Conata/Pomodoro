@@ -2,32 +2,43 @@ class_name DS
 extends RefCounted
 ## 黒猫飯店 デザインシステム — 唯一の真実（single source of truth）。
 ## Vignelli の規律（型は少なく・グリッド・識別色・余白で語る）を、
-## リファレンスのダークネオン美学に翻訳したトークンとコンポーネント工場。
-## UI スクリプトはすべてここから色・型・間隔・スタイルを引く。
+## リファレンス（MIDNIGHT VIDEO / Rain98）の【ダークネオン】美学に翻訳した
+## トークンと描画コンポーネント工場。UI スクリプトは色・型・間隔・描画を
+## すべてここから引く（home/dive/menu オーバーレイも DS 参照に統一済み）。
 ## docs/DESIGN_SYSTEM.md と対で維持すること。
+##
+## 識別色＝シアン（ACCENT）。差し色＝ピンク(キャラ/CTA)・紫(深層/オカルト)・金(資源/看板)。
+## 暖色テーマ（ui_theme.gd / UIKit）は別路線として棚上げ。現行の正はこのネオン DS。
 
-# ── 色（深夜喫茶×オカルト×温かい居場所。識別色＝暖炉オレンジ） ──────────
-# 指定パレット。3軸＝オレンジ(店)/ミント(ポモドーロ)/紫(キリコ)。
-# 詳細・モード差し色・キリコ専用色は src/ui/ui_theme.gd(UIKit) を参照。
-const BG := Color("151515")          # 画面の地（深夜の黒）
-const SURFACE := Color("222222")     # 面（店内の影）
-const SURFACE_2 := Color("2e2e2e")   # 面・押下/選択
-const LINE := Color("3a2a20b3")      # 罫・縁（木製家具・α0.7）
-const TEXT := Color("f5f3ee")        # 本文（真っ白を避ける）
-const TEXT_2 := Color("b8b8b8")      # 副文
-const TEXT_MUTE := Color("707070")   # 注記/無効
-const ACCENT := Color("e6a15a")      # 識別色（暖炉オレンジ＝店）
-const ACCENT_DIM := Color("e6a15a80")
-const WARM := Color("e6a15a")        # 店番・看板の暖色
-const DANGER := Color("e05a5a")      # 切断・撤退
-const SUCCESS := Color("6fd37d")     # 収穫・廃材
+# ── 色（ダークネオン。色は「意味」を持つ） ───────────────────────────────
+const BG := Color("0c0c14")          # 画面の地（ほぼ黒の紺）
+const SURFACE := Color("14141f")     # カードの面
+const SURFACE_2 := Color("1d1d2b")   # 面・押下/選択（一段上げ）
+const LINE := Color("5aebff40")      # 罫・縁（シアン半透明）
+const TEXT := Color("f5f2fa")        # 本文（真っ白を避ける）
+const TEXT_2 := Color("bfc0cc")      # 副文
+const TEXT_MUTE := Color("8a8b99")   # 注記/無効
+const INK := Color("00000099")       # 文字の落ち影（可読性確保）
 
-# ── 型（5段。見出し≒2×本文。これ以上増やさない） ──────────────────────
-const T_MICRO := 14
-const T_BODY := 19
-const T_SUB := 24
-const T_HEAD := 38
-const T_DISPLAY := 54
+# 差し色（neon）。実画面はこの別名を参照する（旧ローカル定義を撤廃）。
+const CYAN := Color(0.35, 0.92, 1.0)   # 識別色＝この店のアイデンティティ
+const PINK := Color(1.0, 0.36, 0.72)   # キャラ・CTA・会話
+const PURPLE := Color(0.66, 0.4, 1.0)  # 深層・オカルト・潜行
+const GOLD := Color(1.0, 0.82, 0.4)    # 資源・看板・店番
+const HP := Color(0.45, 0.9, 0.5)      # HP・収穫
+
+const ACCENT := CYAN                  # 識別色（CTA・見出し罫・選択）
+const ACCENT_DIM := Color(0.35, 0.92, 1.0, 0.5)
+const WARM := GOLD                    # 店番・ネオン看板の暖色
+const DANGER := Color("e0606a")       # 切断・撤退
+const SUCCESS := HP                   # 収穫・廃材
+
+# ── 型（5段。見出し≒2×本文。これ以上増やさない。実画面の密度に合わせ neon 調） ──
+const T_MICRO := 12   # 注記・サブ
+const T_BODY := 15    # 本文（基準）
+const T_SUB := 18     # 小見出し
+const T_HEAD := 22    # 見出し
+const T_DISPLAY := 40 # 数字の主役（残り時間など）
 
 # ── 間隔（8px基準。場当たりを排す） ──────────────────────────────────
 const SP_1 := 4
@@ -113,13 +124,13 @@ static func theme() -> Theme:
 # ── ボタン3系統のスタイルを個別ノードへ適用 ──────────────────────────
 static func as_primary(b: Button) -> Button:
 	var n := _sb(ACCENT, Color(1, 1, 1, 0.0), R_SM, SP_3)
-	var h := _sb(Color("f4b86e"), Color(1, 1, 1, 0.0), R_SM, SP_3)  # 明るい暖炉オレンジ
+	var h := _sb(Color(0.6, 0.97, 1.0), Color(1, 1, 1, 0.0), R_SM, SP_3)  # 明るいシアン
 	b.add_theme_stylebox_override("normal", n)
 	b.add_theme_stylebox_override("hover", h)
 	b.add_theme_stylebox_override("pressed", h)
-	b.add_theme_color_override("font_color", Color("231708"))       # オレンジ面の上の暗色
-	b.add_theme_color_override("font_hover_color", Color("231708"))
-	b.add_theme_color_override("font_pressed_color", Color("160f05"))
+	b.add_theme_color_override("font_color", Color("06121a"))       # シアン面の上の暗色
+	b.add_theme_color_override("font_hover_color", Color("06121a"))
+	b.add_theme_color_override("font_pressed_color", Color("040b10"))
 	return b
 
 
@@ -127,3 +138,38 @@ static func as_danger(b: Button) -> Button:
 	b.add_theme_color_override("font_color", DANGER)
 	b.add_theme_color_override("font_hover_color", Color(1, 0.6, 0.65))
 	return b
+
+
+# ── 共有描画ヘルパー（_draw ベースのオーバーレイが委譲する唯一の実装） ──────
+# home/dive/menu の各オーバーレイはローカルに同じ _panel/_txt/_bar を持っていた。
+# その実体をここへ集約し、各画面は薄いラッパー（self を渡すだけ）から呼ぶ。
+# ci＝描画先 CanvasItem（呼び出し元の Control を self で渡す）。
+
+## 角丸パネル（塗り＋縁）。
+static func panel(ci: CanvasItem, rect: Rect2, bg: Color, border: Color, radius := R_LG, bw := 1.5) -> void:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg
+	sb.border_color = border
+	sb.set_border_width_all(int(bw))
+	sb.set_corner_radius_all(int(radius))
+	ci.draw_style_box(sb, rect)
+
+
+## 落ち影つきテキスト（可読性：1px のインク影）。
+static func txt(ci: CanvasItem, font: Font, pos: Vector2, s: String, size: int, col: Color,
+		ha := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
+	ci.draw_string(font, pos + Vector2(1, 1), s, ha, w, size, INK)
+	ci.draw_string(font, pos, s, ha, w, size, col)
+
+
+## 文字幅（中央寄せ計算用）。
+static func tw(font: Font, s: String, size: int) -> float:
+	return font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+
+
+## 比率バー（地＋塗り）。ratio 0〜1。
+static func bar(ci: CanvasItem, rect: Rect2, ratio: float, col: Color) -> void:
+	panel(ci, rect, Color(0, 0, 0, 0.5), Color(1, 1, 1, 0.12), 3, 1)
+	var w := rect.size.x * clampf(ratio, 0.0, 1.0)
+	if w > 1.0:
+		ci.draw_rect(Rect2(rect.position, Vector2(w, rect.size.y)), col)

@@ -8,14 +8,15 @@ extends Control
 
 signal command_pressed(id: String)
 
-const PANEL_BG := Color(0.05, 0.055, 0.10, 0.84)
-const PINK := Color(1.0, 0.36, 0.72)
-const CYAN := Color(0.35, 0.92, 1.0)
-const PURPLE := Color(0.66, 0.4, 1.0)
-const GOLD := Color(1.0, 0.82, 0.4)
-const HP_COL := Color(0.45, 0.9, 0.5)
-const TEXT := Color(0.96, 0.95, 0.98)
-const TEXT_DIM := Color(0.72, 0.74, 0.82)
+# 色は DS（唯一の真実）から引く。画面固有のローカル定義は持たない。
+const PANEL_BG := DS.SURFACE
+const PINK := DS.PINK
+const CYAN := DS.CYAN
+const PURPLE := DS.PURPLE
+const GOLD := DS.GOLD
+const HP_COL := DS.HP
+const TEXT := DS.TEXT
+const TEXT_DIM := DS.TEXT_2
 
 # ── 表示データ（main.gd / KuroSim から set_data()。既定はプレースホルダ）──
 var party: Array = [
@@ -74,29 +75,21 @@ func _hit(rect: Rect2, id: String) -> void:
 	_hits.append({"rect": rect, "id": id})
 
 
+# 描画の実体は DS に集約。各画面は self を渡すだけの薄いラッパー。
 func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = bg
-	sb.border_color = border
-	sb.set_border_width_all(int(bw))
-	sb.set_corner_radius_all(int(radius))
-	draw_style_box(sb, rect)
+	DS.panel(self, rect, bg, border, radius, bw)
 
 
 func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
-	draw_string(font, pos + Vector2(1, 1), s, ha, w, size, Color(0, 0, 0, 0.55))
-	draw_string(font, pos, s, ha, w, size, col)
+	DS.txt(self, font, pos, s, size, col, ha, w)
 
 
 func _tw(font: Font, s: String, size: int) -> float:
-	return font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	return DS.tw(font, s, size)
 
 
 func _bar(rect: Rect2, ratio: float, col: Color) -> void:
-	_panel(Rect2(rect.position, rect.size), Color(0, 0, 0, 0.5), Color(1, 1, 1, 0.12), 3, 1)
-	var w := rect.size.x * clampf(ratio, 0.0, 1.0)
-	if w > 1.0:
-		draw_rect(Rect2(rect.position, Vector2(w, rect.size.y)), col)
+	DS.bar(self, rect, ratio, col)
 
 
 func _mmss(sec: int) -> String:
