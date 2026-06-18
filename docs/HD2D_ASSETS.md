@@ -15,7 +15,11 @@ HD-2D 探索画面の背景/地形を**自作せず**、ライセンスが明確
 
 | 提供元 | パック例 | 形式 | ライセンス | 用途 |
 |---|---|---|---|---|
-| **Kenney** | [Nature Kit](https://kenney.nl/assets/nature-kit) / [Voxel Pack](https://kenney.nl/assets/voxel-pack) / [City Kit (Suburban)](https://kenney.nl/assets/city-kit-suburban) / [Castle Kit](https://kenney.nl/assets/castle-kit) | glTF/FBX/OBJ | **CC0** | 木・建物・塀・道など中庭〜街の構成 |
+| **Kenney** | [Nature Kit](https://kenney.nl/assets/nature-kit)（**導入済**）/ [Voxel Pack](https://kenney.nl/assets/voxel-pack) / [City Kit (Suburban)](https://kenney.nl/assets/city-kit-suburban) / [Castle Kit](https://kenney.nl/assets/castle-kit) | glTF/FBX/OBJ | **CC0** | 木・建物・塀・道など中庭〜街の構成 |
+
+> **✅ Nature Kit 導入済み**：`assets/third_party/kenney_naturekit/`（GLTF 形式 329 モデル＋License.txt、CC0）。
+> HD-2D プロトタイプ（`hd2d_view.gd` の `_build_props()`）で木・柵・岩・茂み・花・石畳を配置済み。
+> 1 タイル = 1 ユニット設計・足元 y=0。木は約 1.7 ユニット高なので `scale 2.5` 前後でキャラを見下ろす高さになる。
 | **Quaternius** | [Ultimate Nature Pack](https://quaternius.com/packs/ultimatenature.html) / [Ultimate Stylized Nature Pack](https://quaternius.com/packs/ultimatestylizednature.html) | glTF/FBX/OBJ/Blend | **CC0** | スタイライズな木・岩・草。HD-2D 背景向き |
 | **Kenney（全部入り）** | [Game Assets All-in-1](https://kenney.nl/data/itch/preview/) | 各種 | **CC0** | まとめて入手したい場合 |
 

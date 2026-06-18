@@ -23,6 +23,8 @@ SSAO/被写界深度（DOF）など重い後処理は使わない方針。
 - **R / F** … ズームイン / アウト
 
 NPC（doctor / nurse / mil / muu / yuzuki）が中庭に立ち、カメラは斜め見下ろしで追従する。
+中庭の小物（木・柵・岩・茂み・花・石畳）は **Kenney Nature Kit（CC0）** の glTF モデル
+（`assets/third_party/kenney_naturekit/`）を `_build_props()` で配置している。
 
 ## 押さえた要点（Godot での HD-2D 定石）
 

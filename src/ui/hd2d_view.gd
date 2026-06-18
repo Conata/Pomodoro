@@ -131,17 +131,8 @@ func _build_world() -> void:
 	plane.material_override = gmat
 	_sub.add_child(plane)
 
-	# ── 小物（植木・ベンチ風のボックス）で奥行きを出す ──
-	_add_box(Vector3(-3.0, 0.4, 0.0), Vector3(1.2, 0.8, 4.0), Color(0.55, 0.42, 0.30))  # ベンチ
-	_add_box(Vector3(3.0, 0.4, 0.0), Vector3(1.2, 0.8, 4.0), Color(0.55, 0.42, 0.30))
-	_add_box(Vector3(0.0, 0.5, -9.0), Vector3(10.0, 1.0, 1.0), Color(0.62, 0.66, 0.70))  # 奥の塀
-	# 植木（緑）
-	for p in [Vector3(-9, 0, 5), Vector3(9, 0, 5)]:
-		_add_box(p + Vector3(0, 0.6, 0), Vector3(1.6, 1.2, 1.6), Color(0.30, 0.55, 0.32))
-	# 桜の木（参照画像に合わせて奥の左右に。幹＋ピンクの樹冠）
-	for tp in [Vector3(-8, 0, -8), Vector3(8, 0, -8)]:
-		_add_box(tp + Vector3(0, 1.1, 0), Vector3(0.5, 2.2, 0.5), Color(0.40, 0.28, 0.22))  # 幹
-		_add_box(tp + Vector3(0, 2.8, 0), Vector3(3.2, 2.0, 3.2), Color(1.0, 0.74, 0.82))   # 樹冠
+	# ── 中庭の小物：Kenney Nature Kit（CC0）の glTF モデルを配置 ──
+	_build_props()
 
 	# ── カメラ（傾けた見下ろし・perspective）──
 	_cam = Camera3D.new()
@@ -176,6 +167,70 @@ func _add_box(pos: Vector3, sz: Vector3, col: Color) -> void:
 	m.roughness = 0.9
 	mi.material_override = m
 	_sub.add_child(mi)
+
+
+const KENNEY_DIR := "res://assets/third_party/kenney_naturekit/models/"
+
+## Kenney Nature Kit の glTF モデルを 1 体配置。base が y=0 のモデル前提。
+## 木は約 1.7 ユニット高なので scale 2.5 でキャラ（約2.3）を見下ろす高さになる。
+func _add_model(model_name: String, pos: Vector3, scale: float = 1.0, yaw_deg: float = 0.0) -> void:
+	var ps := load(KENNEY_DIR + model_name + ".glb")
+	if ps == null:
+		return
+	var inst := (ps as PackedScene).instantiate() as Node3D
+	if inst == null:
+		return
+	inst.position = pos
+	inst.scale = Vector3(scale, scale, scale)
+	inst.rotation_degrees = Vector3(0, yaw_deg, 0)
+	_sub.add_child(inst)
+	_enable_shadows(inst)
+
+
+## 取り込んだモデルの全 MeshInstance3D に影を落とさせる（接地感）。
+func _enable_shadows(node: Node) -> void:
+	if node is GeometryInstance3D:
+		(node as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	for c in node.get_children():
+		_enable_shadows(c)
+
+
+## 中庭のレイアウト。Kenney Nature Kit（CC0）で木・柵・岩・茂み・花・石畳を配置。
+func _build_props() -> void:
+	# 奥の木立（高めの木を perimeter に。fall 系で色味に変化）
+	_add_model("tree_default", Vector3(-8, 0, -8), 2.6, 20)
+	_add_model("tree_default_fall", Vector3(8, 0, -8.5), 2.8, -30)
+	_add_model("tree_oak", Vector3(-10.5, 0, -2), 2.4, 0)
+	_add_model("tree_thin", Vector3(10.5, 0, -1), 2.6, 15)
+	_add_model("tree_default_fall", Vector3(-9, 0, 6), 2.3, 200)
+	_add_model("tree_oak", Vector3(9.5, 0, 6.5), 2.5, 120)
+	_add_model("tree_pineTallA", Vector3(0, 0, -10.5), 3.0, 0)
+
+	# 背景の柵（奥の境界。1ユニット幅を 1.5 倍で並べる）
+	for i in range(-4, 5):
+		_add_model("fence_simple", Vector3(i * 1.5, 0, -9.5), 1.5, 0)
+
+	# 中央の石畳パス（プレイヤーの通り道）
+	for z in range(-3, 6):
+		_add_model("ground_pathTile", Vector3(0, 0.02, z * 1.0), 1.0, 0)
+
+	# 岩・石（中景のアクセント）
+	_add_model("rock_largeA", Vector3(-5, 0, 3), 1.8, 40)
+	_add_model("rock_largeC", Vector3(6, 0, 2.5), 1.6, 200)
+	_add_model("stone_smallB", Vector3(-2.5, 0, 5), 1.4, 0)
+
+	# 茂み・草・花（足元の密度）
+	for d in [
+		{"m": "plant_bushLarge", "p": Vector3(-4, 0, -2), "s": 1.6},
+		{"m": "plant_bushDetailed", "p": Vector3(5, 0, -3), "s": 1.6},
+		{"m": "grass_large", "p": Vector3(-2, 0, 1), "s": 1.6},
+		{"m": "grass_large", "p": Vector3(3, 0, 4), "s": 1.6},
+		{"m": "flower_redA", "p": Vector3(-3.2, 0, 2), "s": 1.8},
+		{"m": "flower_yellowB", "p": Vector3(2.2, 0, -1), "s": 1.8},
+		{"m": "flower_purpleC", "p": Vector3(4, 0, 1.5), "s": 1.8},
+		{"m": "mushroom_redGroup", "p": Vector3(-6, 0, -4), "s": 1.6},
+	]:
+		_add_model(String(d["m"]), d["p"], float(d["s"]), 0)
 
 
 func _build_player() -> void:
