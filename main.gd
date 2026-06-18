@@ -7,6 +7,7 @@ extends Control
 const HOME := "res://home_screen.tscn"
 const DIVE := "res://dive_screen.tscn"
 const MENU := "res://menu_screen.tscn"
+const RESULT := "res://result_screen.tscn"
 
 var sim: KuroSim = null
 var _current: Node = null
@@ -16,13 +17,41 @@ var _menu_overlay: Node = null   # メニュー（メンバー/市場/経営/工
 var _in_dive := false
 var _speed := 1                  # 潜航の早送り倍率（fast コマンドで 1→2→3 巡回）
 var _home_data: Dictionary = {}  # ホーム表示データ（日数/金/セリフ）
+var _last_summary: Dictionary = {}  # 直近の run_complete サマリ（精算リザルト表示用）
+var _save_accum := 0.0           # 潜航中オートセーブの蓄積秒
+const AUTOSAVE_SEC := 20.0       # 潜航中はこの間隔で自動保存（旧メイン同方式）
 
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
-	sim = KuroSim.new()           # フレッシュなゲーム状態（gold 120 / day 1）
-	_refresh_home_data("「いらっしゃい。今日はどこで仕入れる？」")
-	_goto(HOME)
+	var loaded := SaveGame.load_state()
+	if loaded.is_empty():
+		sim = KuroSim.new()           # 新規（gold 120 / day 1）
+	else:
+		sim = KuroSim.new(loaded)     # セーブから再開
+	sim.apply_offline(Time.get_unix_time_from_system())  # 安息収入＋last_seen 更新
+	if bool(sim.state["run"]["active"]):
+		# 中断したダイブを再開（_process が anchor で時間をキャッチアップする）
+		_goto(DIVE)
+	else:
+		_refresh_home_data("「いらっしゃい。今日はどこで仕入れる？」")
+		_goto(HOME)
+	_save()                           # last_seen / 安息分を確定保存
+
+
+## 現在の状態を保存（rng を state に同期してから書き出す）。
+func _save() -> void:
+	if sim == null:
+		return
+	sim.sync_rng()
+	SaveGame.save_state(sim.state)
+
+
+## アプリ終了・バックグラウンド化で取りこぼさず保存する。
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED \
+			or what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		_save()
 
 
 func _process(delta: float) -> void:
@@ -34,8 +63,22 @@ func _process(delta: float) -> void:
 	# KuroSim を実時間アンカーで駆動（タブ非アクティブでも正確：旧メインと同方式）
 	_catch_up(Time.get_unix_time_from_system())
 	_update_dive_ui()
+	# 探索イベント（撃破・箱・記憶・扉・再同期…）を潜航オーバーレイのフィードへ。
+	# run_complete サマリ（撃破数/到達階など）は精算リザルト用に確保する。
+	var evs := sim.drain_events()
+	if _dive_overlay != null and _dive_overlay.has_method("add_events"):
+		_dive_overlay.add_events(evs)
+	for e in evs:
+		if String(e.get("kind", "")) == "run_complete":
+			_last_summary = e.get("summary", {})
 	if not bool(sim.state["run"]["active"]):
-		_surface()                # 浮上＝精算→翌朝→店へ
+		_surface()                # 浮上＝精算→リザルト→翌朝→店へ
+		return
+	# 潜航中オートセーブ（中断・クラッシュでも進行を失わない）
+	_save_accum += delta
+	if _save_accum >= AUTOSAVE_SEC:
+		_save_accum = 0.0
+		_save()
 
 
 ## ホーム表示データを KuroSim から更新（日数・所持金・セリフ）。
@@ -46,19 +89,44 @@ func _refresh_home_data(vn_line: String) -> void:
 	}
 
 
-## 浮上：その日の営業を精算し、箱を開け、翌朝へ進めて店に戻る（1日ループ）。
+## 浮上：その日の営業を精算し、箱を開け、結果をリザルト画面で提示する。
+## 「店に戻る」で翌朝のホームへ（翌朝への進行は continue 時に行う）。
 func _surface() -> void:
 	# 店番が客人/未設定でも keeper_apt を持つ既定に補正（クラッシュ防止）
 	var keeper: String = sim.state["morning"]["keeper"]
 	if not (KuroData.GIRLS.get(keeper, {}) as Dictionary).has("keeper_apt"):
 		sim.state["morning"]["keeper"] = "kiriko"
-	var summary: Dictionary = sim.close_day()
+	var night: Dictionary = sim.close_day()
+	# 箱を開封し、1個ずつ結果を集める（リザルトでリビール）
+	var box_results: Array = []
 	while not (sim.state["boxes"] as Array).is_empty():
-		if sim.open_box().is_empty():
+		var r: Dictionary = sim.open_box()
+		if r.is_empty():
 			break
+		box_results.append(r)
+	var result_data := {
+		"day": int(sim.state["day"]),   # いま閉じた夜の日付（next_morning 前に確保）
+		"lines": night.get("lines", []),
+		"gold": int(night.get("gold", 0)),
+		"boxes": box_results,
+		"story": String(night.get("story", "")),
+		"summary": _last_summary,
+	}
+	_last_summary = {}
+	# 翌朝へ進めてから保存（リザルト中にアプリが落ちても状態は常に整合）
 	sim.next_morning()
-	_refresh_home_data("「お疲れさま。今夜は %dG の売上だったよ」" % int(summary.get("gold", 0)))
-	_goto(HOME)
+	_refresh_home_data("「お疲れさま。今夜は %dG の売上だったよ」" % int(night.get("gold", 0)))
+	_save()             # 精算・開封・翌朝の確定を保存
+	_show_result(result_data)
+
+
+## 精算リザルト画面を開いて結果を流し込む。
+func _show_result(data: Dictionary) -> void:
+	_goto(RESULT)
+	if _current != null:
+		var overlay := _current.get_node_or_null("Overlay")
+		if overlay != null and overlay.has_method("set_data"):
+			overlay.set_data(data)
 
 
 ## 固定ステップのキャッチアップ（now － anchor 分だけ step を回す）。
@@ -108,12 +176,22 @@ func _on_home_action(id: String) -> void:
 	match id:
 		"pomodoro":
 			# 25分ポモドーロ集中＝仕入れ（早送り/早期終了は仕入れ画面のボタンで）
+			sim.drain_events()    # ホーム/メニューの残存イベントを捨ててから開始
 			sim.start_run("pomo", 25.0, Time.get_unix_time_from_system(), "集中仕入れ")
+			_save_accum = 0.0
+			_save()       # 開始時点を保存（中断しても再開できる）
 			_goto(DIVE)
 		"depart", "field":
 			# クイック仕入れ（80秒）
+			sim.drain_events()
 			sim.start_run("quick", 1.0, Time.get_unix_time_from_system(), "仕入れ")
+			_save_accum = 0.0
+			_save()
 			_goto(DIVE)
+		"continue":
+			# 精算リザルトから翌朝のホームへ（next_morning は浮上時に済み）
+			_refresh_home_data("「おはよう。今日はどこで仕入れる？」")
+			_goto(HOME)
 		"home":
 			# フッター「ホーム」＝店（HD-2D ホーム）へ。既にホームならセリフだけ戻す。
 			_say_home("「おかえり。今日も飯店、開けるよ。」")
@@ -180,6 +258,7 @@ func _on_menu_action(id: String) -> void:
 			print("[menu] action: ", id)
 			return
 	sim.drain_events()  # ログイベントは破棄（トーストで代替）
+	_save()             # 購入・編成・改装などの変更を保存
 	if _menu_overlay != null and is_instance_valid(_menu_overlay):
 		if toast != "" and _menu_overlay.has_method("set_toast"):
 			_menu_overlay.set_toast(toast)
@@ -205,7 +284,9 @@ func _on_dive_command(id: String) -> void:
 			# 中断して店へ戻る（撤退）
 			if sim != null and bool(sim.state["run"]["active"]):
 				sim.abandon_run()
+			_refresh_home_data("「無理はしないで。仕切り直そう。」")
 			_goto(HOME)
+			_save()                          # 撤退（切断ペナルティ）を保存
 		"finish":
 			# 早期終了＝今すぐ浮上（残り時間を飛ばして正常終了→精算）
 			var run: Dictionary = sim.state["run"]
