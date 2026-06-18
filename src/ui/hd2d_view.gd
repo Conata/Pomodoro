@@ -135,8 +135,13 @@ func _build_world() -> void:
 	_add_box(Vector3(-3.0, 0.4, 0.0), Vector3(1.2, 0.8, 4.0), Color(0.55, 0.42, 0.30))  # ベンチ
 	_add_box(Vector3(3.0, 0.4, 0.0), Vector3(1.2, 0.8, 4.0), Color(0.55, 0.42, 0.30))
 	_add_box(Vector3(0.0, 0.5, -9.0), Vector3(10.0, 1.0, 1.0), Color(0.62, 0.66, 0.70))  # 奥の塀
-	for p in [Vector3(-8, 0, -8), Vector3(8, 0, -8), Vector3(-9, 0, 5), Vector3(9, 0, 5)]:
-		_add_box(p + Vector3(0, 0.6, 0), Vector3(1.6, 1.2, 1.6), Color(0.30, 0.55, 0.32))  # 植木
+	# 植木（緑）
+	for p in [Vector3(-9, 0, 5), Vector3(9, 0, 5)]:
+		_add_box(p + Vector3(0, 0.6, 0), Vector3(1.6, 1.2, 1.6), Color(0.30, 0.55, 0.32))
+	# 桜の木（参照画像に合わせて奥の左右に。幹＋ピンクの樹冠）
+	for tp in [Vector3(-8, 0, -8), Vector3(8, 0, -8)]:
+		_add_box(tp + Vector3(0, 1.1, 0), Vector3(0.5, 2.2, 0.5), Color(0.40, 0.28, 0.22))  # 幹
+		_add_box(tp + Vector3(0, 2.8, 0), Vector3(3.2, 2.0, 3.2), Color(1.0, 0.74, 0.82))   # 樹冠
 
 	# ── カメラ（傾けた見下ろし・perspective）──
 	_cam = Camera3D.new()
