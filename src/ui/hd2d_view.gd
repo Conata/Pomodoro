@@ -237,19 +237,62 @@ func _build_ground_tiles() -> void:
 	plane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_sub.add_child(plane)
 
-	# cyberpunk/home：キットの Platform_4x4 の天面を床として敷く（キット由来の床）。
-	# カメラに映る矩形範囲だけ敷いて軽量化。濡れた金属面にしてネオンを映り込ませる。
+	# cyberpunk/home/dive：キットの Platform_4x4 天面を床タイルとして敷く（キット由来の床）。
+	# 多数個別インスタンスは重いので MultiMesh で 1 ドローコール化（最適化）。
+	# メッシュとマテリアルを取り出し、濡れた金属に調整した material_override を当てる
+	# （でないと既定材質が落ちて水色化する）。
 	if _is_dark():
-		var step := 4.0
-		for ix in range(-2, 3):          # x: -8..8
-			for iz in range(-3, 3):      # z: -12..8（奥めに寄せる）
-				var tile := _add_gltf(CYBER_DIR + "platforms/Platform_4x4.gltf",
-						Vector3(ix * step, 0.0, iz * step - 2.0), 1.0, 0)
-				if tile != null:
-					_make_wet(tile, 0.45, 0.18)  # 濡れた反射
+		var src := _meshinst_from_glb(CYBER_DIR + "platforms/Platform_4x4.gltf")
+		if src != null and src.mesh != null:
+			var mat: Material = src.get_active_material(0)
+			var wet: StandardMaterial3D = (mat.duplicate() if mat is StandardMaterial3D else StandardMaterial3D.new())
+			wet.metallic = 0.45
+			wet.roughness = 0.18
+			var step := 4.0
+			var xs := range(-2, 3)
+			var zs := range(-3, 3)
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.mesh = src.mesh
+			mm.instance_count = xs.size() * zs.size()
+			var idx := 0
+			for ix in xs:
+				for iz in zs:
+					mm.set_instance_transform(idx, Transform3D(Basis(), Vector3(ix * step, 0.0, iz * step - 2.0)))
+					idx += 1
+			var mmi := MultiMeshInstance3D.new()
+			mmi.multimesh = mm
+			mmi.material_override = wet
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			_sub.add_child(mmi)
+			src.queue_free()
 		# ベース板も濡れ感を強める
 		gmat.roughness = 0.16
 		gmat.metallic = 0.5
+
+
+## glb から最初の MeshInstance3D を取り出す（MultiMesh のメッシュ／マテリアル取得用）。
+## 取り出したノードはツリーに属さないので、使用後に queue_free すること。
+func _meshinst_from_glb(path: String) -> MeshInstance3D:
+	var ps := load(path)
+	if ps == null:
+		return null
+	var root := (ps as PackedScene).instantiate()
+	var found := _find_meshinst(root)
+	if found != null and found.get_parent() != null:
+		found.get_parent().remove_child(found)
+	root.queue_free()
+	return found
+
+
+func _find_meshinst(node: Node) -> MeshInstance3D:
+	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+		return node as MeshInstance3D
+	for c in node.get_children():
+		var m := _find_meshinst(c)
+		if m != null:
+			return m
+	return null
 
 
 ## 暗い夜の路面系テーマ（cyberpunk/home/dive）か。
