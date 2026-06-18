@@ -67,6 +67,13 @@ func _ready() -> void:
 		_cam_height = 6.0
 		_cam_dist = 12.0
 		_cam_dist_target = 12.0
+	elif stage_theme == "dive":
+		# 戦闘：パーティ手前(z+)・敵奥(z-)。注視点を中間に置きやや見下ろし
+		_player_pos = Vector3(0, 0, 4.0)   # 主人公はパーティ前列
+		_cam_target_override = Vector3(0, 0.8, 0.0)
+		_cam_height = 6.5
+		_cam_dist = 11.5
+		_cam_dist_target = 11.5
 	_build_viewport()
 	_build_world()
 	_build_player()
@@ -104,7 +111,7 @@ func _build_viewport() -> void:
 func _build_world() -> void:
 	# ── 環境・太陽光（テーマで切替）──
 	match stage_theme:
-		"cyberpunk": _build_env_cyberpunk()
+		"cyberpunk", "dive": _build_env_cyberpunk()
 		"home": _build_env_home()
 		_: _build_env_nature()
 
@@ -119,6 +126,10 @@ func _build_world() -> void:
 		"home":
 			_build_props_home()
 			_build_particles()
+		"dive":
+			_build_props_cyberpunk()
+			_build_particles()
+			_build_enemies()
 		_:
 			_build_props()
 
@@ -241,9 +252,9 @@ func _build_ground_tiles() -> void:
 		gmat.metallic = 0.5
 
 
-## 暗い夜の路面系テーマ（cyberpunk/home）か。
+## 暗い夜の路面系テーマ（cyberpunk/home/dive）か。
 func _is_dark() -> bool:
-	return stage_theme == "cyberpunk" or stage_theme == "home"
+	return stage_theme == "cyberpunk" or stage_theme == "home" or stage_theme == "dive"
 
 
 ## 地面テクスチャ。テーマで草緑／濡れアスファルトを切替。
@@ -504,6 +515,29 @@ func _build_props_home() -> void:
 	_neon_light(Vector3(2.6, 2.4, -0.4), PINK, 1.8, 5.0)
 
 
+## 潜航の敵（紫の炎モンスター・プレースホルダ）。奥(z<0)に配置＝画面上方に出る。
+## 暗い球体＋紫の発光コア＋点光源で、参照の炎の敵を簡易再現。
+func _build_enemies() -> void:
+	var col := Color(0.72, 0.25, 1.0)
+	for e in [Vector3(0.0, 0, -2.6), Vector3(-2.9, 0, -3.4), Vector3(2.9, 0, -3.2)]:
+		var mi := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.7
+		sm.height = 1.5
+		mi.mesh = sm
+		mi.position = e + Vector3(0, 0.85, 0)
+		var m := StandardMaterial3D.new()
+		m.albedo_color = Color(0.08, 0.03, 0.12)
+		m.emission_enabled = true
+		m.emission = col
+		m.emission_energy_multiplier = 1.8
+		mi.material_override = m
+		_sub.add_child(mi)
+		_emissive_box(e + Vector3(0, 1.9, 0), Vector3(0.5, 0.8, 0.5), col, 3.0)  # 炎コア
+		_neon_light(e + Vector3(0, 1.2, 0), col, 3.2, 6.5)
+		_add_blob_shadow(e, 1.5)
+
+
 const KENNEY_DIR := "res://assets/third_party/kenney_naturekit/models/"
 
 ## Kenney Nature Kit の glTF モデルを 1 体配置。base が y=0 のモデル前提。
@@ -653,8 +687,20 @@ const HOME_NPCS := [
 ]
 
 
+# 潜航（戦闘）のパーティ配置：手前(z≈3〜5)に横並び。主人公は別途 _player_pos。
+const DIVE_NPCS := [
+	{"id": "mil",    "pos": Vector3(-2.6, 0.0, 4.4), "flip": false},
+	{"id": "nurse",  "pos": Vector3(2.6, 0.0, 4.4),  "flip": false},
+	{"id": "doctor", "pos": Vector3(-1.4, 0.0, 5.4), "flip": false},
+]
+
+
 func _build_npcs() -> void:
-	var roster: Array = HOME_NPCS if stage_theme == "home" else NPCS
+	var roster: Array = NPCS
+	if stage_theme == "home":
+		roster = HOME_NPCS
+	elif stage_theme == "dive":
+		roster = DIVE_NPCS
 	for d in roster:
 		var anim := ChibiAnim.new(String(d["id"]))
 		var spr := _make_billboard()
