@@ -213,14 +213,19 @@ func _build_ground_tiles() -> void:
 	plane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_sub.add_child(plane)
 
-	# cyberpunk：キットの Platform_4x4 の天面を床として敷き詰める（キット由来の床）
+	# cyberpunk：キットの Platform_4x4 の天面を床として敷く（キット由来の床）。
+	# カメラに映る矩形範囲だけ敷いて軽量化。濡れた金属面にしてネオンを映り込ませる。
 	if THEME == "cyberpunk":
-		var step := 4.0  # Platform_4x4 のフットプリント(~4.5)に合わせ少し詰めて隙間を消す
-		var n := int(ceil((GROUND_HALF + 2.0) / step))
-		for ix in range(-n, n + 1):
-			for iz in range(-n, n + 1):
-				_add_gltf(CYBER_DIR + "platforms/Platform_4x4.gltf",
-						Vector3(ix * step, 0.0, iz * step), 1.0, 0)
+		var step := 4.0
+		for ix in range(-2, 3):          # x: -8..8
+			for iz in range(-3, 3):      # z: -12..8（奥めに寄せる）
+				var tile := _add_gltf(CYBER_DIR + "platforms/Platform_4x4.gltf",
+						Vector3(ix * step, 0.0, iz * step - 2.0), 1.0, 0)
+				if tile != null:
+					_make_wet(tile, 0.45, 0.18)  # 濡れた反射
+		# ベース板も濡れ感を強める
+		gmat.roughness = 0.16
+		gmat.metallic = 0.5
 
 
 ## 地面テクスチャ。テーマで草緑／濡れアスファルトを切替。
@@ -358,30 +363,46 @@ func _build_props_cyberpunk() -> void:
 	_add_gltf(P + "Light_Square.gltf", Vector3(-2.2, 3.0, -8.0), 1.6, 0, 3.0)
 	_add_gltf(P + "Light_Square.gltf", Vector3(2.2, 3.0, -8.0), 1.6, 0, 3.0)
 
-	# ── ネオン看板（キットの Sign を発光させる。タテヨコ混在で密度）──
-	_add_gltf(P + "Sign_1.gltf", Vector3(-3.8, 3.4, -7.6), 2.8, 0, 3.2)
-	_add_gltf(P + "Sign_3.gltf", Vector3(3.6, 3.8, -7.8), 2.8, 0, 3.2)
-	_add_gltf(P + "Sign_2.gltf", Vector3(0.8, 4.4, -8.4), 2.6, 0, 3.2)
-	_add_gltf(P + "Sign_4.gltf", Vector3(-1.4, 2.6, -7.4), 2.4, 0, 3.2)
-	_add_gltf(P + "Sign_Corner_1.gltf", Vector3(5.6, 2.8, -6.6), 2.3, -25, 3.2)
-	_add_gltf(P + "Sign_Corner_2.gltf", Vector3(-5.6, 2.8, -6.0), 2.3, 25, 3.2)
-	_add_gltf(P + "Sign_Small_2.gltf", Vector3(-2.8, 1.8, -6.2), 2.2, 10, 3.2)
-	_add_gltf(P + "Sign_Small_3.gltf", Vector3(2.8, 1.8, -6.0), 2.2, -10, 3.2)
+	# ── ネオン看板（キットの Sign を発光させる。balance: 白飛びを避け 2.4〜2.6）──
+	_add_gltf(P + "Sign_1.gltf", Vector3(-3.8, 3.4, -7.6), 2.8, 0, 2.6)
+	_add_gltf(P + "Sign_3.gltf", Vector3(3.6, 3.8, -7.8), 2.8, 0, 2.6)
+	_add_gltf(P + "Sign_2.gltf", Vector3(0.8, 4.4, -8.4), 2.6, 0, 2.6)
+	_add_gltf(P + "Sign_4.gltf", Vector3(-1.4, 2.6, -7.4), 2.4, 0, 2.4)
+	_add_gltf(P + "Sign_Corner_1.gltf", Vector3(5.6, 2.8, -6.6), 2.3, -25, 2.6)
+	_add_gltf(P + "Sign_Corner_2.gltf", Vector3(-5.6, 2.8, -6.0), 2.3, 25, 2.6)
+	_add_gltf(P + "Sign_Small_2.gltf", Vector3(-2.8, 1.8, -6.2), 2.2, 10, 2.4)
+	_add_gltf(P + "Sign_Small_3.gltf", Vector3(2.8, 1.8, -6.0), 2.2, -10, 2.4)
+	# 中景にも看板を足して密度を上げる（プレイヤー左右）
+	_add_gltf(P + "Sign_Small_1.gltf", Vector3(-5.4, 1.6, -3.2), 2.0, 30, 2.4)
+	_add_gltf(P + "Sign_Corner_3.gltf", Vector3(5.4, 1.8, -1.5), 2.0, -30, 2.6)
+	_add_gltf(P + "Sign_4.gltf", Vector3(-4.8, 1.4, 1.0), 1.8, 40, 2.4)
 
-	# ── レール/フェンス/ドア（通りの境界と店先）──
-	_add_gltf(P + "Door.gltf", Vector3(-5.4, 0.0, -3.6), 2.2, 18)
-	_add_gltf(P + "Door.gltf", Vector3(5.4, 0.0, -3.0), 2.2, -18)
+	# ── 中景〜手前の密度（パイプ/ケーブル/AC/コンピュータ/アンテナ）──
+	_add_gltf(P + "Pipe_2.gltf", Vector3(-4.2, 0.4, -1.0), 1.4, 0)
+	_add_gltf(P + "Pipe_1.gltf", Vector3(4.0, 0.4, -2.0), 1.4, 90)
+	_add_gltf(P + "Cable_Small.gltf", Vector3(2.0, 4.0, -8.6), 1.4, 0)
+	_add_gltf(P + "AC.gltf", Vector3(5.2, 0.6, -4.0), 1.1, -20)
+	_add_gltf(P + "Computer.gltf", Vector3(-5.0, 0.5, -0.5), 1.1, 25)
+	_add_gltf(P + "Antenna_2.gltf", Vector3(-2.0, 2.6, -9.4), 1.3, 0)
+
+	# ── レール/フェンス/ドア（通りの境界と手前）──
+	_add_gltf(P + "Door.gltf", Vector3(-5.6, 0.0, -3.6), 2.2, 18)
+	_add_gltf(P + "Door.gltf", Vector3(5.6, 0.0, -3.0), 2.2, -18)
 	_add_gltf(P + "Rail_Long.gltf", Vector3(-3.4, 0.0, 5.0), 1.6, 0)
 	_add_gltf(P + "Rail_Long.gltf", Vector3(3.4, 0.0, 5.0), 1.6, 0)
-	_add_gltf(P + "Fence.gltf", Vector3(-1.6, 0.0, 6.0), 1.8, 0)
-	_add_gltf(P + "Fence.gltf", Vector3(1.6, 0.0, 6.0), 1.8, 0)
+	_add_gltf(P + "Rail_Short.gltf", Vector3(-5.0, 0.0, 3.0), 1.5, 90)
+	_add_gltf(P + "Rail_Short.gltf", Vector3(5.0, 0.0, 3.0), 1.5, 90)
+	_add_gltf(P + "Fence.gltf", Vector3(-1.6, 0.0, 6.2), 1.8, 0)
+	_add_gltf(P + "Fence.gltf", Vector3(0.0, 0.0, 6.2), 1.8, 0)
+	_add_gltf(P + "Fence.gltf", Vector3(1.6, 0.0, 6.2), 1.8, 0)
 
-	# ── 通りを染めるネオンの点光源（看板/街灯の位置に合わせる）──
+	# ── 通りを染めるネオンの点光源（看板/街灯の位置に合わせ密に）──
 	_neon_light(Vector3(-3.8, 2.6, -6.8), NEON_MAGENTA, 4.0, 9.0)
 	_neon_light(Vector3(3.8, 2.8, -7.0), NEON_CYAN, 4.0, 9.0)
 	_neon_light(Vector3(0.0, 3.2, -8.0), NEON_CYAN, 3.0, 9.0)
-	_neon_light(Vector3(-4.8, 2.4, -2.0), NEON_RED, 2.8, 8.0)
-	_neon_light(Vector3(4.8, 2.4, 0.5), NEON_MAGENTA, 2.8, 8.0)
+	_neon_light(Vector3(-4.8, 2.0, -2.0), NEON_RED, 3.0, 8.0)
+	_neon_light(Vector3(4.8, 2.0, -0.5), NEON_MAGENTA, 3.0, 8.0)
+	_neon_light(Vector3(-4.6, 1.6, 1.0), NEON_CYAN, 2.4, 7.0)
 	_neon_light(Vector3(1.5, 1.6, 3.0), NEON_CYAN, 2.2, 7.0)
 
 
@@ -415,13 +436,13 @@ const CYBER_DIR := "res://assets/third_party/cyberpunk_kit/"
 
 ## 任意の glTF/glb モデルを配置（パス直指定）。glow_energy>0 でテクスチャを自発光させ
 ## ネオン看板を光らせる（emission に albedo テクスチャを流用）。
-func _add_gltf(res_path: String, pos: Vector3, scale: float = 1.0, yaw_deg: float = 0.0, glow_energy: float = 0.0) -> void:
+func _add_gltf(res_path: String, pos: Vector3, scale: float = 1.0, yaw_deg: float = 0.0, glow_energy: float = 0.0) -> Node3D:
 	var ps := load(res_path)
 	if ps == null:
-		return
+		return null
 	var inst := (ps as PackedScene).instantiate() as Node3D
 	if inst == null:
-		return
+		return null
 	inst.position = pos
 	inst.scale = Vector3(scale, scale, scale)
 	inst.rotation_degrees = Vector3(0, yaw_deg, 0)
@@ -429,6 +450,23 @@ func _add_gltf(res_path: String, pos: Vector3, scale: float = 1.0, yaw_deg: floa
 	_enable_shadows(inst)
 	if glow_energy > 0.0:
 		_make_glow(inst, glow_energy)
+	return inst
+
+
+## モデルの各サーフェスを濡れた金属面に（ネオンの映り込み＝低roughness＋metallic）。
+func _make_wet(node: Node, metallic: float, roughness: float) -> void:
+	if node is MeshInstance3D:
+		var mi := node as MeshInstance3D
+		var msh := mi.mesh
+		if msh != null:
+			for s in msh.get_surface_count():
+				var base: Material = mi.get_active_material(s)
+				var m: StandardMaterial3D = (base.duplicate() if base is StandardMaterial3D else StandardMaterial3D.new())
+				m.metallic = metallic
+				m.roughness = roughness
+				mi.set_surface_override_material(s, m)
+	for c in node.get_children():
+		_make_wet(c, metallic, roughness)
 
 
 ## モデルの各サーフェスを複製マテリアルにして自発光を付与（ネオン化）。
