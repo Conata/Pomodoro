@@ -68,9 +68,9 @@ func _ready() -> void:
 		_cam_dist = 12.0
 		_cam_dist_target = 12.0
 	elif stage_theme == "dive":
-		# 戦闘：パーティ手前(z+)・敵奥(z-)。注視点を中間に置きやや見下ろし
-		_player_pos = Vector3(0, 0, 4.0)   # 主人公はパーティ前列
-		_cam_target_override = Vector3(0, 0.8, 0.0)
+		# 戦闘：パーティ手前(z+)・敵奥(z-)。下部UIに隠れないようパーティを少し奥へ。
+		_player_pos = Vector3(0, 0, 2.4)   # 主人公はパーティ中央
+		_cam_target_override = Vector3(0, 1.0, 1.2)
 		_cam_height = 6.5
 		_cam_dist = 11.5
 		_cam_dist_target = 11.5
@@ -689,9 +689,9 @@ const HOME_NPCS := [
 
 # 潜航（戦闘）のパーティ配置：手前(z≈3〜5)に横並び。主人公は別途 _player_pos。
 const DIVE_NPCS := [
-	{"id": "mil",    "pos": Vector3(-2.6, 0.0, 4.4), "flip": false},
-	{"id": "nurse",  "pos": Vector3(2.6, 0.0, 4.4),  "flip": false},
-	{"id": "doctor", "pos": Vector3(-1.4, 0.0, 5.4), "flip": false},
+	{"id": "mil",    "pos": Vector3(-2.8, 0.0, 2.2), "flip": false},
+	{"id": "nurse",  "pos": Vector3(2.8, 0.0, 2.2),  "flip": false},
+	{"id": "doctor", "pos": Vector3(1.5, 0.0, 3.0),  "flip": false},
 ]
 
 

@@ -109,7 +109,7 @@ func _draw() -> void:
 	_txt(font, Vector2(20, qy + 38), "中央ゲートへ進む  0/1", 14, TEXT)
 
 	# ===== 下部：パーティカード＋コマンド =====
-	var foot_h := 240.0
+	var foot_h := 212.0
 	var fy := sz.y - foot_h
 	_panel(Rect2(0, fy, sz.x, foot_h), Color(0.03, 0.035, 0.07, 0.92), Color(PINK.r, PINK.g, PINK.b, 0.35), 0, 1)
 
