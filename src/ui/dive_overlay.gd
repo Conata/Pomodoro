@@ -45,6 +45,7 @@ const COMMANDS := [
 
 var _t := 0.0
 var _hits: Array = []
+var _log: Array = []          # 探索イベントのフィード [{msg, col, life}]
 
 
 func _ready() -> void:
@@ -55,7 +56,33 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_t += delta
+	# イベントフィードの寿命を減衰させ、古い行から消す
+	for e in _log:
+		e["life"] = float(e["life"]) - delta
+	while not _log.is_empty() and float(_log[0]["life"]) <= 0.0:
+		_log.pop_front()
 	queue_redraw()
+
+
+## main.gd から潜航中の sim イベントを受け取りフィードに積む（空メッセージは視覚専用なので無視）。
+func add_events(events: Array) -> void:
+	for e in events:
+		var msg := String(e.get("msg", ""))
+		if msg == "":
+			continue
+		_log.append({"msg": msg, "col": _kind_col(String(e.get("kind", "log"))), "life": 7.0})
+	while _log.size() > 6:
+		_log.pop_front()
+	queue_redraw()
+
+
+func _kind_col(kind: String) -> Color:
+	match kind:
+		"memory": return PURPLE
+		"boss", "resync": return Color(1.0, 0.42, 0.46)
+		"door", "door_loot", "loot", "gate": return GOLD
+		"log": return TEXT_DIM
+		_: return TEXT
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -123,8 +150,23 @@ func _draw() -> void:
 	_txt(font, Vector2(20, qy + 19), "メインクエスト", 13, GOLD)
 	_txt(font, Vector2(20, qy + 38), quest_text, 14, TEXT)
 
-	# ===== 下部：パーティカード＋コマンド =====
+	# ===== イベントフィード（左下・新しいものほど下、古い行は上へフェード） =====
 	var foot_h := 212.0
+	var feed_bottom := sz.y - foot_h - 16.0
+	var lh := 24.0
+	for i in _log.size():
+		var e: Dictionary = _log[_log.size() - 1 - i]   # 末尾＝最新を一番下に
+		var yy := feed_bottom - i * lh
+		var fade := clampf(float(e["life"]) / 1.5, 0.0, 1.0) * (1.0 - i * 0.13)
+		if fade <= 0.02:
+			continue
+		var msg := String(e["msg"])
+		var tw := font.get_string_size(msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+		_panel(Rect2(10, yy - 17, tw + 20, 22), Color(0.03, 0.03, 0.06, 0.62 * fade), Color(1, 1, 1, 0.06 * fade), 6, 1)
+		var col: Color = e["col"]
+		_txt(font, Vector2(20, yy), msg, 15, Color(col.r, col.g, col.b, fade))
+
+	# ===== 下部：パーティカード＋コマンド =====
 	var fy := sz.y - foot_h
 	_panel(Rect2(0, fy, sz.x, foot_h), Color(0.03, 0.035, 0.07, 0.92), Color(PINK.r, PINK.g, PINK.b, 0.35), 0, 1)
 

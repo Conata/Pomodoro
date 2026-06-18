@@ -61,6 +61,9 @@ func _process(delta: float) -> void:
 	# KuroSim を実時間アンカーで駆動（タブ非アクティブでも正確：旧メインと同方式）
 	_catch_up(Time.get_unix_time_from_system())
 	_update_dive_ui()
+	# 探索イベント（撃破・箱・記憶・扉・再同期…）を潜航オーバーレイのフィードへ
+	if _dive_overlay != null and _dive_overlay.has_method("add_events"):
+		_dive_overlay.add_events(sim.drain_events())
 	if not bool(sim.state["run"]["active"]):
 		_surface()                # 浮上＝精算→翌朝→店へ
 		return
@@ -142,12 +145,14 @@ func _on_home_action(id: String) -> void:
 	match id:
 		"pomodoro":
 			# 25分ポモドーロ集中＝仕入れ（早送り/早期終了は仕入れ画面のボタンで）
+			sim.drain_events()    # ホーム/メニューの残存イベントを捨ててから開始
 			sim.start_run("pomo", 25.0, Time.get_unix_time_from_system(), "集中仕入れ")
 			_save_accum = 0.0
 			_save()       # 開始時点を保存（中断しても再開できる）
 			_goto(DIVE)
 		"depart", "field":
 			# クイック仕入れ（80秒）
+			sim.drain_events()
 			sim.start_run("quick", 1.0, Time.get_unix_time_from_system(), "仕入れ")
 			_save_accum = 0.0
 			_save()
