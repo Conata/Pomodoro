@@ -309,57 +309,71 @@ func _neon_light(pos: Vector3, col: Color, energy: float, rng: float) -> void:
 	_sub.add_child(o)
 
 
-## サイバーパンク中華（黒猫飯店）の通り。Quaternius Cyberpunk Game Kit（CC0）の
-## 実モデル（ビル/看板/街灯/AC/アンテナ/TV/パイプ）＋中華の赤提灯＋ネオン点光源で構成。
+## サイバーパンクの通り。プロップは Quaternius Cyberpunk Game Kit（CC0）の実モデルのみで構成。
+## 自前の発光ボックス（提灯/看板）は使わず、キットの Sign/Light を発光させてネオンにする。
+## 照明（ネオン点光源・キーライト）・粒子・影は描画要素として別途。
 func _build_props_cyberpunk() -> void:
-	const NEON_RED := Color(1.0, 0.18, 0.12)
 	const NEON_CYAN := Color(0.2, 0.9, 1.0)
 	const NEON_MAGENTA := Color(1.0, 0.2, 0.7)
-	const WARM := Color(1.0, 0.62, 0.28)
+	const NEON_RED := Color(1.0, 0.25, 0.2)
 	var P := CYBER_DIR + "platforms/"
 
-	# 奥のビル群：プラットフォームブロックを積んでビル壁に（top=y0で下に伸びる形状を活かす）
-	_add_gltf(P + "Platform_4x4.gltf", Vector3(-6.0, 3.6, -10.0), 1.8, 0)
-	_add_gltf(P + "Platform_4x4.gltf", Vector3(6.0, 4.2, -10.5), 1.9, 0)
-	_add_gltf(P + "Platform_4x2.gltf", Vector3(0.0, 4.6, -11.0), 1.8, 0)
-	_add_gltf(P + "Platform_4x1.gltf", Vector3(-2.5, 1.2, -8.5), 1.4, 0)
-	_add_gltf(P + "Platform_4x1.gltf", Vector3(2.8, 1.2, -8.5), 1.4, 0)
+	# ── 奥のビル群：プラットフォームブロックを積んで壁面に（top=y0で下に伸びる形状）──
+	_add_gltf(P + "Platform_4x4.gltf", Vector3(-6.2, 3.6, -10.2), 1.9, 0)
+	_add_gltf(P + "Platform_4x4.gltf", Vector3(6.2, 4.2, -10.6), 2.0, 0)
+	_add_gltf(P + "Platform_4x2.gltf", Vector3(0.0, 4.8, -11.2), 1.9, 0)
+	_add_gltf(P + "Platform_2x2.gltf", Vector3(-3.4, 2.2, -9.4), 1.5, 0)
+	_add_gltf(P + "Platform_2x2.gltf", Vector3(3.6, 2.4, -9.6), 1.5, 0)
+	# 中景の段差（プレイヤーの左右に低いブロック）
+	_add_gltf(P + "Platform_4x1.gltf", Vector3(-5.6, 0.9, -4.0), 1.4, 0)
+	_add_gltf(P + "Platform_4x1.gltf", Vector3(5.6, 0.9, -3.0), 1.4, 0)
 
-	# ビル上のディテール（AC/アンテナ/TV/コンピュータ/パイプ）
-	_add_gltf(P + "AC.gltf", Vector3(-6.5, 1.4, -8.4), 1.3, 20)
-	_add_gltf(P + "AC_Stacked.gltf", Vector3(6.4, 1.6, -8.6), 1.3, -15)
-	_add_gltf(P + "Antenna_1.gltf", Vector3(-5.0, 5.6, -9.8), 1.6, 0)
-	_add_gltf(P + "Antenna_2.gltf", Vector3(4.6, 6.4, -10.2), 1.6, 0)
-	_add_gltf(P + "Pipe_1.gltf", Vector3(0.0, 0.6, -8.2), 1.6, 0)
-	_add_gltf(P + "TV_1.gltf", Vector3(-3.4, 1.0, -7.8), 1.4, 18, 2.5)  # 発光させる
-	_add_gltf(P + "Computer_Large.gltf", Vector3(3.6, 0.9, -7.8), 1.4, -20)
+	# ── ビル上のディテール（AC/アンテナ/TV/コンピュータ/パイプ/ケーブル）──
+	_add_gltf(P + "AC.gltf", Vector3(-6.6, 1.5, -8.6), 1.3, 20)
+	_add_gltf(P + "AC_Stacked.gltf", Vector3(6.6, 1.7, -8.8), 1.3, -15)
+	_add_gltf(P + "AC_Side.gltf", Vector3(-3.2, 1.4, -8.8), 1.2, 0)
+	_add_gltf(P + "Antenna_1.gltf", Vector3(-5.2, 5.6, -10.0), 1.7, 0)
+	_add_gltf(P + "Antenna_2.gltf", Vector3(4.8, 6.6, -10.4), 1.7, 0)
+	_add_gltf(P + "Pipe_1.gltf", Vector3(0.2, 0.6, -8.4), 1.6, 0)
+	_add_gltf(P + "Pipe_2.gltf", Vector3(-1.8, 0.5, -8.6), 1.4, 90)
+	_add_gltf(P + "Cable_Long.gltf", Vector3(0.0, 5.2, -9.6), 1.8, 0)
+	_add_gltf(P + "Cable_Thick.gltf", Vector3(2.4, 4.6, -9.4), 1.6, 20)
+	_add_gltf(P + "Computer_Large.gltf", Vector3(3.6, 1.0, -7.8), 1.4, -20)
+	_add_gltf(P + "Computer.gltf", Vector3(-3.8, 1.0, -7.6), 1.3, 15)
+	_add_gltf(P + "TV_1.gltf", Vector3(-4.4, 1.2, -7.4), 1.4, 18, 2.5)   # 発光
+	_add_gltf(P + "TV_3.gltf", Vector3(4.4, 1.2, -7.2), 1.4, -18, 2.5)   # 発光
 
-	# 街灯（通りの左右）
-	_add_gltf(P + "Light_Street_1.gltf", Vector3(-4.6, 0.0, -2.0), 1.6, 30, 2.0)
-	_add_gltf(P + "Light_Street_2.gltf", Vector3(4.6, 0.0, 0.5), 1.6, -30, 2.0)
+	# ── 街灯（通りの左右・発光）──
+	_add_gltf(P + "Light_Street_1.gltf", Vector3(-4.8, 0.0, -2.0), 1.7, 30, 2.2)
+	_add_gltf(P + "Light_Street_2.gltf", Vector3(4.8, 0.0, 0.5), 1.7, -30, 2.2)
+	_add_gltf(P + "Light_Square.gltf", Vector3(-2.2, 3.0, -8.0), 1.6, 0, 3.0)
+	_add_gltf(P + "Light_Square.gltf", Vector3(2.2, 3.0, -8.0), 1.6, 0, 3.0)
 
-	# ネオン看板（発光させて光らせる）。タテヨコ混在で中華街の密度
-	_add_gltf(P + "Sign_1.gltf", Vector3(-3.6, 3.2, -7.4), 2.6, 0, 3.0)
-	_add_gltf(P + "Sign_3.gltf", Vector3(3.4, 3.6, -7.6), 2.6, 0, 3.0)
-	_add_gltf(P + "Sign_Corner_1.gltf", Vector3(5.4, 2.6, -6.4), 2.2, -25, 3.0)
-	_add_gltf(P + "Sign_Small_2.gltf", Vector3(-5.2, 2.4, -5.6), 2.2, 25, 3.0)
-	_add_gltf(P + "Sign_2.gltf", Vector3(0.8, 4.2, -8.2), 2.4, 0, 3.0)
+	# ── ネオン看板（キットの Sign を発光させる。タテヨコ混在で密度）──
+	_add_gltf(P + "Sign_1.gltf", Vector3(-3.8, 3.4, -7.6), 2.8, 0, 3.2)
+	_add_gltf(P + "Sign_3.gltf", Vector3(3.6, 3.8, -7.8), 2.8, 0, 3.2)
+	_add_gltf(P + "Sign_2.gltf", Vector3(0.8, 4.4, -8.4), 2.6, 0, 3.2)
+	_add_gltf(P + "Sign_4.gltf", Vector3(-1.4, 2.6, -7.4), 2.4, 0, 3.2)
+	_add_gltf(P + "Sign_Corner_1.gltf", Vector3(5.6, 2.8, -6.6), 2.3, -25, 3.2)
+	_add_gltf(P + "Sign_Corner_2.gltf", Vector3(-5.6, 2.8, -6.0), 2.3, 25, 3.2)
+	_add_gltf(P + "Sign_Small_2.gltf", Vector3(-2.8, 1.8, -6.2), 2.2, 10, 3.2)
+	_add_gltf(P + "Sign_Small_3.gltf", Vector3(2.8, 1.8, -6.0), 2.2, -10, 3.2)
 
-	# 店先「黒猫飯店」：暖色の庇＋赤い看板（左手前。ドア＝Door）
-	_add_gltf(P + "Door.gltf", Vector3(-5.0, 0.0, -3.4), 2.2, 18)
-	_emissive_box(Vector3(-5.0, 2.9, -2.9), Vector3(2.6, 0.6, 0.18), NEON_RED, 3.0)  # 赤い看板
-	_neon_light(Vector3(-4.8, 2.0, -2.0), WARM, 3.0, 7.0)
+	# ── レール/フェンス/ドア（通りの境界と店先）──
+	_add_gltf(P + "Door.gltf", Vector3(-5.4, 0.0, -3.6), 2.2, 18)
+	_add_gltf(P + "Door.gltf", Vector3(5.4, 0.0, -3.0), 2.2, -18)
+	_add_gltf(P + "Rail_Long.gltf", Vector3(-3.4, 0.0, 5.0), 1.6, 0)
+	_add_gltf(P + "Rail_Long.gltf", Vector3(3.4, 0.0, 5.0), 1.6, 0)
+	_add_gltf(P + "Fence.gltf", Vector3(-1.6, 0.0, 6.0), 1.8, 0)
+	_add_gltf(P + "Fence.gltf", Vector3(1.6, 0.0, 6.0), 1.8, 0)
 
-	# 赤提灯を通りに沿って吊るす（中華の象徴。キットに無いので自前発光）
-	for z in [-3.0, -1.0, 1.0, 3.0]:
-		_emissive_box(Vector3(-2.8, 3.4, z), Vector3(0.42, 0.6, 0.42), NEON_RED, 2.6)
-		_emissive_box(Vector3(2.8, 3.4, z + 1.0), Vector3(0.42, 0.6, 0.42), NEON_RED, 2.6)
-
-	# 通りを染めるネオンの点光源（シアン×マゼンタ×赤×暖色の対比）
-	_neon_light(Vector3(-4.0, 2.2, -1.0), NEON_MAGENTA, 4.0, 9.0)
-	_neon_light(Vector3(4.0, 2.2, -1.5), NEON_CYAN, 4.0, 9.0)
-	_neon_light(Vector3(0.0, 2.5, -6.0), NEON_RED, 3.0, 10.0)
-	_neon_light(Vector3(2.0, 1.8, 3.0), NEON_CYAN, 2.6, 8.0)
+	# ── 通りを染めるネオンの点光源（看板/街灯の位置に合わせる）──
+	_neon_light(Vector3(-3.8, 2.6, -6.8), NEON_MAGENTA, 4.0, 9.0)
+	_neon_light(Vector3(3.8, 2.8, -7.0), NEON_CYAN, 4.0, 9.0)
+	_neon_light(Vector3(0.0, 3.2, -8.0), NEON_CYAN, 3.0, 9.0)
+	_neon_light(Vector3(-4.8, 2.4, -2.0), NEON_RED, 2.8, 8.0)
+	_neon_light(Vector3(4.8, 2.4, 0.5), NEON_MAGENTA, 2.8, 8.0)
+	_neon_light(Vector3(1.5, 1.6, 3.0), NEON_CYAN, 2.2, 7.0)
 
 
 const KENNEY_DIR := "res://assets/third_party/kenney_naturekit/models/"
