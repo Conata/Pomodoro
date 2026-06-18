@@ -967,6 +967,8 @@ func _process(delta: float) -> void:
 		_player_flip = bool(pw["flip"])
 	else:
 		_reset_billboard(_player)
+		if moving:
+			_player_flip = bool(_walk_dir(player_move)[1])  # 方向別が無くても左右は反転
 		_player_anim.update_params(1.0 if (moving or _force_moving) else 0.0)
 		_player_anim.tick(delta)
 		_player.texture = _tex(_player_anim.current_path())
@@ -1001,6 +1003,7 @@ func _process(delta: float) -> void:
 			if w["tex"] != null:
 				_apply_walk(_npc_sprites[i], w)
 				continue
+			_npc_sprites[i].flip_h = bool(_walk_dir(nmove)[1])  # 方向別が無くても左右は反転
 		_reset_billboard(_npc_sprites[i])
 		_npc_anims[i].update_params(1.0 if nmoving else 0.0)  # 方向別が無ければ run/idle
 		_npc_anims[i].tick(delta)
