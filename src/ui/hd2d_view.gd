@@ -960,15 +960,19 @@ func _process(delta: float) -> void:
 		_player_pos.x = clampf(_player_pos.x + player_move.x * MOVE_SPEED * delta, -GROUND_HALF, GROUND_HALF)
 		_player_pos.z = clampf(_player_pos.z + player_move.z * MOVE_SPEED * delta, -GROUND_HALF, GROUND_HALF)
 
-	# ── プレイヤーの描画（移動中は方向別歩行シート、停止は待機）──
-	var pw := _walk_texture(PLAYER_ID, player_move) if moving else {"tex": null}
-	if pw["tex"] != null:
-		_apply_walk(_player, pw)
-		_player_flip = bool(pw["flip"])
-	else:
+	# ── プレイヤーの描画（前後=walk_front/back・横=run side view・停止=idle）──
+	var p_used := false
+	if moving:
+		var dr := _walk_dir(player_move)
+		_player_flip = bool(dr[1])
+		if dr[0] != "side":
+			var w := _walk_texture(PLAYER_ID, "walk_" + String(dr[0]))
+			if w["tex"] != null:
+				_apply_walk(_player, w)
+				_player.flip_h = _player_flip
+				p_used = true
+	if not p_used:
 		_reset_billboard(_player)
-		if moving:
-			_player_flip = bool(_walk_dir(player_move)[1])  # 方向別が無くても左右は反転
 		_player_anim.update_params(1.0 if (moving or _force_moving) else 0.0)
 		_player_anim.tick(delta)
 		_player.texture = _tex(_player_anim.current_path())
@@ -999,13 +1003,15 @@ func _process(delta: float) -> void:
 			if i < _npc_shadow.size() and _npc_shadow[i] != null:
 				_npc_shadow[i].position = _npc_pos[i] + Vector3(0, 0.03, 0)
 		if nmoving:
-			var w := _walk_texture(_npc_anims[i].char_id, nmove)
-			if w["tex"] != null:
-				_apply_walk(_npc_sprites[i], w)
-				continue
-			_npc_sprites[i].flip_h = bool(_walk_dir(nmove)[1])  # 方向別が無くても左右は反転
+			var dr := _walk_dir(nmove)
+			_npc_sprites[i].flip_h = bool(dr[1])   # 左右反転（side や素材無しでも効く）
+			if dr[0] != "side":
+				var w := _walk_texture(_npc_anims[i].char_id, "walk_" + String(dr[0]))
+				if w["tex"] != null:
+					_apply_walk(_npc_sprites[i], w)
+					continue
 		_reset_billboard(_npc_sprites[i])
-		_npc_anims[i].update_params(1.0 if nmoving else 0.0)  # 方向別が無ければ run/idle
+		_npc_anims[i].update_params(1.0 if nmoving else 0.0)  # 横/素材無しは run、停止は idle
 		_npc_anims[i].tick(delta)
 		_npc_sprites[i].texture = _tex(_npc_anims[i].current_path())
 
@@ -1061,8 +1067,8 @@ func _tex_opt(path: String) -> Texture2D:
 	return _tex_cache[path]
 
 
-## カメラ相対の移動方向 → 歩行スプライトの向き [anim名, 左右反転]。
-## カメラへ向かう＝正面(walk_front)、離れる＝背面(walk_back)、横は正面/背面＋反転。
+## カメラ相対の移動方向 → [向き, 左右反転]。向き ∈ {"front","back","side"}。
+## カメラへ向かう＝正面、離れる＝背面、横移動＝side（既存 run=side view を使う）。
 func _walk_dir(world_move: Vector3) -> Array:
 	var basis := Basis(Vector3.UP, _cam_yaw)
 	var into_screen := basis * Vector3(0, 0, -1)   # W で進む向き＝カメラから見て奥
@@ -1070,8 +1076,12 @@ func _walk_dir(world_move: Vector3) -> Array:
 	var m := world_move.normalized()
 	var fd := m.dot(into_screen)   # >0: 奥へ＝背面 / <0: 手前へ＝正面
 	var rd := m.dot(right)
-	var anim := "walk_back" if fd > 0.35 else "walk_front"
-	return [anim, rd < 0.0]
+	var dir := "side"
+	if fd > 0.45:
+		dir = "back"
+	elif fd < -0.45:
+		dir = "front"
+	return [dir, rd < 0.0]
 
 
 var _walk_count_cache: Dictionary = {}
@@ -1088,31 +1098,24 @@ func _walk_count(id: String, anim: String) -> int:
 	return n
 
 
-## 移動方向 → 方向別歩行 {tex, flip, ph}。正規スペック（idle と同じ 144x192 連番:
-## walk_front_f<n>.png / walk_back_f<n>.png）が在れば使い、無ければ tex=null で
-## 呼び出し側が run/idle にフォールバック（素材が揃うまで現状維持・退行なし）。
-## ※横移動は walk_front＋反転で代用。既存の walk_front.png（別解像度シート）は使わない。
-func _walk_texture(id: String, world_move: Vector3) -> Dictionary:
-	var d := _walk_dir(world_move)
-	var anim: String = d[0]
-	var flip: bool = d[1]
-	for cand in [anim, "walk_front"]:
-		var n := _walk_count(id, cand)
-		if n > 0:
-			var fr := int(Time.get_ticks_msec() / 140) % n   # ~7fps
-			return {"tex": _tex_opt(SPRITE_DIR + "%s/%s_f%d.png" % [id, cand, fr]),
-					"flip": flip, "ph": PIXEL_SIZE}
-	return {"tex": null}
+## 指定アニメ（walk_front / walk_back）の現フレーム {tex, ph}。連番が在れば返す。
+## 無ければ tex=null（呼び出し側が run/idle にフォールバック）。
+## ※既存の walk_front.png（別解像度シート）は使わない（_f<n> 連番のみ）。
+func _walk_texture(id: String, anim: String) -> Dictionary:
+	var n := _walk_count(id, anim)
+	if n == 0:
+		return {"tex": null}
+	var fr := int(Time.get_ticks_msec() / 140) % n   # ~7fps
+	return {"tex": _tex_opt(SPRITE_DIR + "%s/%s_f%d.png" % [id, anim, fr]), "ph": PIXEL_SIZE}
 
 
-## 方向別歩行スプライトをビルボードに適用。
+## 方向別歩行スプライトをビルボードに適用（flip は呼び出し側で設定）。
 func _apply_walk(spr: Sprite3D, w: Dictionary) -> void:
 	spr.texture = w["tex"]
 	spr.vframes = 1
 	spr.hframes = 1
 	spr.frame = 0
 	spr.pixel_size = float(w["ph"])
-	spr.flip_h = bool(w["flip"])
 
 
 ## ビルボードを通常（単一フレーム・既定 pixel_size）に戻す。
