@@ -232,7 +232,7 @@ func _update_dive_ui() -> void:
 		var mhp := maxi(int(sim.girl_maxhp(gid)), 1)
 		tot += hp
 		mx += mhp
-		party.append({"name": String(g.get("name", gid)), "hp": hp, "mhp": mhp, "sp": 100, "msp": 100})
+		party.append({"name": String(g.get("name", gid)), "hp": hp, "mhp": mhp})
 	# 3D ステージの敵を sim の mob 数＆戦闘フラグに同期
 	if _dive_stage != null and _dive_stage.has_method("set_dive_state"):
 		_dive_stage.set_dive_state((sim.state["mobs"] as Array).size(), bool(sim.state["in_combat"]))
@@ -241,9 +241,11 @@ func _update_dive_ui() -> void:
 	var prog := fmod(float(sim.state["dist"]), KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN
 	_dive_overlay.set_data({
 		"party": party,
-		"player_lv": "B%d" % sim.current_floor(),
-		"player_hp": (tot / mx) if mx > 0.0 else 0.0,
-		"player_exp": prog,
-		"quest_text": "仕入れ中  B%d  残り %d秒" % [sim.current_floor(), int(remain)],
+		"depth": "B%d" % sim.current_floor(),
+		"party_hp": (tot / mx) if mx > 0.0 else 0.0,
+		"floor_prog": prog,
+		"remain_sec": int(remain),
+		"is_pomo": String(run["mode"]) == "pomo",
+		"in_combat": bool(sim.state["in_combat"]),
 		"speed_mult": _speed,
 	})

@@ -365,7 +365,7 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 		var nm := String(g["name"])
 		_txt(font, Vector2(r.position.x + (cw - _tw(font, nm, 13)) * 0.5, r.position.y + 22), nm, 13, TEXT if active else TEXT_DIM)
 		var apt := "適性%.0f%%" % (float(g["keeper_apt"]) * 100)
-		_txt(font, Vector2(r.position.x + (cw - _tw(font, apt, 10)) * 0.5, r.position.y + 40), apt, 10, GOLD if active else TEXT_DIM)
+		_txt(font, Vector2(r.position.x + (cw - _tw(font, apt, 12)) * 0.5, r.position.y + 40), apt, 12, GOLD if active else TEXT_DIM)
 		_hit(r, "keeper:" + id)
 	# 選択店番のシナジー
 	var kg: Dictionary = KuroData.GIRLS[m["keeper"]]
@@ -401,7 +401,7 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 				tcol if on else Color(0.4, 0.4, 0.46, 0.6), 8, 2.0 if on else 1.0)
 		var star := int(s["recipes"].get(rid, 1))
 		_txt(font, Vector2(rx + 8, ry + 20), String(rec["name"]), 13, TEXT if on else TEXT_DIM)
-		_txt(font, Vector2(rx + 8, ry + 37), "%s ☆%d  %dG" % [String(rec["taste"]), star, int(rec["base"])], 10, tcol if on else TEXT_DIM)
+		_txt(font, Vector2(rx + 8, ry + 37), "%s ☆%d  %dG" % [String(rec["taste"]), star, int(rec["base"])], 12, tcol if on else TEXT_DIM)
 		_hit(r, "menu:" + rid)
 
 

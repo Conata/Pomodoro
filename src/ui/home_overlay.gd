@@ -114,32 +114,39 @@ func _draw() -> void:
 	_icon(font, Vector2(sz.x - 138, 30), 21, "報", GOLD, "bell")
 
 	# ===== 探索入口ポータル（右端・縦書き＋紫の渦） =====
-	var pc := Vector2(sz.x - 56, sz.y * 0.47)
-	_hit(Rect2(pc.x - 52, pc.y - 56, 104, 170), "depart")
+	var pc := Vector2(sz.x - 56, sz.y * 0.42)
+	_hit(Rect2(pc.x - 52, pc.y - 56, 104, 186), "depart")
 	# うっすら枠
-	_panel(Rect2(pc.x - 50, pc.y - 54, 100, 168), Color(0.05, 0.03, 0.10, 0.45), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.5), 14)
-	var pr := 38.0 + 3.0 * sin(_t * 2.2)
+	_panel(Rect2(pc.x - 50, pc.y - 54, 100, 184), Color(0.05, 0.03, 0.10, 0.45), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.5), 14)
+	var pr := 34.0
 	draw_circle(pc, pr + 8, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.12))
-	draw_arc(pc, pr, _t * 1.6, _t * 1.6 + TAU * 0.78, 36, PURPLE, 3.0)
-	draw_arc(pc, pr * 0.6, -_t * 2.2, -_t * 2.2 + TAU * 0.62, 28, PINK, 2.5)
+	draw_arc(pc, pr, _t * 1.2, _t * 1.2 + TAU * 0.78, 36, PURPLE, 3.0)
 	draw_circle(pc, pr * 0.34, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.85))
 	# 縦書き「仕入れへ」（深層へ食材を獲りに行く＝仕入れ）
-	var vy := pc.y + pr + 16.0
+	var vy := pc.y + pr + 14.0
 	for ch in "仕入れへ":
 		_txt(font, Vector2(pc.x - 9, vy), ch, 17, PINK)
 		vy += 22.0
+	# クイックダイブだと分かる注記（集中CTAとの違いを明示）
+	vy += 2.0
+	for ch2 in "80秒":
+		_txt(font, Vector2(pc.x - 7, vy), ch2, 12, TEXT_DIM)
+		vy += 16.0
 
 	# ===== ポモドーロ集中ボタン（主役CTA・VN窓の上） =====
 	var vh := 96.0
 	var vy0 := sz.y - STRIP_H - vh - 8
-	var cta := Rect2(sz.x * 0.5 - 145, vy0 - 70, 290, 56)
+	var cta := Rect2(sz.x * 0.5 - 150, vy0 - 78, 300, 64)
 	_hit(cta, "pomodoro")
 	var pulse := 0.5 + 0.5 * sin(_t * 2.5)
 	_panel(cta, Color(PINK.r * 0.22, PINK.g * 0.16, PINK.b * 0.24, 0.96),
 			Color(PINK.r, PINK.g, PINK.b, 0.6 + 0.3 * pulse), 16, 2.0)
 	var ct := "▶  集中する（25分）"
 	var ctw := font.get_string_size(ct, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
-	_txt(font, Vector2(cta.position.x + (cta.size.x - ctw) * 0.5, cta.position.y + 36), ct, 19, TEXT)
+	_txt(font, Vector2(cta.position.x + (cta.size.x - ctw) * 0.5, cta.position.y + 30), ct, 19, TEXT)
+	var ctsub := "じっくり潜る・本編"
+	var ctsw := font.get_string_size(ctsub, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+	_txt(font, Vector2(cta.position.x + (cta.size.x - ctsw) * 0.5, cta.position.y + 52), ctsub, 12, TEXT_DIM)
 
 	# ===== VN セリフ窓（フィールド帯の上） =====
 	_panel(Rect2(16, vy0, sz.x - 32, vh), Color(0.04, 0.04, 0.08, 0.86), Color(PINK.r, PINK.g, PINK.b, 0.5), 12)
@@ -160,17 +167,11 @@ func _draw() -> void:
 	draw_rect(Rect2(0, fy, sz.x, 2), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.6))
 	# フィールドのタップ領域はフッターと重ならないよう上側だけにする
 	_hit(Rect2(0, fy, sz.x, STRIP_H - FOOTER_H), "field")
-	# 左：味方／右：敵 のラベル
-	_txt(font, Vector2(18, fy + 22), "PARTY", 13, CYAN)
-	var ew := font.get_string_size("ENEMY", HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
-	_txt(font, Vector2(sz.x - 18 - ew, fy + 22), "ENEMY", 13, Color(1.0, 0.4, 0.85))
-	# コンパス（中央下・フッターの上）
-	var cc := Vector2(sz.x * 0.5, sz.y - 16 - FOOTER_H)
-	draw_arc(cc, 14, 0, TAU, 28, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.7), 2.0)
-	draw_line(cc + Vector2(0, -10), cc + Vector2(0, 10), Color(PINK.r, PINK.g, PINK.b, 0.8), 2.0)
-	# 進行バー
-	_panel(Rect2(sz.x * 0.5 + 26, sz.y - 22 - FOOTER_H, sz.x * 0.5 - 50, 8), Color(0, 0, 0, 0.5), Color(1, 1, 1, 0.15), 3, 1)
-	draw_rect(Rect2(sz.x * 0.5 + 26, sz.y - 22 - FOOTER_H, (sz.x * 0.5 - 50) * 0.3, 8), PURPLE)
+	# フィールド帯のラベル（ここは店先の“眺め”。タップで仕入れへ）
+	_txt(font, Vector2(18, fy + 22), "店先のながめ", 13, Color(CYAN.r, CYAN.g, CYAN.b, 0.85))
+	var hint := "タップで仕入れへ →"
+	var hw := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+	_txt(font, Vector2(sz.x - 18 - hw, fy + 22), hint, 12, TEXT_DIM)
 
 	# ===== 最下部：各主要機能へのフッターナビ =====
 	_footer(font, sz)

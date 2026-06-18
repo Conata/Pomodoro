@@ -1,8 +1,10 @@
 class_name DiveOverlay
 extends Control
-## 潜航（戦闘）画面の 2D UI チロー。HD-2D の戦闘ステージ（パーティ手前・敵奥）の上に重ねる。
-## 参照の戦闘画面：上＝プレイヤー情報/HP/クエスト/AUTO、下＝パーティHP/SPカード＋コマンド。
-## ※プロトタイプ表示。タップで command_pressed を発火（main.gd/KuroSim 側で接続）。
+## 潜航（戦闘）画面の 2D UI。HD-2D の戦闘ステージ（パーティ手前・敵奥）の上に重ねる。
+## 戦闘はオート（KuroSim が自動進行）なので、プレイヤーが操作するのは
+## 「戻る（撤退）／浮上（早期終了）／早送り」だけ。攻撃コマンド等は持たない。
+## 主役は“残り時間”——ポモドーロ＝現実の集中時間がそのまま潜行時間だから。
+## タップで command_pressed を発火（main.gd / KuroSim 側で接続）。
 
 signal command_pressed(id: String)
 
@@ -12,22 +14,26 @@ const CYAN := Color(0.35, 0.92, 1.0)
 const PURPLE := Color(0.66, 0.4, 1.0)
 const GOLD := Color(1.0, 0.82, 0.4)
 const HP_COL := Color(0.45, 0.9, 0.5)
-const SP_COL := Color(0.4, 0.7, 1.0)
 const TEXT := Color(0.96, 0.95, 0.98)
 const TEXT_DIM := Color(0.72, 0.74, 0.82)
 
-# ── 表示データ（main.gd / KuroSim から set_data() で差し込む。既定はプレースホルダ）──
+# ── 表示データ（main.gd / KuroSim から set_data()。既定はプレースホルダ）──
 var party: Array = [
-	{"name": "ミル", "hp": 320, "mhp": 420, "sp": 80, "msp": 100},
-	{"name": "ナース", "hp": 280, "mhp": 360, "sp": 60, "msp": 100},
-	{"name": "キリコ", "hp": 300, "mhp": 400, "sp": 100, "msp": 100},
-	{"name": "ドクター", "hp": 210, "mhp": 450, "sp": 70, "msp": 100},
+	{"name": "ミル", "hp": 320, "mhp": 420},
+	{"name": "ユズキ", "hp": 280, "mhp": 360},
+	{"name": "ムュウ", "hp": 300, "mhp": 400},
+	{"name": "レイカ", "hp": 210, "mhp": 450},
 ]
-var player_lv := "Lv.12"
-var player_hp := 1.0          # 0〜1
-var player_exp := 0.63        # 0〜1
-var quest_text := "中央ゲートへ進む  0/1"
+var depth := "B1"             # 今いる階層
+var party_hp := 1.0           # パーティ総HP比 0〜1
+var floor_prog := 0.4         # 階の踏破率 0〜1
+var remain_sec := 1500        # 残り秒
+var is_pomo := true           # ポモドーロ集中か（false=クイック仕入れ）
+var in_combat := false        # 戦闘中フラグ（AUTOバッジの色に使う）
 var speed_mult := 1           # 早送り倍率（≫ボタン表示用）
+
+var _t := 0.0
+var _hits: Array = []
 
 
 ## main.gd / KuroSim から実データを流し込む。
@@ -36,15 +42,6 @@ func set_data(d: Dictionary) -> void:
 		if k in self:
 			set(k, d[k])
 	queue_redraw()
-const COMMANDS := [
-	{"label": "攻撃", "sub": "通常攻撃", "col": Color(1.0, 0.5, 0.35), "id": "attack"},
-	{"label": "スキル", "sub": "SP 20", "col": CYAN, "id": "skill"},
-	{"label": "防御", "sub": "被ダメ軽減", "col": SP_COL, "id": "guard"},
-	{"label": "アイテム", "sub": "道具を使う", "col": HP_COL, "id": "item"},
-]
-
-var _t := 0.0
-var _hits: Array = []
 
 
 func _ready() -> void:
@@ -73,6 +70,10 @@ func _gui_input(event: InputEvent) -> void:
 			return
 
 
+func _hit(rect: Rect2, id: String) -> void:
+	_hits.append({"rect": rect, "id": id})
+
+
 func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = bg
@@ -87,10 +88,20 @@ func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORI
 	draw_string(font, pos, s, ha, w, size, col)
 
 
+func _tw(font: Font, s: String, size: int) -> float:
+	return font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+
+
 func _bar(rect: Rect2, ratio: float, col: Color) -> void:
 	_panel(Rect2(rect.position, rect.size), Color(0, 0, 0, 0.5), Color(1, 1, 1, 0.12), 3, 1)
 	var w := rect.size.x * clampf(ratio, 0.0, 1.0)
-	draw_rect(Rect2(rect.position, Vector2(w, rect.size.y)), col)
+	if w > 1.0:
+		draw_rect(Rect2(rect.position, Vector2(w, rect.size.y)), col)
+
+
+func _mmss(sec: int) -> String:
+	var s := maxi(sec, 0)
+	return "%d:%02d" % [s / 60, s % 60]
 
 
 func _draw() -> void:
@@ -98,63 +109,66 @@ func _draw() -> void:
 	var font := get_theme_default_font()
 	_hits.clear()
 
-	# ===== トップバー：プレイヤー情報 =====
-	var bar_h := 64.0
-	_panel(Rect2(8, 8, sz.x - 16, bar_h), PANEL_BG, Color(CYAN.r, CYAN.g, CYAN.b, 0.45), 12)
-	_txt(font, Vector2(22, 32), "プレイヤー", 16, TEXT)
-	_txt(font, Vector2(22, 54), player_lv, 15, GOLD)
-	_bar(Rect2(112, 20, 180, 12), player_hp, HP_COL)
-	_txt(font, Vector2(300, 32), "%d%%" % int(player_hp * 100.0), 14, TEXT_DIM)
-	_bar(Rect2(112, 40, 180, 8), player_exp, Color(0.5, 0.85, 1.0))  # EXP
-	# 右：戻る（中断）／浮上（早期終了）／倍速
+	# ===== トップ：残り時間（主役）＝この潜航の“長さ”そのもの =====
+	var bar_h := 84.0
+	_panel(Rect2(8, 8, sz.x - 16, bar_h), PANEL_BG, Color(CYAN.r, CYAN.g, CYAN.b, 0.4), 12)
+	# 左：今いる階層
+	_txt(font, Vector2(22, 34), "深層", 13, TEXT_DIM)
+	_txt(font, Vector2(22, 62), depth, 28, GOLD)
+	# 中央：残り時間（大きく）。ラベルで集中/クイックを明示
+	var mode_label := "集中のこり" if is_pomo else "仕入れのこり"
+	var clock := _mmss(remain_sec)
+	var cx := sz.x * 0.5
+	_txt(font, Vector2(cx - _tw(font, mode_label, 13) * 0.5, 30), mode_label, 13, TEXT_DIM)
+	_txt(font, Vector2(cx - _tw(font, clock, 40) * 0.5, 70), clock, 40, TEXT)
+
+	# 右：操作（戻る＝撤退／浮上＝早期終了／≫＝早送り）。実際に効くのはこれだけ。
 	var bx := sz.x - 20
 	for it in [["戻る", "home", Color(1.0, 0.5, 0.5)], ["浮上", "finish", GOLD], ["≫%d" % speed_mult, "fast", CYAN]]:
 		var lbl: String = it[0]
 		var col: Color = it[2]
-		var w := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 18
+		var w := _tw(font, lbl, 15) + 18
 		bx -= w + 8
-		_hit(Rect2(bx, 14, w, 44), String(it[1]))
-		_panel(Rect2(bx, 14, w, 44), Color(col.r * 0.18, col.g * 0.16, col.b * 0.2, 0.92), col, 8, 1.5)
-		_txt(font, Vector2(bx + 9, 42), lbl, 16, col)
+		_hit(Rect2(bx, 22, w, 40), String(it[1]))
+		_panel(Rect2(bx, 22, w, 40), Color(col.r * 0.18, col.g * 0.16, col.b * 0.2, 0.92), col, 8, 1.5)
+		_txt(font, Vector2(bx + 9, 48), lbl, 15, col)
 
-	# ===== メインクエスト（左・トップ下） =====
-	var qy := bar_h + 16
-	_panel(Rect2(8, qy, 250, 44), Color(0.05, 0.05, 0.09, 0.7), Color(GOLD.r, GOLD.g, GOLD.b, 0.35), 8)
-	_txt(font, Vector2(20, qy + 19), "メインクエスト", 13, GOLD)
-	_txt(font, Vector2(20, qy + 38), quest_text, 14, TEXT)
+	# 階の踏破バー（トップバー直下の薄い線）
+	_bar(Rect2(16, bar_h + 12, sz.x - 32, 6), floor_prog, PURPLE)
 
-	# ===== 下部：パーティカード＋コマンド =====
-	var foot_h := 212.0
+	# ===== 中央：オート探索バッジ（“操作不要・集中を続けて”を明示） =====
+	var badge := "⟳ オートで探索中" if in_combat else "⟳ オートで進行中"
+	var sub := "あなたは集中を。深層は仲間が進める。" if is_pomo else "そのまま見守ろう。"
+	var bw := maxf(_tw(font, badge, 16), _tw(font, sub, 12)) + 40
+	var by := bar_h + 40
+	var bcol := PINK if in_combat else CYAN
+	var pulse := 0.5 + 0.5 * sin(_t * 2.0)
+	_panel(Rect2(cx - bw * 0.5, by, bw, 56), Color(0.05, 0.05, 0.10, 0.7),
+			Color(bcol.r, bcol.g, bcol.b, 0.35 + 0.25 * pulse), 12)
+	_txt(font, Vector2(cx - _tw(font, badge, 16) * 0.5, by + 24), badge, 16, bcol)
+	_txt(font, Vector2(cx - _tw(font, sub, 12) * 0.5, by + 44), sub, 12, TEXT_DIM)
+
+	# ===== 下部：パーティHP（実データ・操作なし） =====
+	var foot_h := 128.0
 	var fy := sz.y - foot_h
-	_panel(Rect2(0, fy, sz.x, foot_h), Color(0.03, 0.035, 0.07, 0.92), Color(PINK.r, PINK.g, PINK.b, 0.35), 0, 1)
+	_panel(Rect2(0, fy, sz.x, foot_h), Color(0.03, 0.035, 0.07, 0.92), Color(PINK.r, PINK.g, PINK.b, 0.3), 0, 1)
+	# 見出し＋総HP
+	_txt(font, Vector2(16, fy + 26), "パーティ", 14, CYAN)
+	_txt(font, Vector2(96, fy + 26), "総HP %d%%" % int(party_hp * 100.0), 13, HP_COL)
 
-	# パーティカード（横4）
-	var cy := fy + 12
-	var cw := (sz.x - 24) / maxi(party.size(), 1)
+	# パーティカード（人数ぶん横並び。SPは廃止＝simに無いステを出さない）
+	var cy := fy + 40
+	var n := maxi(party.size(), 1)
+	var cw := (sz.x - 24) / float(n)
 	for i in party.size():
 		var d: Dictionary = party[i]
-		var cx := 12 + i * cw
-		_panel(Rect2(cx + 3, cy, cw - 6, 86), Color(0.08, 0.07, 0.12, 0.92), Color(PINK.r, PINK.g, PINK.b, 0.3), 8)
-		_txt(font, Vector2(cx + 12, cy + 24), String(d["name"]), 15, TEXT)
-		_txt(font, Vector2(cx + 12, cy + 44), "HP", 11, TEXT_DIM)
-		_bar(Rect2(cx + 36, cy + 35, cw - 50, 9), float(d["hp"]) / float(d["mhp"]), HP_COL)
-		_txt(font, Vector2(cx + 12, cy + 64), "SP", 11, TEXT_DIM)
-		_bar(Rect2(cx + 36, cy + 55, cw - 50, 9), float(d["sp"]) / float(d["msp"]), SP_COL)
-
-	# コマンド（2x2）
-	var gy := cy + 98
-	var gw := (sz.x - 24) / 2.0
-	var gh := 56.0
-	for i in COMMANDS.size():
-		var c: Dictionary = COMMANDS[i]
-		var gx := 12 + (i % 2) * gw
-		var gyy := gy + (i / 2) * (gh + 8)
-		var r := Rect2(gx + 4, gyy, gw - 8, gh)
-		_hit(r, String(c["id"]))
-		_panel(r, Color(c["col"].r * 0.2, c["col"].g * 0.18, c["col"].b * 0.22, 0.92), c["col"], 10, 2)
-		_txt(font, Vector2(gx + 20, gyy + 26), String(c["label"]), 19, TEXT)
-		_txt(font, Vector2(gx + 20, gyy + 46), String(c["sub"]), 12, TEXT_DIM)
-
-
-func _hit(rect: Rect2, id: String) -> void:
-	_hits.append({"rect": rect, "id": id})
+		var px := 12 + i * cw
+		var alive: bool = float(d["hp"]) > 0.0
+		var ratio := float(d["hp"]) / maxf(float(d["mhp"]), 1.0)
+		_panel(Rect2(px + 3, cy, cw - 6, 72),
+				Color(0.08, 0.07, 0.12, 0.92) if alive else Color(0.12, 0.05, 0.06, 0.92),
+				Color(PINK.r, PINK.g, PINK.b, 0.3) if alive else Color(1.0, 0.4, 0.4, 0.5), 8)
+		_txt(font, Vector2(px + 12, cy + 24), String(d["name"]), 14, TEXT if alive else Color(1.0, 0.55, 0.55))
+		_bar(Rect2(px + 12, cy + 36, cw - 30, 10), ratio, HP_COL if alive else Color(0.5, 0.2, 0.2))
+		var hp_txt := "%d/%d" % [int(d["hp"]), int(d["mhp"])] if alive else "再同期待ち"
+		_txt(font, Vector2(px + 12, cy + 62), hp_txt, 11, TEXT_DIM)
