@@ -14,18 +14,43 @@ const GOLD := Color(1.0, 0.82, 0.4)
 const TEXT := Color(0.96, 0.95, 0.98)
 const TEXT_DIM := Color(0.72, 0.74, 0.82)
 
+## タップされた UI 要素の ID を通知（main.gd 側で接続して実ロジックに繋ぐ）。
+## 例: "depart"（探索へ出発）, "nav_chara", "gacha", "quest", "daily", "party" ...
+signal action_pressed(id: String)
+
 var _t := 0.0
+var _hits: Array = []   # {rect: Rect2, id: String}（_draw で毎フレーム再構築）
 
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mouse_filter = Control.MOUSE_FILTER_STOP  # タップを受ける
 	set_process(true)
 
 
 func _process(delta: float) -> void:
 	_t += delta
 	queue_redraw()
+
+
+## クリック/タップ位置を当たり判定し、ヒットした UI の ID をシグナルで通知。
+func _gui_input(event: InputEvent) -> void:
+	var p: Vector2
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		p = event.position
+	elif event is InputEventScreenTouch and event.pressed:
+		p = event.position
+	else:
+		return
+	for h in _hits:
+		if (h["rect"] as Rect2).has_point(p):
+			action_pressed.emit(String(h["id"]))
+			accept_event()
+			return
+
+
+func _hit(rect: Rect2, id: String) -> void:
+	_hits.append({"rect": rect, "id": id})
 
 
 # ── 描画ヘルパー ──────────────────────────────────────────────
@@ -59,6 +84,7 @@ func _icon_btn(font: Font, center: Vector2, r: float, label: String, col: Color)
 func _draw() -> void:
 	var sz := size
 	var font := get_theme_default_font()
+	_hits.clear()
 
 	# ===== トップバー =====
 	var bar_h := 66.0
@@ -75,25 +101,30 @@ func _draw() -> void:
 
 	# ===== 左上：本日の依頼 =====
 	var qy := bar_h + 22
+	_hit(Rect2(8, qy, 248, 98), "quest")
 	_panel(Rect2(8, qy, 248, 98), PANEL_BG, Color(GOLD.r, GOLD.g, GOLD.b, 0.4), 10)
 	_txt(font, Vector2(22, qy + 28), "本日の依頼", 17, GOLD)
 	_txt(font, Vector2(22, qy + 54), "質屋の試練に挑む", 16, TEXT, HORIZONTAL_ALIGNMENT_LEFT, 224)
 	_txt(font, Vector2(22, qy + 80), "報酬  120石  +2,400G", 14, TEXT_DIM)
 
 	# ===== 右上：ピックアップ召喚（ガチャ） =====
+	_hit(Rect2(sz.x - 218, qy, 210, 80), "gacha")
 	_panel(Rect2(sz.x - 218, qy, 210, 80), PANEL_BG2, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.55), 10)
 	_txt(font, Vector2(sz.x - 204, qy + 28), "ピックアップ召喚", 15, PURPLE)
 	_neon(font, Vector2(sz.x - 204, qy + 58), "後悔のフユキ ↑UP", 16, PINK)
 
 	# ===== 右サイド：アイコン列 =====
 	var iy := qy + 128
-	for it in [["日課", CYAN], ["任務", PINK], ["催事", GOLD]]:
+	for it in [["日課", CYAN, "daily"], ["任務", PINK, "mission"], ["催事", GOLD, "event"]]:
 		_icon_btn(font, Vector2(sz.x - 40, iy), 30, it[0], it[1])
+		_hit(Rect2(sz.x - 70, iy - 30, 60, 60), String(it[2]))
 		iy += 74
 
 	# ===== 左サイド：占い / 編成 =====
 	_icon_btn(font, Vector2(44, sz.y * 0.46), 32, "占い", PURPLE)
+	_hit(Rect2(12, sz.y * 0.46 - 32, 64, 64), "uranai")
 	_icon_btn(font, Vector2(44, sz.y * 0.46 + 80), 32, "編成", CYAN)
+	_hit(Rect2(12, sz.y * 0.46 + 48, 64, 64), "party")
 
 	# ===== 吹き出し（店番のセリフ） =====
 	_speech(font, Vector2(sz.x * 0.34, sz.y * 0.32), "いらっしゃいませ！")
@@ -113,6 +144,7 @@ func _draw() -> void:
 
 	# ===== 探索へ出発ポータル（右下） =====
 	var pc := Vector2(sz.x - 86, sz.y - 150)
+	_hit(Rect2(pc.x - 60, pc.y - 60, 120, 150), "depart")
 	var pr := 52.0 + 3.0 * sin(_t * 2.0)
 	draw_circle(pc, pr + 8, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.12))
 	draw_circle(pc, pr, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.22))
@@ -127,8 +159,10 @@ func _draw() -> void:
 	var ny := sz.y - nav_h
 	_panel(Rect2(0, ny, sz.x, nav_h), Color(0.03, 0.035, 0.07, 0.96), Color(PINK.r, PINK.g, PINK.b, 0.4), 0, 1)
 	var tabs := ["ホーム", "キャラ", "持ち物", "記録", "図鑑", "設定"]
+	var tab_ids := ["nav_home", "nav_chara", "nav_items", "nav_log", "nav_dex", "nav_settings"]
 	var tw := sz.x / tabs.size()
 	for i in tabs.size():
+		_hit(Rect2(i * tw, ny, tw, nav_h), tab_ids[i])
 		var active := i == 0
 		var c := PINK if active else TEXT_DIM
 		var lw := font.get_string_size(tabs[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x
