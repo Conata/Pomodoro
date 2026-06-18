@@ -95,7 +95,7 @@ func _goto(path: String) -> void:
 			_dive_overlay = overlay
 
 
-## ホームのUI操作（仕入れへ で仕入れ開始）。
+## ホームのUI操作（仕入れへ で仕入れ開始／フッターで各主要機能へ）。
 func _on_home_action(id: String) -> void:
 	match id:
 		"pomodoro":
@@ -106,8 +106,32 @@ func _on_home_action(id: String) -> void:
 			# クイック仕入れ（80秒）
 			sim.start_run("quick", 1.0, Time.get_unix_time_from_system(), "仕入れ")
 			_goto(DIVE)
+		"home":
+			# フッター「ホーム」＝現在地。セリフだけ戻す。
+			_say_home("「おかえり。今日も飯店、開けるよ。」")
+		"member":
+			# 主要機能：メンバー（編成/会話/好感度）。新シェルへは移植中。
+			_say_home("「メンバーの編成画面は移植中。もう少しで会えるよ。」")
+		"market":
+			# 主要機能：闇市（仕入れた素材の売買）。新シェルへは移植中。
+			_say_home("「闇市はまだ仕込み中。掘り出し物、楽しみにしてて。」")
+		"management":
+			# 主要機能：経営（夜の精算/店づくり）。新シェルへは移植中。
+			_say_home("「経営の帳簿はまだ閉じたまま。夜の精算はこれからだよ。」")
+		"workshop":
+			# 主要機能：工房（改装/設備）。新シェルへは移植中。
+			_say_home("「工房は建てかけ。改装はもうちょっと待ってね。」")
 		_:
 			print("[home] action: ", id)
+
+
+## ホームのVNセリフを差し替えて、現在のホームオーバーレイへ即時反映する。
+func _say_home(vn_line: String) -> void:
+	_refresh_home_data(vn_line)
+	if _current != null:
+		var overlay := _current.get_node_or_null("Overlay")
+		if overlay != null and overlay.has_method("set_data"):
+			overlay.set_data(_home_data)
 
 
 ## 潜航のコマンド。KuroSim はオート戦闘なので、fast=早送り倍率、pause=撤退を実効化。

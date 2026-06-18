@@ -17,11 +17,23 @@ const TEXT := Color(0.96, 0.95, 0.98)
 const TEXT_DIM := Color(0.75, 0.76, 0.84)
 
 const STRIP_H := 168.0   # 最下部 HD-2D フィールド帯の高さ（FieldStrip と一致させる）
+const FOOTER_H := 58.0   # 最下部フッターナビバーの高さ（旧版のボトムタブを踏襲）
+
+# 各主要機能へのフッターナビ（旧 main_legacy の 店/メンバー/工房/市場/経営 を踏襲）。
+# id は main.gd の _on_home_action(id) に届く。
+const NAV := [
+	{"id": "home",       "icon": "家", "label": "ホーム",   "col": CYAN},
+	{"id": "member",     "icon": "仲", "label": "メンバー", "col": PINK},
+	{"id": "market",     "icon": "市", "label": "市場",     "col": GOLD},
+	{"id": "management", "icon": "店", "label": "経営",     "col": PURPLE},
+	{"id": "workshop",   "icon": "工", "label": "工房",     "col": CYAN},
+]
 
 # ── 表示データ（main.gd から set_data()）──
 var speaker := "フユキ"
 var line := "「後悔が騒いでるね。奥に潜って、静かにしてあげる。」"
 var day_gold := "Day 1   金 120"
+var active_nav := "home"   # フッターでハイライトする現在地（ホーム画面では home）
 
 var _t := 0.0
 var _hits: Array = []
@@ -146,15 +158,47 @@ func _draw() -> void:
 	var fy := sz.y - STRIP_H
 	# 上辺のネオンライン
 	draw_rect(Rect2(0, fy, sz.x, 2), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.6))
-	_hit(Rect2(0, fy, sz.x, STRIP_H), "field")
+	# フィールドのタップ領域はフッターと重ならないよう上側だけにする
+	_hit(Rect2(0, fy, sz.x, STRIP_H - FOOTER_H), "field")
 	# 左：味方／右：敵 のラベル
 	_txt(font, Vector2(18, fy + 22), "PARTY", 13, CYAN)
 	var ew := font.get_string_size("ENEMY", HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
 	_txt(font, Vector2(sz.x - 18 - ew, fy + 22), "ENEMY", 13, Color(1.0, 0.4, 0.85))
-	# コンパス（中央下）
-	var cc := Vector2(sz.x * 0.5, sz.y - 16)
+	# コンパス（中央下・フッターの上）
+	var cc := Vector2(sz.x * 0.5, sz.y - 16 - FOOTER_H)
 	draw_arc(cc, 14, 0, TAU, 28, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.7), 2.0)
 	draw_line(cc + Vector2(0, -10), cc + Vector2(0, 10), Color(PINK.r, PINK.g, PINK.b, 0.8), 2.0)
 	# 進行バー
-	_panel(Rect2(sz.x * 0.5 + 26, sz.y - 22, sz.x * 0.5 - 50, 8), Color(0, 0, 0, 0.5), Color(1, 1, 1, 0.15), 3, 1)
-	draw_rect(Rect2(sz.x * 0.5 + 26, sz.y - 22, (sz.x * 0.5 - 50) * 0.3, 8), PURPLE)
+	_panel(Rect2(sz.x * 0.5 + 26, sz.y - 22 - FOOTER_H, sz.x * 0.5 - 50, 8), Color(0, 0, 0, 0.5), Color(1, 1, 1, 0.15), 3, 1)
+	draw_rect(Rect2(sz.x * 0.5 + 26, sz.y - 22 - FOOTER_H, (sz.x * 0.5 - 50) * 0.3, 8), PURPLE)
+
+	# ===== 最下部：各主要機能へのフッターナビ =====
+	_footer(font, sz)
+
+
+## 各主要機能へつながるフッターナビバー（旧版のボトムタブを踏襲）。
+## 等幅セルにアイコン＋ラベルを並べ、タップで action_pressed(id) を発火。
+func _footer(font: Font, sz: Vector2) -> void:
+	var fy := sz.y - FOOTER_H
+	draw_rect(Rect2(0, fy, sz.x, FOOTER_H), Color(0.03, 0.03, 0.06, 0.95))
+	draw_rect(Rect2(0, fy, sz.x, 1.5), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.55))
+	var n := NAV.size()
+	var cw := sz.x / float(n)
+	for i in n:
+		var e: Dictionary = NAV[i]
+		var x0 := cw * i
+		var id := String(e["id"])
+		_hit(Rect2(x0, fy, cw, FOOTER_H), id)
+		var col: Color = e["col"]
+		var active := id == active_nav
+		if active:
+			draw_rect(Rect2(x0, fy, cw, FOOTER_H), Color(col.r, col.g, col.b, 0.10))
+			draw_rect(Rect2(x0, fy, cw, 2.0), col)   # アクティブの上辺ハイライト
+		var gcol := col if active else Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.9)
+		var cx := x0 + cw * 0.5
+		var glyph := String(e["icon"])
+		var gw := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x
+		_txt(font, Vector2(cx - gw * 0.5, fy + 28), glyph, 22, gcol)
+		var label := String(e["label"])
+		var lw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+		_txt(font, Vector2(cx - lw * 0.5, fy + 48), label, 11, gcol)
