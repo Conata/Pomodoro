@@ -938,6 +938,15 @@ func _sprite_half_h() -> float:
 	return 192.0 * PIXEL_SIZE * 0.5
 
 
+## キャラの手続き的な揺れ（idle=呼吸のゆっくり上下／移動=歩行バウンス）。
+## スプライトが単一フレームでも生命感を出す。phase でキャラごとに位相をずらす。
+func _char_bob(moving: bool, phase: float) -> float:
+	var t := float(Time.get_ticks_msec()) / 1000.0
+	if moving:
+		return absf(sin(t * 9.0 + phase)) * 0.055   # 歩行バウンス（常に上向き）
+	return sin(t * 2.2 + phase) * 0.03               # 待機の呼吸
+
+
 func _process(delta: float) -> void:
 	_pulse += delta
 
@@ -977,7 +986,7 @@ func _process(delta: float) -> void:
 		_player_anim.tick(delta)
 		_player.texture = _tex(_player_anim.current_path())
 		_player.flip_h = _player_flip
-	_player.position = _player_pos + Vector3(0, _sprite_half_h(), 0)
+	_player.position = _player_pos + Vector3(0, _sprite_half_h() + _char_bob(moving or _force_moving, 0.0), 0)
 	if _player_light != null:
 		_player_light.position = _player_pos + Vector3(0, 2.2, 0.8)
 	if _player_shadow != null:
@@ -999,9 +1008,10 @@ func _process(delta: float) -> void:
 				nmove = to.normalized()
 				_npc_pos[i] += nmove * 0.9 * delta
 				nmoving = true
-			_npc_sprites[i].position = _npc_pos[i] + Vector3(0, _sprite_half_h(), 0)
 			if i < _npc_shadow.size() and _npc_shadow[i] != null:
 				_npc_shadow[i].position = _npc_pos[i] + Vector3(0, 0.03, 0)
+		# 待機/歩行のアイドルモーション（呼吸の上下＋歩行バウンス）を全 NPC に適用
+		_npc_sprites[i].position = _npc_pos[i] + Vector3(0, _sprite_half_h() + _char_bob(nmoving, float(i) * 0.7), 0)
 		if nmoving:
 			var dr := _walk_dir(nmove)
 			_npc_sprites[i].flip_h = bool(dr[1])   # 左右反転（side や素材無しでも効く）
