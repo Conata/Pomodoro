@@ -98,8 +98,12 @@ func _goto(path: String) -> void:
 ## ホームのUI操作（仕入れへ で仕入れ開始）。
 func _on_home_action(id: String) -> void:
 	match id:
+		"pomodoro":
+			# 25分ポモドーロ集中＝仕入れ（早送り/早期終了は仕入れ画面のボタンで）
+			sim.start_run("pomo", 25.0, Time.get_unix_time_from_system(), "集中仕入れ")
+			_goto(DIVE)
 		"depart", "field":
-			# クイック仕入れ（80秒）を開始して仕入れ画面へ
+			# クイック仕入れ（80秒）
 			sim.start_run("quick", 1.0, Time.get_unix_time_from_system(), "仕入れ")
 			_goto(DIVE)
 		_:
@@ -110,14 +114,19 @@ func _on_home_action(id: String) -> void:
 ## 攻撃/スキル/防御/アイテムの手動発動は KuroSim 側 API（手動アクション）が要るため当面ログ。
 func _on_dive_command(id: String) -> void:
 	match id:
-		"pause":
+		"home", "pause":
+			# 中断して店へ戻る（撤退）
 			if sim != null and bool(sim.state["run"]["active"]):
 				sim.abandon_run()
 			_goto(HOME)
+		"finish":
+			# 早期終了＝今すぐ浮上（残り時間を飛ばして正常終了→精算）
+			var run: Dictionary = sim.state["run"]
+			if bool(run["active"]):
+				run["elapsed"] = float(run["duration"])
+				sim.step(KuroData.SIM_DT)   # 終端処理を発火（次フレームの _process が _surface）
 		"fast":
-			_speed = (_speed % 3) + 1   # 1→2→3→1
-		"auto":
-			pass                         # 既定でオート
+			_speed = (_speed % 3) + 1        # 1→2→3→1
 		_:
 			print("[dive] command(未接続: 要KuroSim手動アクションAPI): ", id)
 
@@ -149,4 +158,5 @@ func _update_dive_ui() -> void:
 		"player_hp": (tot / mx) if mx > 0.0 else 0.0,
 		"player_exp": prog,
 		"quest_text": "仕入れ中  B%d  残り %d秒" % [sim.current_floor(), int(remain)],
+		"speed_mult": _speed,
 	})

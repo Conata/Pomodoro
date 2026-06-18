@@ -27,6 +27,7 @@ var player_lv := "Lv.12"
 var player_hp := 1.0          # 0〜1
 var player_exp := 0.63        # 0〜1
 var quest_text := "中央ゲートへ進む  0/1"
+var speed_mult := 1           # 早送り倍率（≫ボタン表示用）
 
 
 ## main.gd / KuroSim から実データを流し込む。
@@ -105,14 +106,16 @@ func _draw() -> void:
 	_bar(Rect2(112, 20, 180, 12), player_hp, HP_COL)
 	_txt(font, Vector2(300, 32), "%d%%" % int(player_hp * 100.0), 14, TEXT_DIM)
 	_bar(Rect2(112, 40, 180, 8), player_exp, Color(0.5, 0.85, 1.0))  # EXP
-	# 右：AUTO / 倍速 / 一時停止
+	# 右：戻る（中断）／浮上（早期終了）／倍速
 	var bx := sz.x - 20
-	for it in [["||", "pause"], ["AUTO", "auto"], ["≫", "fast"]]:
-		var w := font.get_string_size(it[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 16
+	for it in [["戻る", "home", Color(1.0, 0.5, 0.5)], ["浮上", "finish", GOLD], ["≫%d" % speed_mult, "fast", CYAN]]:
+		var lbl: String = it[0]
+		var col: Color = it[2]
+		var w := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 18
 		bx -= w + 8
-		_hit(Rect2(bx, 16, w, 40), String(it[1]))
-		_panel(Rect2(bx, 16, w, 40), Color(0.08, 0.06, 0.12, 0.9), Color(CYAN.r, CYAN.g, CYAN.b, 0.5), 8)
-		_txt(font, Vector2(bx + 8, 42), String(it[0]), 16, CYAN)
+		_hit(Rect2(bx, 14, w, 44), String(it[1]))
+		_panel(Rect2(bx, 14, w, 44), Color(col.r * 0.18, col.g * 0.16, col.b * 0.2, 0.92), col, 8, 1.5)
+		_txt(font, Vector2(bx + 9, 42), lbl, 16, col)
 
 	# ===== メインクエスト（左・トップ下） =====
 	var qy := bar_h + 16

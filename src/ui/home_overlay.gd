@@ -117,9 +117,19 @@ func _draw() -> void:
 		_txt(font, Vector2(pc.x - 9, vy), ch, 17, PINK)
 		vy += 22.0
 
-	# ===== VN セリフ窓（フィールド帯の上） =====
+	# ===== ポモドーロ集中ボタン（主役CTA・VN窓の上） =====
 	var vh := 96.0
 	var vy0 := sz.y - STRIP_H - vh - 8
+	var cta := Rect2(sz.x * 0.5 - 145, vy0 - 70, 290, 56)
+	_hit(cta, "pomodoro")
+	var pulse := 0.5 + 0.5 * sin(_t * 2.5)
+	_panel(cta, Color(PINK.r * 0.22, PINK.g * 0.16, PINK.b * 0.24, 0.96),
+			Color(PINK.r, PINK.g, PINK.b, 0.6 + 0.3 * pulse), 16, 2.0)
+	var ct := "▶  集中する（25分）"
+	var ctw := font.get_string_size(ct, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
+	_txt(font, Vector2(cta.position.x + (cta.size.x - ctw) * 0.5, cta.position.y + 36), ct, 19, TEXT)
+
+	# ===== VN セリフ窓（フィールド帯の上） =====
 	_panel(Rect2(16, vy0, sz.x - 32, vh), Color(0.04, 0.04, 0.08, 0.86), Color(PINK.r, PINK.g, PINK.b, 0.5), 12)
 	# 名前タグ
 	_panel(Rect2(28, vy0 - 14, 96, 30), Color(0.10, 0.05, 0.10, 0.95), Color(PINK.r, PINK.g, PINK.b, 0.7), 8)
