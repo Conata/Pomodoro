@@ -41,6 +41,7 @@ var _player: Sprite3D
 var _player_pos := Vector3(0, 0, 4.0)
 var _player_anim: ChibiAnim
 var _player_flip := false
+var _player_light: OmniLight3D = null  # 主人公追従のキーライト（cyberpunk のみ）
 var _npc_sprites: Array[Sprite3D] = []
 var _npc_anims: Array[ChibiAnim] = []
 var _tex_cache := {}
@@ -152,8 +153,8 @@ func _build_env_cyberpunk() -> void:
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(0.025, 0.03, 0.06)  # 深い藍の夜
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.18, 0.22, 0.40)  # 弱く青い環境光
-	env.ambient_light_energy = 0.35
+	env.ambient_light_color = Color(0.24, 0.27, 0.42)  # 弱く青い環境光
+	env.ambient_light_energy = 0.5
 	# ネオンを滲ませる強めの glow（HDR 閾値で発光面だけ光らせる）
 	env.glow_enabled = true
 	env.glow_intensity = 0.9
@@ -375,6 +376,14 @@ func _build_player() -> void:
 	_player_anim = ChibiAnim.new(PLAYER_ID)
 	_player = _make_billboard()
 	_sub.add_child(_player)
+	# 主人公に追従する控えめなキーライト（暗い夜でも主役を読めるように）。
+	if THEME == "cyberpunk":
+		_player_light = OmniLight3D.new()
+		_player_light.light_color = Color(1.0, 0.92, 0.85)
+		_player_light.light_energy = 1.4
+		_player_light.omni_range = 5.0
+		_player_light.shadow_enabled = false
+		_sub.add_child(_player_light)
 
 
 func _build_npcs() -> void:
@@ -394,7 +403,9 @@ func _make_billboard() -> Sprite3D:
 	var spr := Sprite3D.new()
 	spr.pixel_size = PIXEL_SIZE
 	spr.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
-	spr.shaded = false
+	# shaded=true でシーンライト（ネオン/月光）を受け、環境に馴染ませる。
+	# Y固定ビルボードは法線がカメラ向きに回るので、周囲の OmniLight がキャラを染める。
+	spr.shaded = true
 	spr.double_sided = true
 	spr.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	spr.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD  # 影を落とし、輪郭をくっきり
@@ -436,6 +447,8 @@ func _process(delta: float) -> void:
 	_player.texture = _tex(_player_anim.current_path())
 	_player.flip_h = _player_flip
 	_player.position = _player_pos + Vector3(0, _sprite_half_h(), 0)
+	if _player_light != null:
+		_player_light.position = _player_pos + Vector3(0, 2.2, 0.8)
 
 	# ── NPC は待機モーション ──
 	for i in _npc_sprites.size():
