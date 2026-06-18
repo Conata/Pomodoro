@@ -261,6 +261,90 @@ def generate_frame(client, model_name: str, base_img_bytes: bytes,
     return None
 
 
+# ── ベース画像生成（text2img）─────────────────────────────────────────────
+def build_base_prompt(appearance: str) -> str:
+    return (
+        f"{appearance}, "
+        "chibi pixel art sprite, 2.5 head height, thick black outline, "
+        "flat color, full body, front facing, single solid color background"
+    )
+
+
+def generate_base(client, model_name: str, appearance: str,
+                  retries: int = 2) -> bytes | None:
+    """テキストプロンプトから新規ベース画像を生成（text2img）。PNG bytes を返す。"""
+    from google.genai import types
+
+    prompt = build_base_prompt(appearance)
+    parts = [types.Part.from_text(text=prompt)]
+    for attempt in range(retries + 1):
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    response_modalities=["IMAGE"],
+                ),
+            )
+            if not response.candidates:
+                print(f"[no candidates, attempt {attempt+1}]", end=" ")
+                time.sleep(3)
+                continue
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, "inline_data") and part.inline_data:
+                    return part.inline_data.data  # bytes
+            text_parts = [
+                p.text for p in response.candidates[0].content.parts
+                if hasattr(p, "text") and p.text
+            ]
+            if text_parts:
+                print(f"[model returned text only: {text_parts[0][:80]!r}]", end=" ")
+            else:
+                print(f"[no image in response, attempt {attempt+1}]", end=" ")
+            time.sleep(3)
+        except Exception as e:
+            msg = str(e)
+            if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+                wait = 60 * (attempt + 1)
+                print(f"[rate limit, wait {wait}s]", end=" ", flush=True)
+                time.sleep(wait)
+            elif "500" in msg or "503" in msg:
+                print(f"[server error {attempt+1}: {msg[:60]}]", end=" ")
+                time.sleep(10)
+            else:
+                print(f"[error: {msg[:80]}]", end=" ")
+                if attempt == retries:
+                    return None
+                time.sleep(5)
+    return None
+
+
+def ensure_base(client, model_name: str, target_id: str, appearance: str,
+                tmp_dir: Path | None = None) -> bytes | None:
+    """base.png を新規生成 → 背景キーイング → 保存し、その PNG bytes を返す。"""
+    print(f"  base.png が無いので generate_base() で新規生成 ... ", end="", flush=True)
+    raw = generate_base(client, model_name, appearance)
+    if raw is None:
+        print("✗ FAILED")
+        return None
+
+    # 生成元を tmp に保存（デバッグ用）
+    if tmp_dir is not None:
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        (tmp_dir / "base_raw.png").write_bytes(raw)
+
+    keyed = key_background(raw)
+    dest = OUT_BASE / target_id / "base.png"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    keyed.save(str(dest), "PNG")
+    print(f"→ saved {dest.relative_to(REPO_ROOT)}")
+
+    # キーイング済み（透過）画像を以降のポーズ派生の入力に使う
+    buf = io.BytesIO()
+    keyed.save(buf, "PNG")
+    return buf.getvalue()
+
+
 # ── 背景キーイング（gen_face_gemini.py の 4 隅フラッドフィル）─────────────────
 def key_background(src_bytes: bytes, tol: int = KEY_TOL) -> Image.Image:
     """4 隅それぞれ独立フラッドフィルで背景を透過に抜く。RGBA Image を返す（原寸）。"""
@@ -429,12 +513,19 @@ def main():
     ok = fail = 0
     for tid in target_ids:
         print(f"▶ {tid}")
+        appearance = registry[tid]["appearance"]
         base_bytes = load_base_bytes(tid, args.base)
         if base_bytes is None:
-            fail += len(anim_keys)
-            print()
-            continue
-        appearance = registry[tid]["appearance"]
+            # --enemies で base.png が無い場合は text2img で新規生成してから派生
+            if args.enemies and not args.base:
+                base_bytes = ensure_base(
+                    client, model_name, tid, appearance,
+                    tmp_dir=TMP_BASE / tid,
+                )
+            if base_bytes is None:
+                fail += len(anim_keys)
+                print()
+                continue
         for anim_name in anim_keys:
             print(f"  アニメ: {anim_name}")
             try:
