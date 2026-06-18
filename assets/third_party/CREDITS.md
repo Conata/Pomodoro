@@ -13,6 +13,8 @@
 | `effects/lightning_strike.png` Thunder Spell Effect | pimen | 無料（商用可・クレジット任意） | 連鎖雷/レベルアップエフェクト | https://pimen.itch.io/thunder-spell-effect-02 |
 | `effects/smoke.png` Smoke VFX 1 | pimen | 無料（商用可・クレジット任意） | 全滅/撤退エフェクト | https://pimen.itch.io/smoke-vfx-1 |
 | `overlays/raylight.png` `overlays/fog.png` | Pixel-Boy / AAA（Ninja Adventure Asset Pack） | CC0 1.0 | 光芒・霧のアトモスフィア | https://github.com/pixel-boy/NinjaAdventure |
+| `kenney_naturekit/` Nature Kit 2.1（GLTF 329モデル） | Kenney | CC0 1.0（同梱 License.txt） | HD-2D 探索画面の木/柵/岩/茂み/花/石畳 | https://kenney.nl/assets/nature-kit |
+| `cyberpunk_kit/` Cyberpunk Game Kit（GLTF・Platforms 52モデル） | Quaternius | CC0 1.0（同梱 License.txt） | HD-2D サイバーパンク（黒猫飯店）のビル/看板/街灯/AC/アンテナ/TV/パイプ | https://quaternius.com/packs/cyberpunkgamekit.html |
 | `../fonts/DotGothic16-Regular.ttf` | Fontworks | SIL OFL 1.1（同梱 OFL.txt） | UIフォント（日本語） | https://fonts.google.com/specimen/DotGothic16 |
 
 ## 加工メモ

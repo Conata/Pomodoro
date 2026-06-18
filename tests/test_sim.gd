@@ -61,7 +61,9 @@ func _test_scripts_compile() -> void:
 	# test_sim.gd は main.gd を読まないため、主要スクリプトの読込でコンパイル検証する。
 	# （CI の import は || true なので、ここで GDScript の解析エラーを確実に捕える）
 	print("[compile]")
-	for path in ["res://main.gd", "res://src/ui/ui_theme.gd", "res://src/ui/ds.gd",
+	for path in ["res://main.gd", "res://legacy/main_legacy.gd",
+			"res://src/ui/hd2d_view.gd", "res://src/ui/home_overlay.gd", "res://src/ui/dive_overlay.gd",
+			"res://src/ui/ui_theme.gd", "res://src/ui/ds.gd",
 			"res://src/ui/dive_view.gd", "res://src/sim/shop.gd", "res://src/sim/sim.gd",
 			"res://src/sim/memory_data.gd"]:
 		check(load(path) != null, "%s がコンパイルできる" % path)
