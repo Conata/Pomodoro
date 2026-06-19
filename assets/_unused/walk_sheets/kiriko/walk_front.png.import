@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://c70xplq6onuwb"
-path="res://.godot/imported/walk_front.png-861b296b34a4651cb0da60842a246d6f.ctex"
+path="res://.godot/imported/walk_front.png-d6c4b405420c86151a73af14a5a3ba02.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/generated/sprites/kiriko/walk_front.png"
-dest_files=["res://.godot/imported/walk_front.png-861b296b34a4651cb0da60842a246d6f.ctex"]
+source_file="res://assets/_unused/walk_sheets/kiriko/walk_front.png"
+dest_files=["res://.godot/imported/walk_front.png-d6c4b405420c86151a73af14a5a3ba02.ctex"]
 
 [params]
 

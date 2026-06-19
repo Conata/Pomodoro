@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://ddu3pfxn3smyl"
-path="res://.godot/imported/walk_front.png-98e1f8b6cb1d32c324f25ca9a3ff2574.ctex"
+path="res://.godot/imported/walk_front.png-f4b950c4118c434523a6191ee3ba5ee4.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/generated/sprites/nurse/walk_front.png"
-dest_files=["res://.godot/imported/walk_front.png-98e1f8b6cb1d32c324f25ca9a3ff2574.ctex"]
+source_file="res://assets/_unused/walk_sheets/nurse/walk_front.png"
+dest_files=["res://.godot/imported/walk_front.png-f4b950c4118c434523a6191ee3ba5ee4.ctex"]
 
 [params]
 

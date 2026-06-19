@@ -39,7 +39,7 @@ from pathlib import Path
 MODEL            = "gemini-3-pro-image-preview"
 OUT_BASE         = Path(__file__).parent.parent / "assets/generated/sprites"
 TMP_BASE         = Path(__file__).parent / "_out/sprite_sheet_raw"
-STYLE_REF_DEFAULT = Path(__file__).parent.parent / "docs/Refs/sprite_style_ref.png"
+STYLE_REF_DEFAULT = Path(__file__).parent.parent / "docs/chara-template/Eris Esra's Character Template 4.1/16x32/16x32 All Animations-Sheet.png"
 CHARA_REF        = Path(__file__).parent.parent / "docs/Refs/Chara"
 
 # スプライト出力サイズ（ドット絵変換後）
@@ -63,12 +63,17 @@ ANIM_ORDER = [
     "skill1", "skill2", "skill3",
 ]
 
+# 方向歩行シート用（walk_front / walk_back）
+WALK_DIR_ANIM_ORDER = ["walk_front", "walk_back"]
+
 # アニメごとのループ設定
 ANIM_LOOP = {
     "idle":        True,
     "run":         True,
     "climb":       True,
     "wall_slide":  True,
+    "walk_front":  True,
+    "walk_back":   True,
     "jump":        False,
     "acquire":     False,
     "attack":      False,
@@ -198,6 +203,30 @@ CHARS = {
 
 
 # ── プロンプト ────────────────────────────────────────────────────────────
+def build_walk_dir_prompt() -> str:
+    return (
+        "You are given TWO reference images:\n"
+        "  Image 1 = pixel art character sprite sheet (style and proportions to replicate)\n"
+        "  Image 2 = the character design (hair color, eye color, outfit, accessories)\n\n"
+        "Task: Create a TWO-ROW pixel art sprite sheet for directional walking:\n"
+        "  Row 1 label 'walk_front': 4 frames — character walks TOWARD the viewer (front-facing walk cycle)\n"
+        "  Row 2 label 'walk_back':  4 frames — character walks AWAY from the viewer (back-facing walk cycle)\n\n"
+        "STRICT requirements:\n"
+        "- Match Image 1's pixel art style: chunky pixels, thick black outlines, GBA/16-bit RPG proportions\n"
+        "- Chibi super-deformed proportions: large head (~50% of body height), small body\n"
+        "- Use the character's design from Image 2 for ALL sprites "
+        "(same hair color, eye color, outfit, accessories)\n"
+        "- Each sprite must show the FULL BODY from head to feet\n"
+        "- walk_front (Row 1): character faces the viewer, legs/arms animate a walk cycle (4 frames)\n"
+        "- walk_back (Row 2): character faces away, back of head/outfit visible, walk cycle (4 frames)\n"
+        "- Arrange sprites as exactly 2 rows × 4 columns (8 sprites total)\n"
+        "- Even spacing between sprites, each sprite in its own clear cell\n"
+        "- BACKGROUND: solid bright MAGENTA (#FF00FF) everywhere\n"
+        "- Add small white text labels 'walk_front' and 'walk_back' above each row\n\n"
+        "Output the 2-row × 4-column directional walk sprite sheet with magenta background."
+    )
+
+
 def build_sheet_prompt() -> str:
     return (
         "You are given TWO reference images:\n"
@@ -279,11 +308,15 @@ def call_gemini(client, model: str, style_bytes: bytes,
 # ── スプライト自動スライス ─────────────────────────────────────────────────
 def auto_slice(sheet_bytes: bytes, char: str, out_dir: Path,
                min_area: int = MIN_SPRITE_AREA,
-               dot_w: int = DOT_W, dot_h: int = DOT_H, scale: int = SCALE):
+               dot_w: int = DOT_W, dot_h: int = DOT_H, scale: int = SCALE,
+               anim_order: list | None = None):
     """
     シート画像からスプライト領域を自動検出し、
-    ANIM_ORDER の順番で <anim>_f<n>.png として保存する。
+    anim_order の順番で <anim>_f<n>.png として保存する。
+    anim_order が None の場合はグローバルの ANIM_ORDER を使う。
     """
+    if anim_order is None:
+        anim_order = ANIM_ORDER
     from PIL import Image
     import numpy as np
     from scipy import ndimage
@@ -349,7 +382,7 @@ def auto_slice(sheet_bytes: bytes, char: str, out_dir: Path,
             cur_row = [box]
     rows.append(sorted(cur_row, key=lambda b: b[1]))
 
-    # ── 順番に ANIM_ORDER を割り当て ──
+    # ── 順番に anim_order を割り当て ──
     saved = []
     sprite_idx = 0
     anim_frame_count: dict[str, int] = {}
@@ -358,9 +391,9 @@ def auto_slice(sheet_bytes: bytes, char: str, out_dir: Path,
 
     for row in rows:
         for (cy, cx, y1, y2, x1, x2) in row:
-            if sprite_idx >= len(ANIM_ORDER):
+            if sprite_idx >= len(anim_order):
                 break
-            anim_name = ANIM_ORDER[sprite_idx]
+            anim_name = anim_order[sprite_idx]
             fi = anim_frame_count.get(anim_name, 0)
 
             # クロップ
@@ -382,26 +415,32 @@ def auto_slice(sheet_bytes: bytes, char: str, out_dir: Path,
             anim_frame_count[anim_name] = fi + 1
             sprite_idx += 1
 
-    # ── manifest.json 書き出し ──
+    # ── manifest.json 書き出し（既存エントリとマージ）──
+    manifest_path = out_dir / "manifest.json"
+    existing_anims: dict = {}
+    if manifest_path.exists():
+        try:
+            existing_anims = json.loads(manifest_path.read_text()).get("animations", {})
+        except Exception:
+            pass
+    existing_anims.update({
+        anim: {"frames": count, "loop": ANIM_LOOP.get(anim, False)}
+        for anim, count in anim_frame_count.items()
+    })
+    # 全アニメをグローバル ANIM_ORDER + WALK_DIR_ANIM_ORDER の順で並べる
+    all_order = ANIM_ORDER + [a for a in WALK_DIR_ANIM_ORDER if a not in ANIM_ORDER]
     manifest = {
         "char": char,
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "frame_size": [dot_w * scale, dot_h * scale],
         "fps": DEFAULT_FPS,
         "animations": {
-            anim: {
-                "frames": count,
-                "loop": ANIM_LOOP.get(anim, False),
-            }
-            for anim, count in sorted(
-                anim_frame_count.items(),
-                key=lambda kv: ANIM_ORDER.index(kv[0]) if kv[0] in ANIM_ORDER else 999,
-            )
+            anim: existing_anims[anim]
+            for anim in all_order if anim in existing_anims
         },
     }
-    manifest_path = out_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
-    print(f"  → manifest.json 書き出し ({len(anim_frame_count)} アニメ)")
+    print(f"  → manifest.json 書き出し ({len(existing_anims)} アニメ)")
 
     print()
     return saved
@@ -429,6 +468,8 @@ def main():
                         help=f"スタイル参照画像 (default: {STYLE_REF_DEFAULT})")
     parser.add_argument("--slice-only", default=None,
                         help="既存シート画像をスライスするだけ（パス指定）")
+    parser.add_argument("--walk-dir",   action="store_true",
+                        help="walk_front / walk_back の方向歩行スプライトを生成する")
     parser.add_argument("--dot-w",  type=int, default=DOT_W)
     parser.add_argument("--dot-h",  type=int, default=DOT_H)
     parser.add_argument("--scale",  type=int, default=SCALE)
@@ -469,41 +510,78 @@ def main():
     print(f"ドット: {dw}×{dh} → {dw*sc}×{dh*sc}px (×{sc})")
     print()
 
-    prompt = build_sheet_prompt()
+    if args.walk_dir:
+        # ── 方向歩行スプライト生成（walk_front / walk_back）──
+        walk_prompt = build_walk_dir_prompt()
+        print("=== walk_front / walk_back 生成モード ===\n")
+        for char in char_list:
+            cfg     = CHARS[char]
+            out_dir = OUT_BASE / char
+            tmp_dir = TMP_BASE / char
+            tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    for char in char_list:
-        cfg     = CHARS[char]
-        out_dir = OUT_BASE / char
-        tmp_dir = TMP_BASE / char
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-
-        raw_path = tmp_dir / "sheet_raw.png"
-
-        if not cfg["base"].exists():
-            print(f"[{char}] ⚠ キャラ画像が見つかりません: {cfg['base']}\n")
-            continue
-
-        char_bytes = cfg["base"].read_bytes()
-        print(f"── {char}  (base: {cfg['base'].name}) ──")
-
-        # シート生成
-        if raw_path.exists() and not args.force:
-            print(f"  シート既存 → スライスのみ ({raw_path.name})")
-            sheet_bytes = raw_path.read_bytes()
-        else:
-            print(f"  シート生成中 ...", end=" ", flush=True)
-            sheet_bytes = call_gemini(client, args.model, style_bytes, char_bytes, prompt)
-            if sheet_bytes is None:
-                print("FAILED")
+            if not cfg["base"].exists():
+                print(f"[{char}] ⚠ キャラ画像が見つかりません: {cfg['base']}\n")
                 continue
-            raw_path.write_bytes(sheet_bytes)
-            print(f"→ {raw_path.name}")
 
-        # 自動スライス
-        print(f"  自動スライス ...", end=" ")
-        saved = auto_slice(sheet_bytes, char, out_dir, args.min_area, dw, dh, sc)
-        print(f"  合計 {len(saved)} スプライト保存")
-        print()
+            char_bytes = cfg["base"].read_bytes()
+            print(f"── {char}  (base: {cfg['base'].name}) ──")
+
+            raw_path = tmp_dir / "walk_dir_raw.png"
+            if raw_path.exists() and not args.force:
+                print(f"  シート既存 → スライスのみ ({raw_path.name})")
+                sheet_bytes = raw_path.read_bytes()
+            else:
+                print(f"  walk_dir シート生成中 ...", end=" ", flush=True)
+                sheet_bytes = call_gemini(client, args.model, style_bytes, char_bytes, walk_prompt)
+                if sheet_bytes is None:
+                    print("FAILED")
+                    continue
+                raw_path.write_bytes(sheet_bytes)
+                print(f"→ {raw_path.name}")
+
+            print(f"  自動スライス ...", end=" ")
+            saved = auto_slice(sheet_bytes, char, out_dir, args.min_area, dw, dh, sc,
+                               anim_order=WALK_DIR_ANIM_ORDER)
+            print(f"  合計 {len(saved)} スプライト保存")
+            print()
+    else:
+        # ── 通常の全アニメシート生成 ──
+        prompt = build_sheet_prompt()
+
+        for char in char_list:
+            cfg     = CHARS[char]
+            out_dir = OUT_BASE / char
+            tmp_dir = TMP_BASE / char
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+
+            raw_path = tmp_dir / "sheet_raw.png"
+
+            if not cfg["base"].exists():
+                print(f"[{char}] ⚠ キャラ画像が見つかりません: {cfg['base']}\n")
+                continue
+
+            char_bytes = cfg["base"].read_bytes()
+            print(f"── {char}  (base: {cfg['base'].name}) ──")
+
+            # シート生成
+            if raw_path.exists() and not args.force:
+                print(f"  シート既存 → スライスのみ ({raw_path.name})")
+                sheet_bytes = raw_path.read_bytes()
+            else:
+                print(f"  シート生成中 ...", end=" ", flush=True)
+                sheet_bytes = call_gemini(client, args.model, style_bytes, char_bytes, prompt)
+                if sheet_bytes is None:
+                    print("FAILED")
+                    continue
+                raw_path.write_bytes(sheet_bytes)
+                print(f"→ {raw_path.name}")
+
+            # 自動スライス
+            print(f"  自動スライス ...", end=" ")
+            saved = auto_slice(sheet_bytes, char, out_dir, args.min_area, dw, dh, sc)
+            print(f"  合計 {len(saved)} スプライト保存")
+            print()
 
     print("完了。Godot で再インポートしてください:")
     print("  /Applications/Godot.app/Contents/MacOS/Godot --headless --import --path .")

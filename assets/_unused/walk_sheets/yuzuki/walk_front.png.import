@@ -3,15 +3,15 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cyvtidapfq6nj"
-path="res://.godot/imported/walk_front.png-12ace48348f0bb1250a96d990bccf063.ctex"
+path="res://.godot/imported/walk_front.png-d5bd366911973ce5ff83162f2f3e370d.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/generated/sprites/yuzuki/walk_front.png"
-dest_files=["res://.godot/imported/walk_front.png-12ace48348f0bb1250a96d990bccf063.ctex"]
+source_file="res://assets/_unused/walk_sheets/yuzuki/walk_front.png"
+dest_files=["res://.godot/imported/walk_front.png-d5bd366911973ce5ff83162f2f3e370d.ctex"]
 
 [params]
 
