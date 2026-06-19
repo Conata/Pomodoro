@@ -22,6 +22,7 @@ var gold := 0                  # 夜の売上
 var boxes: Array = []          # [{grade, text, kind}]
 var story := ""                # 住民ストーリー（特注が売れた夜）
 var summary: Dictionary = {}   # {floor, kills, mats, minutes, resyncs, disconnected}
+var talk: Dictionary = {}      # その夜話せる相手 {girl, tier}（無ければ空）
 
 var _t := 0.0
 var _hits: Array = []
@@ -39,6 +40,12 @@ func set_data(d: Dictionary) -> void:
 		if k in self:
 			set(k, d[k])
 	_t = 0.0
+	queue_redraw()
+
+
+## 会話を消化した後に呼ぶ：会話ボタンを消す。
+func clear_talk() -> void:
+	talk = {}
 	queue_redraw()
 
 
@@ -161,6 +168,17 @@ func _draw() -> void:
 		_panel(Rect2(16, y, sz.x - 32, sh), Color(0.09, 0.05, 0.12, 0.92), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.55), 12)
 		_txt(font, Vector2(28, y + 26), story, 14, Color(0.9, 0.82, 1.0), HORIZONTAL_ALIGNMENT_LEFT, sz.x - 56)
 		y += sh + 12
+
+	# 会話ボタン（その夜の相手がいる時だけ・継続ボタンの上）
+	if not talk.is_empty():
+		var gid := String(talk.get("girl", ""))
+		var gname := String((KuroData.GIRLS.get(gid, {}) as Dictionary).get("name", gid))
+		var tb := Rect2((sz.x - 280) * 0.5, sz.y - 150, 280, 50)
+		_panel(tb, Color(CYAN.r * 0.2, CYAN.g * 0.18, CYAN.b * 0.22, 0.96), CYAN, 14, 2.0)
+		var tl := "▶  %s と話す" % gname
+		var tlw := font.get_string_size(tl, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
+		_txt(font, Vector2(tb.position.x + (280 - tlw) * 0.5, tb.position.y + 32), tl, 18, TEXT)
+		_hits.append({"rect": tb, "id": "talk"})
 
 	# 店に戻るボタン（最下部固定）
 	var bw2 := 280.0
