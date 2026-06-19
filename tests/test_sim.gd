@@ -63,6 +63,7 @@ func _test_scripts_compile() -> void:
 	print("[compile]")
 	for path in ["res://main.gd", "res://legacy/main_legacy.gd",
 			"res://src/ui/hd2d_view.gd", "res://src/ui/home_overlay.gd", "res://src/ui/dive_overlay.gd",
+			"res://src/ui/menu_overlay.gd", "res://src/ui/member_view.gd",
 			"res://src/ui/ui_theme.gd", "res://src/ui/ds.gd",
 			"res://src/ui/dive_view.gd", "res://src/sim/shop.gd", "res://src/sim/sim.gd",
 			"res://src/sim/memory_data.gd"]:
