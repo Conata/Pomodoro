@@ -34,7 +34,7 @@ const NPCS := [
 
 const CAM_HEIGHT := 8.0            # カメラの高さ（高/距離 で見下ろし角が決まる ≈ 42°）
 const CAM_DIST_MIN := 6.0
-const CAM_DIST_MAX := 14.0
+const CAM_DIST_MAX := 26.0
 
 var _sub: SubViewport
 var _cam: Camera3D
@@ -72,6 +72,8 @@ var _cam_dist_target := 9.0
 var _force_moving := false         # スクショ撮影用：入力なしでも歩行アニメを再生
 var _cam_height := CAM_HEIGHT       # カメラ高さ（俯瞰アングル時に上げる）
 var _cam_target_override = null      # Vector3 指定で注視点を固定（home の据置構図用）
+var _mouse_dragging := false         # 右/中ボタンでドラッグ中フラグ
+const CAM_DRAG_SENSITIVITY := 0.006  # rad/px：右ドラッグでヨー回転
 
 
 func _ready() -> void:
@@ -122,7 +124,8 @@ func _ready() -> void:
 	set_process_input(true)
 
 
-## Q/E でカメラを 90° 回転、R/F でズーム（押した瞬間だけ反応・リピート無視）。
+## カメラ操作：Q/E で 90° 回転、R/F でズーム（キーボード）。
+## 右クリック/中クリックドラッグでヨー回転、スクロールホイールでズーム（マウス）。
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
@@ -130,6 +133,18 @@ func _input(event: InputEvent) -> void:
 			KEY_E: _cam_yaw_target += PI * 0.5
 			KEY_R: _cam_dist_target = clampf(_cam_dist_target - 2.0, CAM_DIST_MIN, CAM_DIST_MAX)
 			KEY_F: _cam_dist_target = clampf(_cam_dist_target + 2.0, CAM_DIST_MIN, CAM_DIST_MAX)
+	elif event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		match mb.button_index:
+			MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE:
+				_mouse_dragging = mb.pressed
+			MOUSE_BUTTON_WHEEL_UP:
+				_cam_dist_target = clampf(_cam_dist_target - 1.5, CAM_DIST_MIN, CAM_DIST_MAX)
+			MOUSE_BUTTON_WHEEL_DOWN:
+				_cam_dist_target = clampf(_cam_dist_target + 1.5, CAM_DIST_MIN, CAM_DIST_MAX)
+	elif event is InputEventMouseMotion and _mouse_dragging:
+		var motion := event as InputEventMouseMotion
+		_cam_yaw_target += motion.relative.x * CAM_DRAG_SENSITIVITY
 
 
 func _build_viewport() -> void:
@@ -1147,14 +1162,23 @@ func _char_bob(moving: bool, phase: float) -> float:
 func _process(delta: float) -> void:
 	_pulse += delta
 
-	# ── 入力（WASD / 矢印）でプレイヤー移動。カメラ相対（奥行き=Z-, 横=X）──
-	# home はジオラマなのでオーナーは動かさない（店番として固定）。
+	# ── 入力（WASD / 矢印）──
+	# home はカメラ注視点のパン、それ以外はプレイヤー移動。
 	var iv := Vector2.ZERO
-	if stage_theme != "home":
-		if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): iv.y -= 1.0
-		if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): iv.y += 1.0
-		if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): iv.x -= 1.0
-		if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): iv.x += 1.0
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): iv.y -= 1.0
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): iv.y += 1.0
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): iv.x -= 1.0
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): iv.x += 1.0
+	# home：WASD で注視点パン（カメラ方向相対）
+	if stage_theme == "home" and iv != Vector2.ZERO and _cam_target_override != null:
+		var basis := Basis(Vector3.UP, _cam_yaw)
+		var fwd   := basis * Vector3(0, 0, -1)
+		var right  := basis * Vector3(1, 0, 0)
+		var move   := (fwd * -iv.y + right * iv.x).normalized() * 5.0 * delta
+		_cam_target_override = (_cam_target_override as Vector3) + move
+		var ct := _cam_target_override as Vector3
+		_cam_target_override = Vector3(clampf(ct.x, -10.0, 10.0), ct.y, clampf(ct.z, -12.0, 8.0))
+		iv = Vector2.ZERO  # プレイヤー移動には使わない
 	var moving := iv != Vector2.ZERO
 	var player_move := Vector3.ZERO
 	if moving:
@@ -1166,17 +1190,18 @@ func _process(delta: float) -> void:
 		_player_pos.x = clampf(_player_pos.x + player_move.x * MOVE_SPEED * delta, -GROUND_HALF, GROUND_HALF)
 		_player_pos.z = clampf(_player_pos.z + player_move.z * MOVE_SPEED * delta, -GROUND_HALF, GROUND_HALF)
 
-	# ── プレイヤーの描画（前後=walk_front/back・横=run side view・停止=idle）──
+	# ── プレイヤーの描画（前=walk_front・後=walk_back・横=walk（side）・停止=idle）──
 	var p_used := false
 	if moving:
 		var dr := _walk_dir(player_move)
 		_player_flip = bool(dr[1])
-		if dr[0] != "side":
-			var w := _walk_texture(PLAYER_ID, "walk_" + String(dr[0]))
-			if w["tex"] != null:
-				_apply_walk(_player, w)
-				_player.flip_h = _player_flip
-				p_used = true
+		# side は walk_f<n>.png、前後は walk_front/walk_back_f<n>.png
+		var anim_key := "walk" if dr[0] == "side" else "walk_" + String(dr[0])
+		var w := _walk_texture(PLAYER_ID, anim_key)
+		if w["tex"] != null:
+			_apply_walk(_player, w)
+			_player.flip_h = _player_flip
+			p_used = true
 	if not p_used:
 		_reset_billboard(_player)
 		_player_anim.update_params(1.0 if (moving or _force_moving) else 0.0)
@@ -1211,14 +1236,15 @@ func _process(delta: float) -> void:
 		_npc_sprites[i].position = _npc_pos[i] + Vector3(0, _sprite_half_h() + _char_bob(nmoving, float(i) * 0.7), 0)
 		if nmoving:
 			var dr := _walk_dir(nmove)
-			_npc_sprites[i].flip_h = bool(dr[1])   # 左右反転（side や素材無しでも効く）
-			if dr[0] != "side":
-				var w := _walk_texture(_npc_anims[i].char_id, "walk_" + String(dr[0]))
-				if w["tex"] != null:
-					_apply_walk(_npc_sprites[i], w)
-					continue
+			_npc_sprites[i].flip_h = bool(dr[1])
+			# side は walk_f<n>.png、前後は walk_front/walk_back_f<n>.png
+			var anim_key := "walk" if dr[0] == "side" else "walk_" + String(dr[0])
+			var w := _walk_texture(_npc_anims[i].char_id, anim_key)
+			if w["tex"] != null:
+				_apply_walk(_npc_sprites[i], w)
+				continue
 		_reset_billboard(_npc_sprites[i])
-		_npc_anims[i].update_params(1.0 if nmoving else 0.0)  # 横/素材無しは run、停止は idle
+		_npc_anims[i].update_params(1.0 if nmoving else 0.0)  # テクスチャ無しは run、停止は idle
 		_npc_anims[i].tick(delta)
 		_npc_sprites[i].texture = _tex(_npc_anims[i].current_path())
 

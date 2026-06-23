@@ -275,7 +275,12 @@ func _on_menu_action(id: String) -> void:
 	var parts := id.split(":")
 	var verb := parts[0]
 	# パラメータ付きの動詞は引数欠落なら無視（不正IDでの添字アクセス防止）。
-	var need := {"buy": 2, "ship": 2, "keeper": 2, "menu": 2, "renov": 2, "skill": 3, "tree": 3}
+	var need := {
+		"buy": 2, "ship": 2, "keeper": 2, "menu": 2, "renov": 2,
+		"skill": 3, "tree": 3, "bag_store": 2, "salvage_bag": 2,
+		"reroll_storage": 2, "salvage_storage": 2, "equip_storage": 3,
+		"socket_storage": 3, "remove_gem": 3,
+	}
 	if need.has(verb) and parts.size() < int(need[verb]):
 		return
 	var toast := ""
@@ -300,6 +305,38 @@ func _on_menu_action(id: String) -> void:
 			toast = "スキルを更新" if sim.equip_skill(parts[1], parts[2]) else "スキル枠がいっぱい"
 		"tree":
 			toast = "育成ノードを解放" if sim.tree_unlock(parts[1], parts[2]) else "欠片が足りない／条件未達"
+		"bag_all":
+			var moved := sim.bag_all_to_storage()
+			toast = "バッグから倉庫へ %d件移動" % moved
+		"bag_store":
+			toast = "倉庫へ移動" if sim.bag_to_storage(int(parts[1])) else "倉庫がいっぱい（廃材化）"
+		"synth_bag":
+			var made_bag := sim.synthesize_all()
+			toast = "バッグ合成 %d件" % made_bag if made_bag > 0 else "合成できる装備がない"
+		"bulk_salvage_bag":
+			var rb: Dictionary = sim.bulk_salvage()
+			toast = "バッグ不要品 %d件 → 廃材%d" % [int(rb.get("count", 0)), int(rb.get("dust", 0))]
+		"salvage_bag":
+			var dust_bag := sim.salvage_item(int(parts[1]))
+			toast = "分解 → 廃材%d" % dust_bag if dust_bag > 0 else "分解できない"
+		"synth_storage":
+			var made_storage := sim.synthesize_storage()
+			toast = "倉庫合成 %d件" % made_storage if made_storage > 0 else "合成できる装備がない"
+		"bulk_salvage_storage":
+			var rs: Dictionary = sim.bulk_salvage_storage()
+			toast = "倉庫不要品 %d件 → 廃材%d" % [int(rs.get("count", 0)), int(rs.get("dust", 0))]
+		"reroll_storage":
+			toast = "刻印を更新" if sim.reroll_storage(int(parts[1])) else "廃材不足／対象なし"
+		"salvage_storage":
+			var dust_storage := sim.salvage_from_storage(int(parts[1]))
+			toast = "分解 → 廃材%d" % dust_storage if dust_storage > 0 else "分解できない"
+		"equip_storage":
+			var gid := parts[2]
+			toast = "%s に装備" % KuroData.GIRLS[gid]["name"] if sim.equip_from_storage(int(parts[1]), gid) else "装備できない"
+		"socket_storage":
+			toast = "装飾を嵌めた" if sim.socket_gem(int(parts[1]), parts[2]) else "装飾できない"
+		"remove_gem":
+			toast = "装飾を外した" if sim.remove_gem(int(parts[1]), int(parts[2])) else "外せない"
 		_:
 			print("[menu] action: ", id)
 			return

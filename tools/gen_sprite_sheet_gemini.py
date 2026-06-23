@@ -446,6 +446,62 @@ def auto_slice(sheet_bytes: bytes, char: str, out_dir: Path,
     return saved
 
 
+# ── スプライト品質チェック ─────────────────────────────────────────────────
+def check_quality(char_list: list[str]) -> None:
+    """
+    生成済みスプライトの品質を簡易チェックし、崩れたものを報告する。
+    問題: コンテンツ高さが小さい（等身が低い）・上に寄っている・ほぼ空透明
+    """
+    import numpy as np
+    from PIL import Image
+
+    CANVAS_H = DOT_H * SCALE  # 192
+    MIN_CONTENT_H = int(CANVAS_H * 0.45)   # 86px 未満なら警告（全身の半分以下）
+    MAX_CENTROID_Y = 0.80  # 重心が下 20% に偏っている → 足だけの可能性
+    # 横向きポーズは高さが低くなるため除外
+    SKIP_HEIGHT_CHECK = {"die", "wall_slide", "double_jump", "dash"}
+
+    all_anims = ANIM_ORDER + WALK_DIR_ANIM_ORDER
+    suspects: list[str] = []
+
+    for char in char_list:
+        for anim in all_anims:
+            for fi in range(4):  # f0 だけチェック（f0 が無ければ終了）
+                path = OUT_BASE / char / f"{anim}_f{fi}.png"
+                if not path.exists():
+                    break
+                try:
+                    img = Image.open(path).convert("RGBA")
+                    arr = np.array(img)
+                    alpha = arr[:, :, 3]
+                    rows = np.where((alpha > 30).any(axis=1))[0]
+                    cols = np.where((alpha > 30).any(axis=0))[0]
+                    if len(rows) == 0:
+                        suspects.append(f"  ⚠ {char}/{anim}_f{fi}: 空（透明ピクセルのみ）")
+                        continue
+                    h = int(rows[-1] - rows[0])
+                    w = int(cols[-1] - cols[0])
+                    cy = float((rows[0] + rows[-1])) / 2 / CANVAS_H
+                    if h < MIN_CONTENT_H and anim not in SKIP_HEIGHT_CHECK:
+                        suspects.append(
+                            f"  ⚠ {char}/{anim}_f{fi}: 高さ{h}px（閾値{MIN_CONTENT_H}px）→ 等身低い可能性")
+                    elif cy > MAX_CENTROID_Y:
+                        suspects.append(
+                            f"  ⚠ {char}/{anim}_f{fi}: 重心{cy:.2f}（{cy*CANVAS_H:.0f}/{CANVAS_H}px）→ 足だけ?")
+                except Exception as e:
+                    suspects.append(f"  ⚠ {char}/{anim}_f{fi}: 読み込みエラー {e}")
+
+    if suspects:
+        print(f"品質チェック: {len(suspects)} 件の要注意スプライト")
+        for s in suspects:
+            print(s)
+        print()
+        print("対処: python3 tools/gen_sprite_sheet_gemini.py --char <char> --force")
+        print("      (walk_dir の場合は --walk-dir --force を追加)")
+    else:
+        print(f"品質チェック: 全スプライト OK ✓")
+
+
 # ── ドット絵変換のみ ──────────────────────────────────────────────────────
 def dotconv_file(src: Path, dst: Path, dot_w=DOT_W, dot_h=DOT_H, scale=SCALE):
     from PIL import Image
@@ -470,6 +526,8 @@ def main():
                         help="既存シート画像をスライスするだけ（パス指定）")
     parser.add_argument("--walk-dir",   action="store_true",
                         help="walk_front / walk_back の方向歩行スプライトを生成する")
+    parser.add_argument("--check",      action="store_true",
+                        help="スプライト品質チェック（崩れ・等身低いものを検出して表示）")
     parser.add_argument("--dot-w",  type=int, default=DOT_W)
     parser.add_argument("--dot-h",  type=int, default=DOT_H)
     parser.add_argument("--scale",  type=int, default=SCALE)
@@ -493,6 +551,11 @@ def main():
     char_list = list(CHARS.keys()) if args.char == "all" else [args.char]
     if args.char != "all" and args.char not in CHARS:
         sys.exit(f"ERROR: unknown char '{args.char}'")
+
+    # ── 品質チェックのみ ──
+    if args.check:
+        check_quality(char_list)
+        return
 
     # スタイル参照画像
     style_path = Path(args.style_ref) if args.style_ref else STYLE_REF_DEFAULT

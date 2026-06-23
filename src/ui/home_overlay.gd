@@ -16,6 +16,11 @@ const GOLD := Color(1.0, 0.82, 0.4)
 const TEXT := Color(0.96, 0.95, 0.98)
 const TEXT_DIM := Color(0.75, 0.76, 0.84)
 
+# バンタ（掛け合い）設定
+const HOME_CAST := ["mil", "yuzuki", "muu", "kiriko", "doctor", "nurse"]
+const BANTER_INTERVAL := 6.0   # 秒：次のセリフまでのインターバル
+const EXCHANGE_STEP  := 3.2    # 秒：掛け合いの1行表示時間
+
 const STRIP_H := 168.0   # 最下部 HD-2D フィールド帯の高さ（FieldStrip と一致させる）
 const FOOTER_H := 58.0   # 最下部フッターナビバーの高さ（旧版のボトムタブを踏襲）
 
@@ -37,6 +42,9 @@ var active_nav := "home"   # フッターでハイライトする現在地（ホ
 
 var _t := 0.0
 var _hits: Array = []
+var _banter_t   := 0.0
+var _banter_q: Array = []
+var _banter_rng := RandomNumberGenerator.new()
 
 
 func _ready() -> void:
@@ -49,11 +57,20 @@ func set_data(d: Dictionary) -> void:
 	for k in d:
 		if k in self:
 			set(k, d[k])
+	# 外部から line が差し込まれたら話者をリセットしてバンタインターバルも再起動
+	if d.has("line") and not d.has("speaker"):
+		speaker = "店主"
+	_banter_t = 0.0
 	queue_redraw()
 
 
 func _process(delta: float) -> void:
 	_t += delta
+	_banter_t += delta
+	var interval := EXCHANGE_STEP if not _banter_q.is_empty() else BANTER_INTERVAL
+	if _banter_t >= interval:
+		_banter_t = 0.0
+		_advance_banter()
 	queue_redraw()
 
 
@@ -74,6 +91,30 @@ func _gui_input(event: InputEvent) -> void:
 
 func _hit(rect: Rect2, id: String) -> void:
 	_hits.append({"rect": rect, "id": id})
+
+
+## ホームのVN窓にバンタ（掛け合い/独り言）を1行進める。
+## _banter_q が空なら新しいセリフ/掛け合いをピック。
+func _advance_banter() -> void:
+	if not _banter_q.is_empty():
+		var ln: Array = _banter_q.pop_front()
+		var gid := String(ln[0])
+		speaker = String((KuroData.GIRLS.get(gid, {}) as Dictionary).get("name", gid))
+		line = String(ln[1])
+		return
+	# 30% 確率で掛け合い、70% で独り言
+	if _banter_rng.randf() < 0.3:
+		var ex := Banter.pick_exchange(HOME_CAST, _banter_rng)
+		if not ex.is_empty():
+			_banter_q = Array(ex["lines"])
+			_advance_banter()
+			return
+	var pick := Banter.pick("idle", HOME_CAST, _banter_rng)
+	if pick.is_empty():
+		return
+	var gid := String(pick["girl"])
+	speaker = String((KuroData.GIRLS.get(gid, {}) as Dictionary).get("name", gid))
+	line = String(pick["text"])
 
 
 func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:

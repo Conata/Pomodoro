@@ -31,12 +31,16 @@ const PANEL_TITLES := {
 	"member": "メンバー — 編成・育成",
 	"market": "市場 — 闇市と交易船",
 	"management": "経営 — 今夜の仕込み",
-	"workshop": "工房 — 改装ツリー",
+	"renov": "経営 — 改装ツリー",
+	"workshop": "工房 — Cube 装備加工",
 }
 
 var sim = null                 # KuroSim 参照（main.gd が bind() で渡す）
 var panel := "member"          # 表示中のパネル
 var _sel_girl := "mil"         # メンバー画面で選択中の子
+var _work_view := "storage"     # 工房: storage / bag
+var _work_item_id := -1         # 工房で選択中の装備ID
+var _work_gem := "em_core"      # 工房で選択中のソケット素材
 var _toast := ""
 var _toast_t := 0.0
 var _t := 0.0
@@ -98,6 +102,19 @@ func _gui_input(event: InputEvent) -> void:
 func _local(id: String) -> void:
 	if id.begins_with("_selg:"):
 		_sel_girl = id.substr(6)
+		queue_redraw()
+	elif id.begins_with("_panel:"):
+		panel = id.substr(7)
+		queue_redraw()
+	elif id.begins_with("_work:"):
+		_work_view = id.substr(6)
+		_work_item_id = -1
+		queue_redraw()
+	elif id.begins_with("_selitem:"):
+		_work_item_id = int(id.substr(9))
+		queue_redraw()
+	elif id.begins_with("_selgem:"):
+		_work_gem = id.substr(8)
 		queue_redraw()
 
 
@@ -175,6 +192,7 @@ func _draw() -> void:
 			"member": _draw_member(font, sz)
 			"market": _draw_market(font, sz)
 			"management": _draw_management(font, sz)
+			"renov": _draw_renov(font, sz)
 			"workshop": _draw_workshop(font, sz)
 	_draw_footer(font, sz)
 	_draw_toast(font, sz)
@@ -430,6 +448,7 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 	_txt(font, Vector2(16, y), "扉の方針", 15, GOLD)
 	var door_open: bool = String(m["door"]) == "open"
 	_btn(font, Rect2(140, y - 18, 110, 32), "開ける" if door_open else "見送る", PURPLE if door_open else TEXT_DIM, "door", true, 14)
+	_btn(font, Rect2(264, y - 18, 132, 32), "改装ツリー", CYAN, "_panel:renov", true, 14)
 	y += 26
 
 	# 献立デッキ
@@ -462,11 +481,131 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 		_hit(r, "menu:" + rid)
 
 
-# ── 工房（改装ツリー・マップ）────────────────────────────────────────────────
+# ── 工房（Cube: 装備加工）────────────────────────────────────────────────────
 
 func _draw_workshop(font: Font, sz: Vector2) -> void:
 	var y := HEADER_H + 12.0
 	var s: Dictionary = sim.state
+	_txt(font, Vector2(16, y), "Cube: 倉庫・分解・合成・刻印・装飾をここに集約", 14, TEXT_DIM)
+	y += 26
+
+	# 資源とビュー切替
+	_panel(Rect2(12, y, sz.x - 24, 58), Color(0.045, 0.06, 0.08, 0.96), Color(CYAN.r, CYAN.g, CYAN.b, 0.35), 10)
+	_txt(font, Vector2(26, y + 25), "倉庫 %d/%d   バッグ %d/%d   廃材 %d" % [
+			(s["storage"] as Array).size(), KuroData.STORAGE_MAX,
+			(s["inventory"] as Array).size(), KuroData.BAG_MAX,
+			int(s["scrap"])], 15, CYAN)
+	_btn(font, Rect2(sz.x - 246, y + 12, 108, 34), "倉庫", CYAN, "_work:storage", _work_view != "storage", 14)
+	_btn(font, Rect2(sz.x - 130, y + 12, 108, 34), "バッグ", GOLD, "_work:bag", _work_view != "bag", 14)
+	y += 72
+
+	# 一括操作
+	if _work_view == "storage":
+		_btn(font, Rect2(12, y, 110, 34), "合成", PURPLE, "synth_storage", true, 14)
+		_btn(font, Rect2(132, y, 132, 34), "不要分解", PINK, "bulk_salvage_storage", true, 14)
+	else:
+		_btn(font, Rect2(12, y, 132, 34), "全て倉庫へ", CYAN, "bag_all", not (s["inventory"] as Array).is_empty(), 14)
+		_btn(font, Rect2(154, y, 132, 34), "バッグ合成", PURPLE, "synth_bag", true, 14)
+		_btn(font, Rect2(296, y, 132, 34), "不要分解", PINK, "bulk_salvage_bag", true, 14)
+	y += 46
+
+	var list: Array = s["storage"] if _work_view == "storage" else s["inventory"]
+	var shown := mini(list.size(), 7)
+	_txt(font, Vector2(16, y), "装備リスト（%s）" % ("倉庫" if _work_view == "storage" else "バッグ"), 15, TEXT)
+	y += 16
+	var row_h := 48.0
+	var selected := {}
+	var selected_idx := -1
+	for i in shown:
+		var it: Dictionary = list[i]
+		var iid := int(it["id"])
+		if iid == _work_item_id:
+			selected = it
+			selected_idx = i
+		var grade := int(it["grade"])
+		var col := KuroData.equip_grade_color(grade)
+		var r := Rect2(12, y + i * (row_h + 6), sz.x * 0.58, row_h)
+		var active := iid == _work_item_id
+		_panel(r, Color(0.06, 0.065, 0.09, 0.95), col if active else Color(col.r, col.g, col.b, 0.38), 8, 2.0 if active else 1.0)
+		var tx := r.position.x + 12.0
+		if _draw_icon("res://assets/generated/equip/%s.png" % String(it["slot"]), Rect2(r.position.x + 8, r.position.y + 8, 32, 32), col):
+			tx += 38.0
+		_txt(font, Vector2(tx, r.position.y + 20), SimItems.display_name(it), 14, col)
+		_txt(font, Vector2(tx, r.position.y + 39), "%s  score %.1f  %s" % [
+				SimItems.GRADES[grade]["name"], float(it["score"]), SimItems.affix_text(it)], 11, TEXT_DIM)
+		_hit(r, "_selitem:%d" % iid)
+	if list.size() > shown:
+		_txt(font, Vector2(18, y + shown * (row_h + 6) + 18), "…他 %d件" % (list.size() - shown), 12, TEXT_DIM)
+
+	# 詳細・加工パネル
+	var dx := sz.x * 0.62
+	var dw := sz.x - dx - 12
+	_panel(Rect2(dx, y, dw, 372), Color(0.055, 0.055, 0.085, 0.94), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.45), 12)
+	if selected.is_empty() and not list.is_empty():
+		selected = list[0]
+		selected_idx = 0
+	if selected.is_empty():
+		_txt(font, Vector2(dx + 18, y + 34), "装備がありません", 18, TEXT)
+		_txt(font, Vector2(dx + 18, y + 62), "潜行・交易船・箱で装備を入手すると、ここで加工できます。", 13, TEXT_DIM, HORIZONTAL_ALIGNMENT_LEFT, dw - 36)
+	else:
+		_draw_workshop_detail(font, Rect2(dx + 14, y + 14, dw - 28, 344), selected, selected_idx, _work_view)
+
+
+func _draw_workshop_detail(font: Font, rect: Rect2, item: Dictionary, idx: int, source: String) -> void:
+	var grade := int(item["grade"])
+	var col := KuroData.equip_grade_color(grade)
+	var y := rect.position.y
+	var x := rect.position.x
+	_txt(font, Vector2(x, y + 18), SimItems.display_name(item), 17, col)
+	_txt(font, Vector2(x, y + 42), "%s / %s / score %.1f" % [
+			SimItems.GRADES[grade]["name"], SimItems.SLOTS[item["slot"]]["name"], float(item["score"])], 13, TEXT_DIM)
+	var sum := SimItems.stat_summary(item)
+	_txt(font, Vector2(x, y + 76), "base %.1f   攻+%d%%  体+%d%%  速+%d%%" % [
+			float(sum["base"]), int(sum["atk"]), int(sum["hp"]), int(sum["spd"])], 13, TEXT)
+	_txt(font, Vector2(x, y + 98), "金+%d%%  材+%d%%  会+%d%%" % [
+			int(sum["gold"]), int(sum["mat"]), int(sum["crit"])], 13, TEXT)
+
+	y += 122
+	if source == "bag":
+		_btn(font, Rect2(x, y, 128, 32), "倉庫へ", CYAN, "bag_store:%d" % int(item["id"]), true, 13)
+		_btn(font, Rect2(x + 138, y, 118, 32), "分解", PINK, "salvage_bag:%d" % int(item["id"]), true, 13)
+		return
+
+	_btn(font, Rect2(x, y, 110, 32), "刻印", PURPLE, "reroll_storage:%d" % int(item["id"]), int(sim.state["scrap"]) >= SimItems.REROLL_COST, 13)
+	_btn(font, Rect2(x + 120, y, 110, 32), "分解", PINK, "salvage_storage:%d" % int(item["id"]), true, 13)
+	y += 44
+
+	_txt(font, Vector2(x, y), "装備先", 13, TEXT_DIM)
+	y += 8
+	var ids: Array = KuroData.GIRL_ORDER
+	for i in mini(ids.size(), 6):
+		var gid: String = ids[i]
+		var gx := x + (i % 3) * 86
+		var gy := y + 10 + int(i / 3) * 36
+		_btn(font, Rect2(gx, gy, 76, 28), String(KuroData.GIRLS[gid]["name"]), KuroData.GIRLS[gid]["color"], "equip_storage:%d:%s" % [int(item["id"]), gid], true, 11)
+	y += 90
+
+	var cap := SimItems.socket_capacity(grade)
+	var sockets: Array = item.get("sockets", [])
+	_txt(font, Vector2(x, y), "装飾ソケット %d/%d" % [sockets.size(), cap], 13, TEXT_DIM)
+	y += 10
+	var gems: Array = KuroData.SOCKET_GEMS.keys()
+	for i in mini(gems.size(), 4):
+		var gem: String = gems[i]
+		var active := gem == _work_gem
+		_btn(font, Rect2(x + i * 78, y + 10, 70, 28), String(KuroData.SOCKET_GEMS[gem]["name"]).substr(0, 4), GOLD if active else TEXT_DIM, "_selgem:%s" % gem, not active, 10)
+	y += 48
+	_btn(font, Rect2(x, y, 112, 32), "嵌める", GREEN, "socket_storage:%d:%s" % [idx, _work_gem], cap > sockets.size(), 13)
+	_btn(font, Rect2(x + 122, y, 112, 32), "外す", TEXT_DIM, "remove_gem:%d:0" % idx, not sockets.is_empty(), 13)
+
+
+# ── 経営サブビュー（改装ツリー・マップ）──────────────────────────────────────
+
+func _draw_renov(font: Font, sz: Vector2) -> void:
+	var y := HEADER_H + 12.0
+	var s: Dictionary = sim.state
+	_btn(font, Rect2(12, y, 132, 34), "← 仕込みへ", PURPLE, "_panel:management", true, 14)
+	y += 48
 	_txt(font, Vector2(16, y), "改装ツリー（ゴールドで解放・隣接から伸ばす）", 14, TEXT_DIM)
 	y += 22
 
@@ -538,6 +677,8 @@ func _draw_footer(font: Font, sz: Vector2) -> void:
 		_hit(Rect2(x0, fy, cw, FOOTER_H), id)
 		var col: Color = e["col"]
 		var active := id == panel
+		if panel == "renov" and id == "management":
+			active = true
 		if active:
 			draw_rect(Rect2(x0, fy, cw, FOOTER_H), Color(col.r, col.g, col.b, 0.10))
 			draw_rect(Rect2(x0, fy, cw, 2.0), col)

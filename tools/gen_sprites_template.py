@@ -123,37 +123,59 @@ def _grid_dims(frame_count: int) -> tuple[int, int]:
     return cols, rows
 
 
+STRIP_MAX_FRAMES = 12   # これ以下のフレーム数は1行ストリップ、超えるとグリッド
+
+
 def build_prompt(anim: str, frame_count: int, char_desc: str) -> str:
-    fw   = TMPL_W * TMPL_UPSCALE   # 128  (1フレーム幅)
-    fh   = TMPL_H * TMPL_UPSCALE   # 256  (高さ)
-    cols, rows = _grid_dims(frame_count)
-    total_w = cols * fw
-    total_h = rows * fh
+    fw = TMPL_W * TMPL_UPSCALE   # 128
+    fh = TMPL_H * TMPL_UPSCALE   # 256
+
+    use_grid = frame_count > STRIP_MAX_FRAMES
+    if use_grid:
+        cols, rows = _grid_dims(frame_count)
+        total_w    = cols * fw
+        total_h    = rows * fh
+        layout_desc = (
+            f"arranged as a {cols}-column × {rows}-row grid "
+            f"(left-to-right, top-to-bottom), each cell {fw}×{fh}px"
+        )
+        output_spec = (
+            f"  - Total image: {total_w}×{total_h}px\n"
+            f"  - {cols}×{rows} grid, each cell {fw}×{fh}px, MAGENTA background\n"
+        )
+        size_line = f"{total_w}×{total_h}px"
+    else:
+        cols, rows = frame_count, 1
+        total_w    = frame_count * fw
+        total_h    = fh
+        layout_desc = (
+            f"laid out as a single horizontal row of {frame_count} frames, "
+            f"each frame {fw}×{fh}px, left to right"
+        )
+        output_spec = (
+            f"  - Total image: {total_w}×{total_h}px\n"
+            f"  - Single row of {frame_count} frames, each {fw}×{fh}px, MAGENTA background\n"
+        )
+        size_line = f"{total_w}×{total_h}px"
+
     return (
         f"You are given TWO images:\n"
-        f"  Image 1 = a pixel art sprite sheet template: "
-        f"{frame_count} frames of a '{anim}' animation cycle, "
-        f"each frame is {fw}x{fh}px, laid out as a {cols}-column × {rows}-row grid "
-        f"(left to right, top to bottom).\n"
-        f"  Image 2 = the character design to use (colors and outfit)\n\n"
-        f"Your task: RECOLOR / RESTYLE Image 1 using the character from Image 2.\n\n"
-        f"CRITICAL — what you MUST do:\n"
-        f"  1. Use Image 1 as an exact POSE TEMPLATE. For every cell, "
-        f"reproduce the EXACT same body pose: head tilt, arm/leg positions, "
-        f"foot placement. Poses must match Image 1 frame-for-frame.\n"
-        f"  2. Apply the character design from Image 2: {char_desc}\n"
-        f"  3. Keep the same pixel art style: blocky pixels, thick black outlines, "
-        f"flat limited color palette.\n\n"
-        f"CRITICAL — grid layout:\n"
-        f"  - Output EXACTLY {cols} columns × {rows} rows of frames\n"
-        f"  - Each cell is EXACTLY {fw}×{fh}px — no partial cells\n"
-        f"  - Each cell has a solid MAGENTA (#FF00FF) background\n"
-        f"  - NO content bleeds outside its cell boundary\n\n"
-        f"Output specifications:\n"
-        f"  - Total image: {total_w}×{total_h}px\n"
-        f"  - {cols}×{rows} grid, each cell {fw}×{fh}px, MAGENTA background\n"
-        f"  - No text, no labels, no borders between cells\n\n"
-        f"Output the {total_w}×{total_h}px sprite sheet now."
+        f"  Image 1 = a pixel art sprite sheet with {frame_count} frames "
+        f"of '{anim}' animation, {layout_desc}.\n"
+        f"  Image 2 = a character design reference.\n\n"
+        f"Your task: TRACE Image 1 exactly — repaint each sprite cell with the character "
+        f"from Image 2, keeping every pose and silhouette IDENTICAL to Image 1.\n\n"
+        f"Think of it as a PALETTE SWAP + outfit redraw:\n"
+        f"  - Keep every pixel POSITION identical to Image 1\n"
+        f"  - Change ONLY: skin tone, hair, eye color, outfit colors → {char_desc}\n"
+        f"  - Do NOT move any body part, change any pose, or alter expressions\n"
+        f"  - Do NOT add or remove limbs, accessories, or effects\n"
+        f"  - Preserve the EXACT pixel art style: same outline thickness, same color count\n\n"
+        f"Layout (must match Image 1 exactly):\n"
+        f"{output_spec}"
+        f"  - MAGENTA (#FF00FF) background everywhere\n"
+        f"  - No text, no labels, no borders\n\n"
+        f"Output the {size_line} traced sprite sheet now."
     )
 
 
@@ -243,117 +265,197 @@ def _pixelate_sprite(img: "Image.Image", dot_w: int, dot_h: int, scale: int) -> 
 
 
 # ── スライス ──────────────────────────────────────────────────────────────
+def _find_col_boundaries(
+    img_arr: "np.ndarray",
+    sw: int,
+    frame_count: int,
+    min_gap_ratio: float = 0.5,
+    min_gap_w: int = 3,
+    merge_dist: int = 10,
+) -> list[tuple[int, int]]:
+    """
+    マゼンタ背景の画像からフレーム列境界を検出する。
+    1. マゼンタ率が高い列をセパレータとして検出
+    2. 近接セパレータをマージ
+    3. コンテンツブロブを取得
+    4. ブロブを width 比でフレームに分割
+    Returns: [(x0, x1), ...] の長さ frame_count のリスト
+    """
+    import numpy as np
+
+    r = img_arr[..., 0].astype(int)
+    g = img_arr[..., 1].astype(int)
+    b = img_arr[..., 2].astype(int)
+    is_mg   = (r > 150) & (b > 150) & (g < 80)
+    col_mg  = is_mg.mean(axis=0)  # マゼンタ率 per column
+
+    is_sep = col_mg >= min_gap_ratio
+
+    # セパレータ区間の収集
+    sep_ranges: list[tuple[int, int]] = []
+    in_sep = False
+    ss = 0
+    for x in range(sw):
+        if is_sep[x]:
+            if not in_sep:
+                ss = x
+                in_sep = True
+        else:
+            if in_sep:
+                if x - ss >= min_gap_w:
+                    sep_ranges.append((ss, x - 1))
+                in_sep = False
+    if in_sep and sw - ss >= min_gap_w:
+        sep_ranges.append((ss, sw - 1))
+
+    # 近接セパレータをマージ
+    if sep_ranges:
+        merged: list[tuple[int, int]] = [sep_ranges[0]]
+        for s, e in sep_ranges[1:]:
+            if s - merged[-1][1] <= merge_dist:
+                merged[-1] = (merged[-1][0], e)
+            else:
+                merged.append((s, e))
+    else:
+        merged = []
+
+    # コンテンツ領域の抽出（10px 未満は除外）
+    content_regions: list[tuple[int, int]] = []
+    prev_end = 0
+    for ss, se in merged:
+        if ss - prev_end >= 10:
+            content_regions.append((prev_end, ss - 1))
+        prev_end = se + 1
+    if sw - prev_end >= 10:
+        content_regions.append((prev_end, sw - 1))
+
+    n_blobs = len(content_regions)
+
+    if n_blobs == 0:
+        # セパレータなし → 等分割
+        fw = sw // frame_count
+        return [(i * fw, min(sw - 1, (i + 1) * fw - 1)) for i in range(frame_count)]
+
+    # ブロブ数 > frame_count → 最小ギャップで隣接ブロブをマージ
+    while len(content_regions) > frame_count:
+        min_gap = float("inf")
+        min_i   = 0
+        for i in range(len(content_regions) - 1):
+            gap = content_regions[i + 1][0] - content_regions[i][1] - 1
+            if gap < min_gap:
+                min_gap = gap
+                min_i   = i
+        content_regions[min_i] = (content_regions[min_i][0], content_regions[min_i + 1][1])
+        content_regions.pop(min_i + 1)
+    n_blobs = len(content_regions)
+
+    # ブロブごとの期待フレーム数を幅比で計算
+    total_content = sum(e - s + 1 for s, e in content_regions)
+    avg_fw = total_content / frame_count
+
+    frames_per_blob = [max(1, round((e - s + 1) / avg_fw)) for s, e in content_regions]
+
+    # 合計が frame_count になるよう補正
+    diff = sum(frames_per_blob) - frame_count
+    while diff > 0:
+        # 割り当て過剰なブロブから削る（正規化残差が最大のもの）
+        candidates = [
+            ((frames_per_blob[i] - (content_regions[i][1] - content_regions[i][0] + 1) / avg_fw), i)
+            for i in range(n_blobs)
+            if frames_per_blob[i] > 1
+        ]
+        if not candidates:
+            break
+        _, idx = max(candidates)
+        frames_per_blob[idx] -= 1
+        diff -= 1
+    while diff < 0:
+        # 割り当て不足なブロブに追加（正規化不足が最大のもの）
+        candidates = [
+            ((content_regions[i][1] - content_regions[i][0] + 1) / avg_fw - frames_per_blob[i], i)
+            for i in range(n_blobs)
+        ]
+        _, idx = max(candidates)
+        frames_per_blob[idx] += 1
+        diff += 1
+
+    # 各ブロブを frames_per_blob[i] 等分
+    boundaries: list[tuple[int, int]] = []
+    for blob_idx, (bs, be) in enumerate(content_regions):
+        n  = frames_per_blob[blob_idx]
+        bw = be - bs + 1
+        for i in range(n):
+            x0 = bs + int(i * bw / n)
+            x1 = bs + int((i + 1) * bw / n) - 1 if i < n - 1 else be
+            boundaries.append((x0, x1))
+
+    return boundaries
+
+
 def slice_strip(
     strip_bytes: bytes, char: str, anim: str,
     frame_count: int, out_dir: Path, force: bool = False,
+    use_grid: bool | None = None,   # None = 自動判定, True/False = 強制
 ) -> list[str]:
     """
-    生成されたストリップを frame_count 等分してフレームとして保存する。
+    生成されたストリップを frame_count フレームに分割して保存する。
     マゼンタキー＋底辺アンカーを適用。
+    ブロブ検出によりキャラが密着していても正確に分割する。
     """
     import numpy as np
     from PIL import Image
     img = Image.open(io.BytesIO(strip_bytes)).convert("RGBA")
     sw, sh = img.size
 
-    # ── フレーム境界の自動検出 ──────────────────────────────────────────────
-    # マゼンタキー後の alpha を使って「全列がほぼ透明」な x 列を区切りと見なす
-    keyed = _magenta_key(img)
-    arr   = np.array(keyed)
-    alpha = arr[:, :, 3]
-    # 各列の不透明ピクセル数
-    col_opaque = (alpha > 30).sum(axis=0)   # shape: (sw,)
-
-    # 境界候補: 不透明ピクセルが 0 の列（マゼンタ縦ライン）
-    is_bg_col = col_opaque == 0
-
-    # 最小ギャップ幅 = GAP_PX の半分（キャラ内部の小さな透明部分を誤検出しないため）
-    MIN_GAP_W = max(4, GAP_PX // 2)
-
-    # 連続するゼロ範囲のうち MIN_GAP_W 以上のものだけをフレーム境界とする
-    starts = []
-    ends   = []
-    in_sprite = False
-    gap_start = None
-    for x in range(sw):
-        if not in_sprite:
-            if not is_bg_col[x]:
-                starts.append(x)
-                in_sprite = True
-                gap_start = None
-        else:
-            if is_bg_col[x]:
-                if gap_start is None:
-                    gap_start = x
-            else:
-                if gap_start is not None:
-                    gap_w = x - gap_start
-                    if gap_w >= MIN_GAP_W:
-                        # 十分広いギャップ → フレーム境界
-                        ends.append(gap_start - 1)
-                        starts.append(x)
-                    # 狭いギャップはキャラ内部の透明部分として無視
-                    gap_start = None
-    if in_sprite:
-        ends.append(sw - 1)
-
-    segs = list(zip(starts, ends))
-    n    = len(segs)
-
-    if n >= max(1, frame_count - 2):
-        # 検出数が期待値に近い → バウンディングボックス境界をそのまま使用
-        bounds = [(max(0, s - 4), min(sw, e + 5)) for s, e in segs]
-        actual = len(bounds)
-        label  = f"  → 自動検出 {actual}f" if actual == frame_count else f"  → 検出 {actual}f (要求 {frame_count}f)"
-        print(label, end=" ")
-    elif n > 0:
-        # 検出数が少ない（キャラが接触してブロブ化）→ 検出数で等分割
-        # 期待数ではなく実際の検出数で割る（期待数で割るとキャラの中を切断する）
-        fw     = sw // n
-        bounds = [(i * fw, min(sw, (i + 1) * fw)) for i in range(n)]
-        print(f"  → 等分割 {n}f/{sw}px×{fw} (接触検出、要求 {frame_count}f)", end=" ")
-    else:
-        # 何も検出できなかった → 期待数で等分割（最終手段）
-        fw     = sw // frame_count
-        bounds = [(i * fw, (i + 1) * fw) for i in range(frame_count)]
-        print(f"  → 等分割フォールバック {frame_count}f (検出0)", end=" ")
-
-    # ── グリッド形式を自動検出（strip が 1行より背が高い場合） ──────────────
-    # グリッドの場合: 等分割で cols × rows を決める
+    # ── グリッド形式判定 ────────────────────────────────────────────────────
     cols, rows = _grid_dims(frame_count)
-    fw_grid = sw // cols
     fh_grid = sh // rows if rows > 1 else sh
+    fw_grid = sw // cols
 
-    if rows > 1 and abs(sh - fh_grid * rows) < 4:
-        # グリッド形式が検出された
-        bounds_grid = [
-            (c * fw_grid, r * fh_grid, (c + 1) * fw_grid, (r + 1) * fh_grid)
-            for r in range(rows) for c in range(cols)
-        ]
-        # 最後の不完全セル（frame_count が cols×rows に満たない）を除外
-        bounds_grid = bounds_grid[:frame_count]
-        print(f"  → グリッド {cols}×{rows} ({fw_grid}×{fh_grid}px/cell)", end=" ")
+    if use_grid is None:
+        use_grid = frame_count > STRIP_MAX_FRAMES
+
+    portrait_cell = (fh_grid > fw_grid * 0.8)
+    is_grid = use_grid and (rows > 1) and portrait_cell
+
+    if is_grid:
+        # グリッド: 行0のみで列境界を検出（全行合算だとmagneta率が下がり誤検出する）
+        arr      = np.array(img)
+        row0_arr = arr[:fh_grid, :, :]   # 行0のみ
+        col_bounds = _find_col_boundaries(row0_arr, sw, cols)
+        print(f"  → グリッド {cols}×{rows} blob検出(row0)", end=" ")
+
         out_dir.mkdir(parents=True, exist_ok=True)
         saved = []
-        for fi, (x0, y0, x1, y1) in enumerate(bounds_grid):
-            dst = out_dir / f"{anim}_f{fi}.png"
-            if dst.exists() and not force:
-                continue
-            cell = img.crop((x0, y0, x1, y1)).convert("RGBA")
-            cell = _magenta_key(cell)
-            cell = _pixelate_sprite(cell, DOT_W, DOT_H, SCALE)
-            cell.save(dst)
-            saved.append(dst.name)
+        for r in range(rows):
+            y0 = r * fh_grid
+            y1 = (r + 1) * fh_grid if r < rows - 1 else sh
+            for c, (x0, x1) in enumerate(col_bounds[:cols]):   # cols でキャップ
+                fi = r * cols + c
+                if fi >= frame_count:
+                    break
+                dst = out_dir / f"{anim}_f{fi}.png"
+                if dst.exists() and not force:
+                    continue
+                cell = img.crop((x0, y0, x1 + 1, y1)).convert("RGBA")
+                cell = _magenta_key(cell)
+                cell = _pixelate_sprite(cell, DOT_W, DOT_H, SCALE)
+                cell.save(dst)
+                saved.append(dst.name)
         return saved
 
     # ── 1行ストリップ ────────────────────────────────────────────────────────
+    arr    = np.array(img)
+    bounds = _find_col_boundaries(arr, sw, frame_count)
+    print(f"  → ストリップ{frame_count}f blob検出({len(bounds)})", end=" ")
+
     out_dir.mkdir(parents=True, exist_ok=True)
     saved = []
-    for fi, (x0, x1) in enumerate(bounds):
+    for fi, (x0, x1) in enumerate(bounds[:frame_count]):
         dst = out_dir / f"{anim}_f{fi}.png"
         if dst.exists() and not force:
             continue
-        frame = img.crop((x0, 0, x1, sh)).convert("RGBA")
+        frame = img.crop((x0, 0, x1 + 1, sh)).convert("RGBA")
         frame = _magenta_key(frame)
         frame = _pixelate_sprite(frame, DOT_W, DOT_H, SCALE)
         frame.save(dst)
@@ -387,7 +489,8 @@ def main():
         out_dir = OUT_BASE / char
         strip_bytes = Path(args.slice_only).read_bytes()
         print(f"スライス: {args.slice_only} ({frame_count}f) → {out_dir}/")
-        saved = slice_strip(strip_bytes, char, anim, frame_count, out_dir, force=True)
+        saved = slice_strip(strip_bytes, char, anim, frame_count, out_dir, force=True,
+                            use_grid=(frame_count > STRIP_MAX_FRAMES))
         print(f"保存: {len(saved)} フレーム")
         return
 
@@ -446,7 +549,8 @@ def main():
                 raw_path.write_bytes(strip_bytes)
                 print(f"→ {raw_path.name}")
 
-            saved = slice_strip(strip_bytes, char, anim, frame_count, out_dir, args.force)
+            saved = slice_strip(strip_bytes, char, anim, frame_count, out_dir, args.force,
+                                use_grid=(frame_count > STRIP_MAX_FRAMES))
             print(f"  [{anim}] {len(saved)} フレーム保存")
 
         print()
