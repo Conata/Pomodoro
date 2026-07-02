@@ -243,6 +243,8 @@ func _process(delta: float) -> void:
 	var evs := sim.drain_events()
 	if _dive_overlay != null and _dive_overlay.has_method("add_events"):
 		_dive_overlay.add_events(evs)
+	if _dive_stage != null and _dive_stage.has_method("add_events"):
+		_dive_stage.add_events(evs)   # 実体アンカーの戦闘FX（数字・斬撃・バースト）
 	for e in evs:
 		match String(e.get("kind", "")):
 			"run_complete":

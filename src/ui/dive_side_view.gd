@@ -39,6 +39,17 @@ var _mob_hp0: Array = []          # 敵スロットの初期HP（バー比率用
 var _last_mob_count := 0
 var _shake := 0.0
 
+# ── 実体アンカーの戦闘FX（ダメージ数字・斬撃・被弾・スキルバースト）──
+var _party_pos: Array = []   # 直近フレームの味方足元（floaterの追従先）
+var _enemy_pos: Array = []   # 直近フレームの敵足元
+var _floaters: Array = []    # {txt, col, side, slot, t0, jx}
+var _slashes: Array = []     # 敵への斬撃 {slot, t0}
+var _hurt_t := -9.9          # 盾役の被弾時刻（赤フラッシュ＋ノックバック）
+var _bursts: Array = []      # スキルバースト {kind, t0}
+var _striker := -1           # 直近で「殴った」味方（踏み込み演出）
+var _strike_t := -9.9
+var _knock: Array = []       # 敵スロットのノックバック残量
+
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -90,6 +101,55 @@ func set_view(d: Dictionary) -> void:
 		_mob_hp0[i] = maxf(_mob_hp0[i], float(mobs[i]["hp"]))
 
 
+## main.gd から潜航イベントを受け取り、実体に紐づくFXへ変換する。
+## 「誰が殴って→誰に当たって→いくら出たか」の因果を1画面で読めるようにする。
+func add_events(events: Array) -> void:
+	for e in events:
+		match String(e.get("kind", "")):
+			"dmg_pop":
+				var val := int(e.get("val", 0))
+				if String(e.get("at", "enemy")) == "enemy":
+					# 与ダメ：殴り手（生存味方を巡回）が踏み込み、対象の敵に斬撃＋数字
+					var slot := randi() % maxi(mobs.size(), 1)
+					_floaters.append({"txt": "%d" % val, "col": GOLD, "side": "enemy",
+							"slot": slot, "t0": _t, "jx": randf_range(-14.0, 14.0)})
+					_slashes.append({"slot": slot, "t0": _t})
+					if slot < _knock.size():
+						_knock[slot] = 10.0
+					_striker = _next_striker()
+					_strike_t = _t
+				else:
+					# 被ダメ：盾役（先頭の生存者）の頭上に赤数字＋赤フラッシュ
+					_floaters.append({"txt": "-%d" % val, "col": Color(1.0, 0.42, 0.45), "side": "party",
+							"slot": _tank_index(), "t0": _t, "jx": randf_range(-10.0, 10.0)})
+					_hurt_t = _t
+				while _floaters.size() > 14:
+					_floaters.pop_front()
+			"fx":
+				_bursts.append({"kind": String(e.get("fx", "")), "t0": _t})
+				while _bursts.size() > 4:
+					_bursts.pop_front()
+
+
+## 次に「殴った」ことにする味方（生存者を巡回）。
+func _next_striker() -> int:
+	if party.is_empty():
+		return -1
+	for step in party.size():
+		var i := (_striker + 1 + step) % party.size()
+		if float(party[i]["hp"]) > 0.0:
+			return i
+	return -1
+
+
+## 盾役＝隊列先頭の生存者。
+func _tank_index() -> int:
+	for i in party.size():
+		if float(party[i]["hp"]) > 0.0:
+			return i
+	return 0
+
+
 func _tex(path: String) -> Texture2D:
 	if not _tex_cache.has(path):
 		_tex_cache[path] = load(path) if ResourceLoader.exists(path) else null
@@ -120,6 +180,50 @@ func _pix_tex(path: String) -> Texture2D:
 					img.set_pixel(x, y, c)
 			t = ImageTexture.create_from_image(img)
 	_pix_cache[path] = t
+	return t
+
+
+var _white_cache: Dictionary = {}
+var _top_frac_cache: Dictionary = {}  # sprite_name -> 透明ヘッドルーム比（バー/数字の吸着用）
+var _enemy_top: Array = []            # 敵スロットの見た目の頭y（used_rect補正済み）
+
+
+## スプライトの「実際に絵がある領域」の上端比率（idle f0 で代表）。
+func _top_frac(sprite_name: String) -> float:
+	if _top_frac_cache.has(sprite_name):
+		return _top_frac_cache[sprite_name]
+	var frac := 0.0
+	var tex := _mob_tex(sprite_name, "idle")
+	if tex != null:
+		var img := tex.get_image()
+		if img != null:
+			img = img.duplicate()
+			if img.is_compressed():
+				img.decompress()
+			var used := img.get_used_rect()
+			if used.size.y > 0:
+				frac = float(used.position.y) / float(img.get_height())
+	_top_frac_cache[sprite_name] = frac
+	return frac
+
+## ヒットフラッシュ用の白シルエット（α>0 を白に）。小さな敵ドットなので安価。
+func _white_tex(path_key: String, src: Texture2D) -> Texture2D:
+	if _white_cache.has(path_key):
+		return _white_cache[path_key]
+	var t: Texture2D = null
+	if src != null:
+		var img := src.get_image()
+		if img != null:
+			img = img.duplicate()
+			if img.is_compressed():
+				img.decompress()
+			img.convert(Image.FORMAT_RGBA8)
+			for y in img.get_height():
+				for x in img.get_width():
+					var c := img.get_pixel(x, y)
+					img.set_pixel(x, y, Color(1, 1, 1, 1.0 if c.a > 0.4 else 0.0))
+			t = ImageTexture.create_from_image(img)
+	_white_cache[path_key] = t
 	return t
 
 
@@ -162,20 +266,31 @@ func _draw() -> void:
 	_draw_portal(Vector2(64, gy), font)
 	_draw_goal(sz, gy)
 
-	# ===== 隊列（左→右へ行進。戦闘中は停止して攻撃モーション）=====
+	# ===== 隊列（左→右へ行進。戦闘中は停止・殴り手が踏み込む）=====
+	_party_pos.resize(party.size())
+	var strike_k := clampf(1.0 - (_t - _strike_t) / 0.30, 0.0, 1.0)   # 踏み込みの残量
+	var hurt_k := clampf(1.0 - (_t - _hurt_t) / 0.22, 0.0, 1.0)       # 被弾フラッシュの残量
 	for i in party.size():
 		var p: Dictionary = party[i]
 		var id := String(p["id"])
 		var bob := 0.0 if in_combat else absf(sin(_t * 7.0 + i * 1.1)) * 3.0
-		var lunge := (maxf(0.0, sin(_t * 3.8 + i * 0.53)) * 10.0) if in_combat else 0.0
-		var feet := Vector2(PARTY_X0 + i * PARTY_GAP + lunge, gy - bob)
+		var lunge := (maxf(0.0, sin(_t * 3.8 + i * 0.53)) * 6.0) if in_combat else 0.0
+		if i == _striker and strike_k > 0.0:
+			lunge += sin(strike_k * PI) * 34.0   # 殴り手の鋭い踏み込み（行って戻る）
+		var knock_back := (sin(hurt_k * PI) * 10.0) if (i == _tank_index() and hurt_k > 0.0) else 0.0
+		var feet := Vector2(PARTY_X0 + i * PARTY_GAP + lunge - knock_back, gy - bob)
+		_party_pos[i] = feet
 		var dead: bool = float(p["hp"]) <= 0.0
 		var tex: Texture2D = null
 		if _anims.has(id):
 			tex = _pix_tex((_anims[id] as ChibiAnim).current_path())
 		if tex == null:
 			tex = _pix_tex("res://assets/generated/sprites/%s/idle_f0.png" % id)
-		var tint := Color(0.5, 0.5, 0.58) if dead else Color(1, 1, 1)
+		var tint := Color(1, 1, 1)
+		if dead:
+			tint = Color(0.5, 0.5, 0.58)
+		elif i == _tank_index() and hurt_k > 0.0:
+			tint = Color(1.0, 1.0 - hurt_k * 0.62, 1.0 - hurt_k * 0.62)   # 被弾の赤フラッシュ
 		# 接地影
 		_blob_shadow(feet, 20.0)
 		var r := _draw_actor(tex, feet, GIRL_H, false, tint)
@@ -184,7 +299,10 @@ func _draw() -> void:
 					float(p["hp"]) / maxf(float(p["mhp"]), 1.0), HP_COL,
 					int(p.get("ready", 0)), int(p.get("slots", 0)))
 
-	# ===== 敵（右からスライドイン・左向き）=====
+	# ===== 敵（右からスライドイン・左向き・被弾で白フラッシュ＋ノックバック）=====
+	_enemy_pos.resize(mobs.size())
+	_enemy_top.resize(mobs.size())
+	_knock.resize(maxi(mobs.size(), _knock.size()))
 	if in_combat:
 		for i in mobs.size():
 			var m: Dictionary = mobs[i]
@@ -195,17 +313,120 @@ func _draw() -> void:
 			var ex := float(_enemy_x[i]) if i < _enemy_x.size() else slot_x
 			var arriving := absf(ex - slot_x) > 8.0
 			var lunge := 0.0 if arriving else maxf(0.0, sin(_t * 4.2 + i * 1.7)) * 9.0
-			var feet := Vector2(ex - lunge, gy)
+			var kn := float(_knock[i]) if _knock[i] != null else 0.0
+			if kn > 0.05:
+				_knock[i] = kn * 0.82   # ノックバックの減衰
+			var feet := Vector2(ex - lunge + kn, gy)
+			_enemy_pos[i] = feet
 			var h := BOSS_H if boss else MOB_H
 			_blob_shadow(feet, 26.0 if boss else 16.0)
-			var tex := _mob_tex(String(m.get("sprite", "goblin")), "run" if arriving else "idle")
+			var sprite_name := String(m.get("sprite", "goblin"))
+			var tex := _mob_tex(sprite_name, "run" if arriving else "idle")
 			var r := _draw_actor(tex, feet, h, true)
+			# 直近で斬られた敵は白くフラッシュ
+			for sl in _slashes:
+				if int(sl["slot"]) == i and _t - float(sl["t0"]) < 0.12:
+					var wt := _white_tex(sprite_name, tex)
+					if wt != null:
+						_draw_actor(wt, feet, h, true, Color(1, 1, 1, 0.85))
+					break
 			var hp0: float = float(_mob_hp0[i]) if i < _mob_hp0.size() else float(m["hp"])
-			_draw_head_ui(Vector2(feet.x, r.position.y - 8.0), 46.0 if boss else 32.0,
+			# 透明ヘッドルームを除いた「見た目の頭」にバーを吸着
+			var head_y := r.position.y + r.size.y * _top_frac(sprite_name)
+			_enemy_top[i] = head_y
+			_draw_head_ui(Vector2(feet.x, head_y - 8.0), 46.0 if boss else 32.0,
 					float(m["hp"]) / maxf(hp0, 1.0), Color(1.0, 0.42, 0.4), 0, 0)
+
+	_draw_combat_fx(sz, gy, font)
 
 	if _shake > 0.004:
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## 実体アンカーの戦闘FX：斬撃・スキルバースト・ダメージ数字（対象の頭上に追従）。
+func _draw_combat_fx(sz: Vector2, gy: float, font: Font) -> void:
+	# 斬撃（対象の胴で白シアンのX＋小リング）
+	var i := 0
+	while i < _slashes.size():
+		var k := (_t - float(_slashes[i]["t0"])) / 0.20
+		if k >= 1.0:
+			_slashes.remove_at(i)
+			continue
+		var slot := int(_slashes[i]["slot"])
+		var base: Vector2 = _enemy_pos[slot] if (slot < _enemy_pos.size() and _enemy_pos[slot] != null) 				else Vector2(sz.x * ENEMY_X0, gy)
+		var c := base + Vector2(0, -MOB_H * 0.55)
+		if slot < _enemy_top.size() and _enemy_top[slot] != null:
+			c = Vector2(base.x, (float(_enemy_top[slot]) + base.y) * 0.5)   # 頭と足元の中間＝胴
+		var a := 1.0 - k
+		var ln := 26.0 + 14.0 * k
+		draw_line(c + Vector2(-ln, -ln * 0.6), c + Vector2(ln, ln * 0.6), Color(1, 1, 1, a), 3.0)
+		draw_line(c + Vector2(-ln * 0.8, ln * 0.7), c + Vector2(ln * 0.8, -ln * 0.7), Color(CYAN.r, CYAN.g, CYAN.b, a * 0.9), 2.0)
+		draw_arc(c, 14.0 + 26.0 * k, 0, TAU, 20, Color(1, 1, 1, a * 0.5), 2.0)
+		i += 1
+	# スキルバースト（爆発=橙リング＋破片／雷=ジグザグ落雷／回復・歌=味方から立ち上る粒）
+	i = 0
+	while i < _bursts.size():
+		var k := (_t - float(_bursts[i]["t0"])) / 0.45
+		if k >= 1.0:
+			_bursts.remove_at(i)
+			continue
+		var kind := String(_bursts[i]["kind"])
+		var a := 1.0 - k
+		var ec := Vector2(sz.x * ENEMY_X0 + ENEMY_GAP, gy - MOB_H * 0.55)
+		var pc := Vector2(PARTY_X0 + PARTY_GAP * 2.0, gy - GIRL_H * 0.5)
+		match kind:
+			"explosion":
+				draw_arc(ec, 18.0 + 52.0 * k, 0, TAU, 24, Color(1.0, 0.62, 0.3, a), 4.0)
+				for j in 6:
+					var ang := TAU * j / 6.0 + k * 1.2
+					var d := 16.0 + 46.0 * k
+					draw_circle(ec + Vector2(cos(ang), sin(ang) * 0.7) * d, 3.0 * a + 1.0, Color(1.0, 0.75, 0.35, a))
+			"lightning":
+				var top := Vector2(ec.x + 8.0, ec.y - 210.0)
+				var pts := PackedVector2Array()
+				for j in 6:
+					var tt := j / 5.0
+					pts.append(top.lerp(ec, tt) + Vector2(sin(j * 91.7 + _t * 40.0) * 10.0 * (1.0 - tt), 0))
+				for j in 5:
+					draw_line(pts[j], pts[j + 1], Color(0.85, 0.95, 1.0, a), 3.0)
+				Kit.spot(self, ec, 60.0, Color(0.7, 0.9, 1.0), a * 0.5)
+			"heal", "song", "smoke":
+				var col := Color(0.5, 1.0, 0.6) if kind == "heal" else (Color(1.0, 0.7, 0.9) if kind == "song" else Color(0.7, 0.7, 0.75))
+				for j in 7:
+					var jx := fposmod(sin(j * 57.3) * 999.0, 1.0) * PARTY_GAP * 4.0 - PARTY_GAP * 2.0
+					var jy := -k * 46.0 - fposmod(j * 13.7, 12.0)
+					draw_circle(pc + Vector2(jx, jy), 2.6, Color(col.r, col.g, col.b, a * 0.9))
+				Kit.spot(self, pc, 70.0, col, a * 0.3)
+		i += 1
+	# ダメージ数字（対象の頭上に追従・上昇フェード）
+	i = 0
+	while i < _floaters.size():
+		var fl: Dictionary = _floaters[i]
+		var k := (_t - float(fl["t0"])) / 0.9
+		if k >= 1.0:
+			_floaters.remove_at(i)
+			continue
+		var slot := int(fl["slot"])
+		var base := Vector2(sz.x * 0.5, gy)
+		if String(fl["side"]) == "enemy":
+			if slot < _enemy_top.size() and _enemy_top[slot] != null and slot < _enemy_pos.size() and _enemy_pos[slot] != null:
+				base = Vector2((_enemy_pos[slot] as Vector2).x, float(_enemy_top[slot]) - 26.0)
+			else:
+				base += Vector2(0, -MOB_H - 26.0)
+		else:
+			if slot < _party_pos.size() and _party_pos[slot] != null:
+				base = _party_pos[slot]
+			base += Vector2(0, -GIRL_H - 30.0)
+		var e := 1.0 - pow(1.0 - k, 2.0)
+		var pos := base + Vector2(float(fl["jx"]), -e * 34.0)
+		var col: Color = fl["col"]
+		var a := 1.0 - k * k
+		var fsize := 22 if k < 0.18 else 19   # 出た瞬間だけ大きく（ポップ感）
+		var txt := String(fl["txt"])
+		var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x
+		draw_string(font, pos + Vector2(-tw * 0.5 + 1, 1), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, Color(0, 0, 0, a * 0.75))
+		draw_string(font, pos + Vector2(-tw * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, Color(col.r, col.g, col.b, a))
+		i += 1
 
 
 ## 空とネオン都市のパララックス（dist でスクロール・戦闘中は自然停止）。

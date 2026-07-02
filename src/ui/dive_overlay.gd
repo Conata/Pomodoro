@@ -44,8 +44,6 @@ var _t := 0.0
 var _hits: Array = []
 var _ripples: Array = []   # タップ波紋（Kit.ripples）
 var _log: Array = []          # 探索イベントのフィード [{msg, col, life}]
-var _floaters: Array = []     # ダメージ数字 [{txt, col, at, t0, jx, jy}]
-var _flashes: Array = []      # スキルFXの閃光 [{fx, t0}]
 var _banner: Dictionary = {}  # 上部イベントバナー {msg, col, t0}（宝箱/扉/記憶/階突破）
 
 
@@ -69,73 +67,18 @@ func _process(delta: float) -> void:
 ## dmg_pop はダメージ数字、fx はスキル閃光として消費する（従来は破棄していた）。
 func add_events(events: Array) -> void:
 	for e in events:
-		match String(e.get("kind", "")):
-			"dmg_pop":
-				var enemy_side := String(e.get("at", "enemy")) == "enemy"
-				_floaters.append({
-					"txt": ("%d" % int(e.get("val", 0))) if enemy_side else ("-%d" % int(e.get("val", 0))),
-					"col": GOLD if enemy_side else Color(1.0, 0.42, 0.45),
-					"at": e.get("at", "enemy"), "t0": _t,
-					"jx": randf_range(-64.0, 64.0), "jy": randf_range(-22.0, 14.0),
-				})
-				while _floaters.size() > 12:
-					_floaters.pop_front()
-			"fx":
-				_flashes.append({"fx": String(e.get("fx", "")), "t0": _t})
-				while _flashes.size() > 5:
-					_flashes.pop_front()
-			_:
-				var msg := String(e.get("msg", ""))
-				if msg == "":
-					continue
-				var kind := String(e.get("kind", "log"))
-				# 見せ場（戦利品/扉/記憶/階突破/ボス）は上部バナーにも昇格
-				if kind in ["loot", "door_loot", "door", "gate", "memory", "boss"]:
-					_banner = {"msg": msg, "col": _kind_col(kind), "t0": _t}
-				_log.append({"msg": msg, "col": _kind_col(kind), "life": 7.0})
+		# dmg_pop / fx はステージ（dive_side_view）が実体アンカーで描くのでここでは扱わない
+		var msg := String(e.get("msg", ""))
+		if msg == "":
+			continue
+		var kind := String(e.get("kind", "log"))
+		# 見せ場（戦利品/扉/記憶/階突破/ボス）は上部バナーにも昇格
+		if kind in ["loot", "door_loot", "door", "gate", "memory", "boss"]:
+			_banner = {"msg": msg, "col": _kind_col(kind), "t0": _t}
+		_log.append({"msg": msg, "col": _kind_col(kind), "life": 7.0})
 	while _log.size() > 6:
 		_log.pop_front()
 	queue_redraw()
-
-
-const FX_COLORS := {
-	"explosion": Color(1.0, 0.62, 0.3), "lightning": Color(0.7, 0.9, 1.0),
-	"heal": Color(0.5, 1.0, 0.6), "song": Color(1.0, 0.7, 0.9), "smoke": Color(0.7, 0.7, 0.75),
-}
-
-
-## スキル閃光＋ダメージ数字（世界の上・UIの下に描く）。
-func _draw_combat_fx(sz: Vector2) -> void:
-	# 横スクロールステージの頭上（地面=70%・キャラ身長ぶん上）に合わせる
-	var enemy_zone := Vector2(sz.x * 0.72, sz.y * 0.575)
-	var party_zone := Vector2(sz.x * 0.33, sz.y * 0.575)
-	var font := get_theme_default_font()
-	var i := 0
-	while i < _flashes.size():
-		var k := (_t - float(_flashes[i]["t0"])) / 0.38
-		if k >= 1.0:
-			_flashes.remove_at(i)
-			continue
-		var fxn := String(_flashes[i]["fx"])
-		var col: Color = FX_COLORS.get(fxn, Color(1, 1, 1))
-		var zone := party_zone if fxn in ["heal", "song", "smoke"] else enemy_zone
-		Kit.spot(self, zone, 90.0 + 130.0 * k, col, (1.0 - k) * 0.5)
-		i += 1
-	i = 0
-	while i < _floaters.size():
-		var fl: Dictionary = _floaters[i]
-		var k := (_t - float(fl["t0"])) / 0.95
-		if k >= 1.0:
-			_floaters.remove_at(i)
-			continue
-		var zone := enemy_zone if String(fl["at"]) == "enemy" else party_zone
-		var e := 1.0 - pow(1.0 - k, 2.0)
-		var pos := zone + Vector2(float(fl["jx"]), float(fl["jy"]) - e * 46.0)
-		var col: Color = fl["col"]
-		var a := 1.0 - k * k
-		draw_string(font, pos + Vector2(1, 1), String(fl["txt"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 21, Color(0, 0, 0, a * 0.7))
-		draw_string(font, pos, String(fl["txt"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 21, Color(col.r, col.g, col.b, a))
-		i += 1
 
 
 func _kind_col(kind: String) -> Color:
@@ -237,8 +180,6 @@ func _draw() -> void:
 		_txt(font, Vector2(br.position.x + 14, br.position.y + 26), "BOSS", 13, bcol)
 		_txt(font, Vector2(br.position.x + 62, br.position.y + 27), boss_name, 18, TEXT)
 
-	# ===== 戦闘FX（閃光・ダメージ数字。世界の上・下部UIの下） =====
-	_draw_combat_fx(sz)
 
 	# ===== イベントフィード（左下・新しいものほど下、古い行は上へフェード） =====
 	# 下部の高さ：手動スキル時はボタン1個ぶん高く、観賞モードはカードのみ
