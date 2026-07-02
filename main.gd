@@ -68,12 +68,20 @@ func _save() -> void:
 	SaveGame.save_state(sim.state)
 
 
-## Web通知（旧メイン同方式）。ブラウザ権限がある時だけ出す。ネイティブでは無音。
+## Web通知。iOS(ホーム画面に追加したPWA)は new Notification() 非対応のため
+## ServiceWorker の showNotification を優先し、無ければ従来のコンストラクタへ。
 func _notify(text: String) -> void:
 	if OS.has_feature("web"):
-		JavaScriptBridge.eval(
-			"if(window.Notification&&Notification.permission==='granted'){new Notification(%s);}" % JSON.stringify(text),
-			true)
+		var t := JSON.stringify(text)
+		JavaScriptBridge.eval("""
+(function(){
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.ready.then(function(r){ r.showNotification(%s); });
+  } else {
+    try { new Notification(%s); } catch (e) {}
+  }
+})();""" % [t, t], true)
 
 
 ## 通知許可のリクエスト（未決定の時だけ・ダイブ開始のユーザー操作に乗せる）。
