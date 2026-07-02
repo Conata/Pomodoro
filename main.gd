@@ -26,6 +26,13 @@ const TITLE_DEFAULT := "黒猫飯店"
 var _talk_view: TalkView = null  # 会話（VN）オーバーレイ（常駐・必要時に最前面で再生）
 var _pending_talk: Dictionary = {}  # 再生中の会話 {girl, tier}（完了時に complete_talk）
 
+# ── オーディオ（旧メインの簡約版）：店⇄潜航＋戦闘レイヤーのクロスフェード＋SFX ──
+var _bgm: AudioStreamPlayer = null         # 店テーマ
+var _bgm_dive: AudioStreamPlayer = null    # 潜航ドローン
+var _bgm_battle: AudioStreamPlayer = null  # 戦闘レイヤー
+var _sfx_pool: Array = []
+var _sfx_i := 0
+
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -37,6 +44,7 @@ func _ready() -> void:
 	_talk_view.visible = false
 	_talk_view.finished.connect(_on_talk_finished)
 	talk_layer.add_child(_talk_view)
+	_build_audio()
 	var loaded := SaveGame.load_state()
 	if loaded.is_empty():
 		sim = KuroSim.new()           # 新規（gold 120 / day 1）
@@ -81,6 +89,86 @@ func _mmss(sec: float) -> String:
 	return "%d:%02d" % [int(s / 60.0), s % 60]
 
 
+# ── オーディオ（旧メイン同方式・簡約）────────────────────────────────────────
+
+func _build_audio() -> void:
+	for i in 4:
+		var p := AudioStreamPlayer.new()
+		p.volume_db = -8.0
+		add_child(p)
+		_sfx_pool.append(p)
+	# ElevenLabs(mp3) > 手続き生成(wav) > CC0 の順で優先（旧メインと同じ選好）
+	_bgm = _make_loop(_audio_pick("bgm_el/store", "res://assets/third_party/music/sketchbook_loop.ogg"), -16.0)
+	_bgm_dive = _make_loop(_audio_pick("bgm_el/dive", "res://assets/generated/bgm/dive_drone.wav"), -60.0)
+	_bgm_battle = _make_loop(_audio_pick("bgm_el/battle", "res://assets/generated/bgm/battle_layer.wav"), -60.0)
+
+
+## 生成BGM/SFXがあればそのパス（mp3優先）、無ければフォールバックを返す。
+func _audio_pick(gen_base: String, fallback: String) -> String:
+	var base := "res://assets/generated/" + gen_base
+	if ResourceLoader.exists(base + ".mp3"):
+		return base + ".mp3"
+	if ResourceLoader.exists(base + ".wav"):
+		return base + ".wav"
+	return fallback
+
+
+## ループ再生する AudioStreamPlayer を作る（OGG/MP3/WAV 対応）。
+func _make_loop(path: String, vol_db: float) -> AudioStreamPlayer:
+	if not ResourceLoader.exists(path):
+		return null
+	var p := AudioStreamPlayer.new()
+	var stream: AudioStream = load(path)
+	if stream is AudioStreamOggVorbis:
+		stream.loop = true
+	elif stream is AudioStreamMP3:
+		stream.loop = true
+	elif stream is AudioStreamWAV:
+		stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		stream.loop_begin = 0
+		stream.loop_end = int(stream.get_length() * stream.mix_rate)
+	p.stream = stream
+	p.volume_db = vol_db
+	add_child(p)
+	return p
+
+
+## 効果音を1発（mp3優先→生成wav→サードパーティwav）。プールを巡回。
+func _sfx(name: String) -> void:
+	if _sfx_pool.is_empty():
+		return
+	var path := _audio_pick("sfx/" + name, "res://assets/third_party/sfx/%s.wav" % name)
+	if not ResourceLoader.exists(path):
+		return
+	var p: AudioStreamPlayer = _sfx_pool[_sfx_i]
+	_sfx_i = (_sfx_i + 1) % _sfx_pool.size()
+	p.stream = load(path)
+	p.play()
+
+
+## Webの自動再生制限対策：最初のユーザー操作で店テーマを開始する。
+func _ensure_audio_started() -> void:
+	if _bgm != null and not _bgm.playing:
+		_bgm.play()
+
+
+## フェーズ・戦況でBGMをクロスフェード（店⇄潜航＋戦闘レイヤー）。
+func _update_bgm(delta: float) -> void:
+	var in_combat: bool = _in_dive and sim != null and bool(sim.state["in_combat"])
+	_fade(_bgm, -42.0 if _in_dive else -16.0, delta)
+	_fade(_bgm_dive, -10.0 if _in_dive else -60.0, delta)
+	_fade(_bgm_battle, -10.0 if in_combat else -60.0, delta)
+
+
+func _fade(p: AudioStreamPlayer, target_db: float, delta: float) -> void:
+	if p == null:
+		return
+	# 鳴っていなければ開始（店テーマが動いている＝ユーザー操作済みの時だけ）
+	if not p.playing and _bgm != null and _bgm.playing and target_db > -55.0:
+		p.play()
+	p.volume_db = move_toward(p.volume_db, target_db, 30.0 * delta)
+
+
 ## アプリ終了・バックグラウンド化で取りこぼさず保存する。
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED \
@@ -89,6 +177,7 @@ func _notification(what: int) -> void:
 
 
 func _process(delta: float) -> void:
+	_update_bgm(delta)   # フェーズに応じた店⇄潜航クロスフェード（潜航外でも動かす）
 	if not _in_dive or sim == null:
 		return
 	# 早送り：アンカーを余分に巻き戻して「より多くの時間が経った」ことにする
@@ -169,6 +258,7 @@ func _surface() -> void:
 	sim.next_morning()
 	_refresh_home_data("「お疲れさま。今夜は %dG の売上だったよ」" % int(night.get("gold", 0)))
 	_save()             # 精算・開封・翌朝の確定を保存
+	_sfx("chest_open" if not box_results.is_empty() else "teleport")   # 浮上の音
 	_show_result(result_data)
 
 
@@ -259,10 +349,12 @@ func _goto(path: String) -> void:
 ## フッターナビ（home/member/market/management/workshop）＝画面遷移、
 ## それ以外の "動詞:パラメータ" はメニュー各パネルの操作（KuroSim を実際に駆動）。
 func _on_home_action(id: String) -> void:
+	_ensure_audio_started()   # 最初のタップで店テーマ開始（Web自動再生制限対策）
 	match id:
 		"pomodoro":
 			# 25分ポモドーロ集中＝仕入れ（早送り/早期終了は仕入れ画面のボタンで）
 			_request_notify_permission()   # 完走通知の許可（ユーザー操作起点なのでここ）
+			_sfx("ui_confirm")
 			sim.drain_events()    # ホーム/メニューの残存イベントを捨ててから開始
 			sim.start_run("pomo", 25.0, Time.get_unix_time_from_system(), "集中仕入れ")
 			_save_accum = 0.0
@@ -270,6 +362,7 @@ func _on_home_action(id: String) -> void:
 			_goto(DIVE)
 		"depart", "field":
 			# クイック仕入れ（80秒）
+			_sfx("ui_confirm")
 			sim.drain_events()
 			sim.start_run("quick", 1.0, Time.get_unix_time_from_system(), "仕入れ")
 			_save_accum = 0.0
@@ -277,10 +370,12 @@ func _on_home_action(id: String) -> void:
 			_goto(DIVE)
 		"talk":
 			# 精算リザルトの会話ボタン → その夜の相手と会話（VN）を再生
+			_sfx("ui_confirm")
 			_start_result_talk()
 		"claim":
 			# デイリー報酬（3完走で+500G・1日1回）
 			if sim.claim_daily():
+				_sfx("chest_open")
 				sim.drain_events()
 				_save()
 				if _current != null:
@@ -337,9 +432,14 @@ func _on_menu_action(id: String) -> void:
 	match verb:
 		"buy":
 			var r: Dictionary = sim.market_buy(int(parts[1]))
+			if not r.is_empty():
+				_sfx("ui_buy")
 			toast = String(r.get("text", "ゴールドが足りない")) if not r.is_empty() else "ゴールドが足りない"
 		"ship":
-			toast = "交易船から購入した" if sim.buy_ship(int(parts[1])) else "買えなかった"
+			var bought := sim.buy_ship(int(parts[1]))
+			if bought:
+				_sfx("ui_buy")
+			toast = "交易船から購入した" if bought else "買えなかった"
 		"keeper":
 			sim.set_keeper(parts[1])
 			toast = "店番を %s に" % KuroData.GIRLS[parts[1]]["name"]
@@ -412,6 +512,7 @@ func _say_home(vn_line: String) -> void:
 ## 潜航のコマンド。KuroSim はオート戦闘なので、fast=早送り倍率、pause=撤退を実効化。
 ## 攻撃/スキル/防御/アイテムの手動発動は KuroSim 側 API（手動アクション）が要るため当面ログ。
 func _on_dive_command(id: String) -> void:
+	_ensure_audio_started()
 	match id:
 		"home", "pause":
 			# 中断して店へ戻る（撤退）
