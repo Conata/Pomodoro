@@ -97,12 +97,7 @@ func _gui_input(event: InputEvent) -> void:
 
 
 func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = bg
-	sb.border_color = border
-	sb.set_border_width_all(int(bw))
-	sb.set_corner_radius_all(int(radius))
-	draw_style_box(sb, rect)
+	Kit.panel(self, rect, bg, border, radius, bw)
 
 
 func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
@@ -111,9 +106,7 @@ func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORI
 
 
 func _bar(rect: Rect2, ratio: float, col: Color) -> void:
-	_panel(Rect2(rect.position, rect.size), Color(0, 0, 0, 0.5), Color(1, 1, 1, 0.12), 3, 1)
-	var w := rect.size.x * clampf(ratio, 0.0, 1.0)
-	draw_rect(Rect2(rect.position, Vector2(w, rect.size.y)), col)
+	Kit.bar(self, rect, ratio, col)
 
 
 func _draw() -> void:

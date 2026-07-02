@@ -118,12 +118,7 @@ func _advance_banter() -> void:
 
 
 func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = bg
-	sb.border_color = border
-	sb.set_border_width_all(int(bw))
-	sb.set_corner_radius_all(int(radius))
-	draw_style_box(sb, rect)
+	Kit.panel(self, rect, bg, border, radius, bw)
 
 
 func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
@@ -176,8 +171,7 @@ func _draw() -> void:
 	var cta := Rect2(sz.x * 0.5 - 145, vy0 - 70, 290, 56)
 	_hit(cta, "pomodoro")
 	var pulse := 0.5 + 0.5 * sin(_t * 2.5)
-	_panel(cta, Color(PINK.r * 0.22, PINK.g * 0.16, PINK.b * 0.24, 0.96),
-			Color(PINK.r, PINK.g, PINK.b, 0.6 + 0.3 * pulse), 16, 2.0)
+	Kit.cta(self, cta, Color(PINK.r * 0.22, PINK.g * 0.16, PINK.b * 0.24, 0.96), PINK, pulse)
 	var ct := "▶  集中する（25分）"
 	var ctw := font.get_string_size(ct, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
 	_txt(font, Vector2(cta.position.x + (cta.size.x - ctw) * 0.5, cta.position.y + 36), ct, 19, TEXT)
@@ -234,7 +228,8 @@ func _footer(font: Font, sz: Vector2) -> void:
 		var active := id == active_nav
 		if active:
 			draw_rect(Rect2(x0, fy, cw, FOOTER_H), Color(col.r, col.g, col.b, 0.10))
-			draw_rect(Rect2(x0, fy, cw, 2.0), col)   # アクティブの上辺ハイライト
+			draw_rect(Rect2(x0, fy, cw, 2.0), col)
+			Kit.spot(self, Vector2(x0 + cw * 0.5, fy + FOOTER_H * 0.55), cw * 0.72, col, 0.22)   # アクティブの上辺ハイライト
 		var gcol := col if active else Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.9)
 		var cx := x0 + cw * 0.5
 		var glyph := String(e["icon"])

@@ -34,6 +34,17 @@ const PANEL_TITLES := {
 	"renov": "経営 — 改装ツリー",
 	"workshop": "工房 — Cube 装備加工",
 }
+# パネル毎の背景アートとアクセント（世界観の奥行き。Kit.backdrop で敷く）
+const PANEL_BG_ART := {
+	"member": "res://assets/generated/scene/restaurant.png",
+	"market": "res://assets/generated/scene/street.png",
+	"management": "res://assets/generated/scene/shop_interior.png",
+	"renov": "res://assets/generated/scene/shop_interior.png",
+	"workshop": "res://assets/generated/bg/interior.png",
+}
+const PANEL_ACCENT := {
+	"member": PINK, "market": GOLD, "management": PURPLE, "renov": PURPLE, "workshop": CYAN,
+}
 
 var sim = null                 # KuroSim 参照（main.gd が bind() で渡す）
 var panel := "member"          # 表示中のパネル
@@ -123,12 +134,7 @@ func _hit(rect: Rect2, id: String) -> void:
 
 
 func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = bg
-	sb.border_color = border
-	sb.set_border_width_all(int(bw))
-	sb.set_corner_radius_all(int(radius))
-	draw_style_box(sb, rect)
+	Kit.panel(self, rect, bg, border, radius, bw)
 
 
 func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
@@ -174,17 +180,15 @@ func _btn(font: Font, rect: Rect2, label: String, col: Color, id: String, enable
 
 
 func _bar(rect: Rect2, frac: float, col: Color) -> void:
-	_panel(rect, Color(0, 0, 0, 0.5), Color(1, 1, 1, 0.12), 3, 1)
-	var w := rect.size.x * clampf(frac, 0.0, 1.0)
-	if w > 1.0:
-		draw_rect(Rect2(rect.position, Vector2(w, rect.size.y)), col)
+	Kit.bar(self, rect, frac, col)
 
 
 func _draw() -> void:
 	var sz := size
 	var font := get_theme_default_font()
 	_hits.clear()
-	draw_rect(Rect2(Vector2.ZERO, sz), BG)
+	var accent: Color = PANEL_ACCENT.get(panel, PURPLE)
+	Kit.backdrop(self, sz, String(PANEL_BG_ART.get(panel, "")), accent, 0.72)
 
 	_draw_header(font, sz)
 	if sim != null:
@@ -195,6 +199,7 @@ func _draw() -> void:
 			"renov": _draw_renov(font, sz)
 			"workshop": _draw_workshop(font, sz)
 	_draw_footer(font, sz)
+	Kit.vignette(self, sz)
 	_draw_toast(font, sz)
 
 
@@ -682,6 +687,7 @@ func _draw_footer(font: Font, sz: Vector2) -> void:
 		if active:
 			draw_rect(Rect2(x0, fy, cw, FOOTER_H), Color(col.r, col.g, col.b, 0.10))
 			draw_rect(Rect2(x0, fy, cw, 2.0), col)
+			Kit.spot(self, Vector2(x0 + cw * 0.5, fy + FOOTER_H * 0.55), cw * 0.72, col, 0.22)
 		var gcol := col if active else Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.9)
 		var cx := x0 + cw * 0.5
 		var glyph := String(e["icon"])

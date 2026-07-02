@@ -25,6 +25,8 @@ const TITLE_DEFAULT := "黒猫飯店"
 
 var _talk_view: TalkView = null  # 会話（VN）オーバーレイ（常駐・必要時に最前面で再生）
 var _pending_talk: Dictionary = {}  # 再生中の会話 {girl, tier}（完了時に complete_talk）
+var _fade_rect: ColorRect = null # 画面遷移フェード（最前面・入力は透過）
+var _fade_tween: Tween = null
 
 # ── オーディオ（旧メインの簡約版）：店⇄潜航＋戦闘レイヤーのクロスフェード＋SFX ──
 var _bgm: AudioStreamPlayer = null         # 店テーマ
@@ -44,6 +46,16 @@ func _ready() -> void:
 	_talk_view.visible = false
 	_talk_view.finished.connect(_on_talk_finished)
 	talk_layer.add_child(_talk_view)
+	# 画面遷移フェード（会話より上・入力は素通し）
+	var fade_layer := CanvasLayer.new()
+	fade_layer.layer = 15
+	add_child(fade_layer)
+	_fade_rect = ColorRect.new()
+	_fade_rect.color = Color(0.01, 0.01, 0.03, 1.0)
+	_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fade_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_fade_rect.modulate.a = 0.0
+	fade_layer.add_child(_fade_rect)
 	_build_audio()
 	var loaded := SaveGame.load_state()
 	if loaded.is_empty():
@@ -370,6 +382,14 @@ func _goto(path: String) -> void:
 		DisplayServer.window_set_title(TITLE_DEFAULT)   # 潜航以外はタイトルを戻す
 	_current = load(path).instantiate()
 	add_child(_current)
+	# 遷移フェード（切替直後を暗幕から明ける）
+	if _fade_rect != null:
+		if _fade_tween != null and _fade_tween.is_valid():
+			_fade_tween.kill()
+		_fade_rect.modulate.a = 1.0
+		_fade_tween = create_tween()
+		_fade_tween.tween_property(_fade_rect, "modulate:a", 0.0, 0.32) \
+				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	if _in_dive:
 		_dive_stage = _current.get_node_or_null("Stage")
 	var overlay := _current.get_node_or_null("Overlay")

@@ -87,12 +87,7 @@ func _box_texture(grade: int) -> Texture2D:
 
 
 func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = bg
-	sb.border_color = border
-	sb.set_border_width_all(int(bw))
-	sb.set_corner_radius_all(int(radius))
-	draw_style_box(sb, rect)
+	Kit.panel(self, rect, bg, border, radius, bw)
 
 
 func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
@@ -113,15 +108,16 @@ func _draw() -> void:
 	var sz := size
 	var font := get_theme_default_font()
 	_hits.clear()
-	draw_rect(Rect2(Vector2.ZERO, sz), BG)
-
 	var disconnected: bool = bool(summary.get("disconnected", false))
+	Kit.backdrop(self, sz, "res://assets/generated/scene/restaurant.png",
+			Color(1.0, 0.45, 0.45) if disconnected else GOLD, 0.74)
 	var y := 44.0
 
 	# ヘッダー
 	var head := "Day %d ― 切断された夜" % day if disconnected else "Day %d ― 夜の精算" % day
 	_txt(font, Vector2(24, y), head, 24, PINK if not disconnected else Color(1.0, 0.45, 0.45))
 	y += 14
+	Kit.spot(self, Vector2(110, y + 8), 130.0, GOLD, 0.16)
 	_txt(font, Vector2(24, y + 18), "＋%d G" % gold, 30, GOLD)
 	y += 56
 
@@ -153,12 +149,12 @@ func _draw() -> void:
 		y += 28
 
 	# 三行精算
-	_panel(Rect2(16, y, sz.x - 32, 8 + lines.size() * 52), Color(0.06, 0.06, 0.1, 0.92), Color(PINK.r, PINK.g, PINK.b, 0.4), 12)
+	_panel(Rect2(16, y, sz.x - 32, 30 + lines.size() * 52), Color(0.06, 0.06, 0.1, 0.92), Color(PINK.r, PINK.g, PINK.b, 0.4), 12)
 	y += 18
 	for ln in lines:
 		_txt(font, Vector2(28, y + 14), String(ln), 16, TEXT, HORIZONTAL_ALIGNMENT_LEFT, sz.x - 56)
 		y += 52
-	y += 14
+	y += 34
 
 	# 箱開封リビール
 	if not boxes.is_empty():
@@ -206,6 +202,8 @@ func _draw() -> void:
 		var tlw := font.get_string_size(tl, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
 		_txt(font, Vector2(tb.position.x + (280 - tlw) * 0.5, tb.position.y + 32), tl, 18, TEXT)
 		_hits.append({"rect": tb, "id": "talk"})
+
+	Kit.vignette(self, sz)
 
 	# 店に戻るボタン（最下部固定）
 	var bw2 := 280.0
