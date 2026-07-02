@@ -53,6 +53,10 @@ func _ready() -> void:
 	sim.apply_offline(Time.get_unix_time_from_system())  # 安息収入＋last_seen 更新
 	if bool(sim.state["run"]["active"]):
 		# 中断したダイブを再開（_process が anchor で時間をキャッチアップする）
+		if String(sim.state["run"]["mode"]) == "pomo":
+			var remain := float(sim.state["run"]["duration"]) \
+					- (Time.get_unix_time_from_system() - float(sim.state["run"]["anchor"]))
+			_schedule_notify(remain, "浮上。%d分の集中、おつかれさま" % int(float(sim.state["run"]["duration"]) / 60.0))
 		_goto(DIVE)
 	else:
 		_refresh_home_data("「いらっしゃい。今日はどこで仕入れる？」")
@@ -70,6 +74,7 @@ func _save() -> void:
 
 ## Web通知。iOS(ホーム画面に追加したPWA)は new Notification() 非対応のため
 ## ServiceWorker の showNotification を優先し、無ければ従来のコンストラクタへ。
+## tag で同文通知を置換（予約タイマーとの二重発火を無害化）。
 func _notify(text: String) -> void:
 	if OS.has_feature("web"):
 		var t := JSON.stringify(text)
@@ -77,11 +82,38 @@ func _notify(text: String) -> void:
 (function(){
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-    navigator.serviceWorker.ready.then(function(r){ r.showNotification(%s); });
+    navigator.serviceWorker.ready.then(function(r){ r.showNotification(%s, {tag:'kuro-pomo'}); });
   } else {
-    try { new Notification(%s); } catch (e) {}
+    try { new Notification(%s, {tag:'kuro-pomo'}); } catch (e) {}
   }
 })();""" % [t, t], true)
+
+
+## 完走時刻にJS側タイマーで通知を予約する。Godot のフレームループは
+## 裏タブで停止するため、これが無いと通知が「タブに戻った瞬間」になる。
+## 再予約時は前の予約を破棄（abandon/早期浮上は _cancel_scheduled_notify）。
+func _schedule_notify(seconds: float, text: String) -> void:
+	if not OS.has_feature("web") or seconds <= 0.0:
+		return
+	var t := JSON.stringify(text)
+	JavaScriptBridge.eval("""
+(function(){
+  if (window._kuroNotifyTimer) { clearTimeout(window._kuroNotifyTimer); window._kuroNotifyTimer = null; }
+  if (!('Notification' in window)) return;
+  window._kuroNotifyTimer = setTimeout(function(){
+    window._kuroNotifyTimer = null;
+    if (Notification.permission !== 'granted') return;
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.ready.then(function(r){ r.showNotification(%s, {tag:'kuro-pomo'}); });
+    } else { try { new Notification(%s, {tag:'kuro-pomo'}); } catch (e) {} }
+  }, %d);
+})();""" % [t, t, int(seconds * 1000.0)], true)
+
+
+func _cancel_scheduled_notify() -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval(
+			"if(window._kuroNotifyTimer){clearTimeout(window._kuroNotifyTimer);window._kuroNotifyTimer=null;}", true)
 
 
 ## 通知許可のリクエスト（未決定の時だけ・ダイブ開始のユーザー操作に乗せる）。
@@ -245,6 +277,7 @@ func _surface() -> void:
 		box_results.append(r)
 	# ポモドーロ完走を日課に記録（デイリー/ストリーク/週間）＋完走通知。
 	# 切断（クイック全滅など）はカウントしない＝旧メインと同じ規律。
+	_cancel_scheduled_notify()   # 早期浮上なら未来の予約を破棄（tagで二重発火も無害）
 	if String(_last_summary.get("mode", "")) == "pomo" and not bool(_last_summary.get("disconnected", false)):
 		sim.register_completion(Time.get_date_string_from_system(), float(_last_summary.get("minutes", 0.0)))
 		_notify("浮上。%d分の集中、おつかれさま" % int(round(float(_last_summary.get("minutes", 0.0)))))
@@ -365,6 +398,7 @@ func _on_home_action(id: String) -> void:
 			_sfx("ui_confirm")
 			sim.drain_events()    # ホーム/メニューの残存イベントを捨ててから開始
 			sim.start_run("pomo", 25.0, Time.get_unix_time_from_system(), "集中仕入れ")
+			_schedule_notify(25.0 * 60.0, "浮上。25分の集中、おつかれさま")
 			_save_accum = 0.0
 			_save()       # 開始時点を保存（中断しても再開できる）
 			_goto(DIVE)
@@ -524,6 +558,7 @@ func _on_dive_command(id: String) -> void:
 	match id:
 		"home", "pause":
 			# 中断して店へ戻る（撤退）
+			_cancel_scheduled_notify()       # 撤退＝完走ではないので通知予約を破棄
 			if sim != null and bool(sim.state["run"]["active"]):
 				sim.abandon_run()
 			_refresh_home_data("「無理はしないで。仕切り直そう。」")
