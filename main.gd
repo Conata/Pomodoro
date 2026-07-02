@@ -4,16 +4,19 @@ extends Control
 ## 本シェルは HD-2D の「ホーム」「潜航（戦闘）」を画面遷移で繋ぎ、
 ## 潜航は KuroSim を実際に駆動して結果をオーバーレイへ反映する（表示層＝HD-2D）。
 
+## 画面（シーン切替）は「店」と「潜航」の2つだけ。メニュー6パネル・精算リザルト・
+## 会話はすべて常駐シート（CanvasLayer上のオーバーレイ）で、生きている世界の上に重ねる
+## ＝タスクバーヒーロー方式（戦闘バーは止まらず、窓が上に開くだけ）。
 const HOME := "res://home_screen.tscn"
 const DIVE := "res://dive_screen.tscn"
-const MENU := "res://menu_screen.tscn"
-const RESULT := "res://result_screen.tscn"
 
 var sim: KuroSim = null
 var _current: Node = null
+var _screen := ""                # いま表示中の世界（HOME / DIVE）
 var _dive_overlay: Node = null   # 潜航中のみ。毎フレーム set_data で更新
 var _dive_stage: Node = null     # 潜航中のみ。敵の出し入れを同期
-var _menu_overlay: Node = null   # メニュー（メンバー/市場/経営/工房）表示中のみ
+var _menu_overlay: MenuOverlay = null     # 常駐シート（visible で開閉）
+var _result_overlay: ResultOverlay = null # 常駐シート（visible で開閉）
 var _in_dive := false
 var _speed := 1                  # 潜航の早送り倍率（fast コマンドで 1→2→3 巡回）
 var _home_data: Dictionary = {}  # ホーム表示データ（日数/金/セリフ）
@@ -62,6 +65,20 @@ func _ready() -> void:
 		sim = KuroSim.new()           # 新規（gold 120 / day 1）
 	else:
 		sim = KuroSim.new(loaded)     # セーブから再開
+	# 常駐シート：メニュー（6パネル）とリザルト。世界の上の CanvasLayer に載せ、
+	# visible の開閉だけで使い回す（シーン切替しない＝下の世界は生きたまま）。
+	var sheet_layer := CanvasLayer.new()
+	sheet_layer.layer = 5
+	add_child(sheet_layer)
+	_menu_overlay = MenuOverlay.new()
+	_menu_overlay.visible = false
+	_menu_overlay.bind(sim)
+	_menu_overlay.action_pressed.connect(_on_home_action)
+	sheet_layer.add_child(_menu_overlay)
+	_result_overlay = ResultOverlay.new()
+	_result_overlay.visible = false
+	_result_overlay.action_pressed.connect(_on_home_action)
+	sheet_layer.add_child(_result_overlay)
 	sim.apply_offline(Time.get_unix_time_from_system())  # 安息収入＋last_seen 更新
 	if bool(sim.state["run"]["active"]):
 		# 中断したダイブを再開（_process が anchor で時間をキャッチアップする）
@@ -329,23 +346,18 @@ func _surface() -> void:
 	_show_result(result_data)
 
 
-## 精算リザルト画面を開いて結果を流し込む。
+## 精算リザルトシートを開いて結果を流し込む（世界は店へ戻しておく）。
 func _show_result(data: Dictionary) -> void:
-	_goto(RESULT)
-	if _current != null:
-		var overlay := _current.get_node_or_null("Overlay")
-		if overlay != null and overlay.has_method("set_data"):
-			overlay.set_data(data)
+	_goto(HOME)                       # シートは _goto が畳む
+	_result_overlay.set_data(data)
+	_result_overlay.visible = true
 
 
 ## リザルトの会話ボタンから、その夜の相手と会話（VN）を最前面で再生する。
 func _start_result_talk() -> void:
-	if _current == null or _talk_view == null:
+	if _talk_view == null or not _result_overlay.visible:
 		return
-	var overlay := _current.get_node_or_null("Overlay")
-	if overlay == null or not ("talk" in overlay):
-		return
-	var t: Dictionary = overlay.talk
+	var t: Dictionary = _result_overlay.talk
 	if t.is_empty():
 		return
 	_pending_talk = t
@@ -364,10 +376,8 @@ func _on_talk_finished(meta: Dictionary) -> void:
 	_pending_talk = {}
 	if _talk_view != null:
 		_talk_view.visible = false
-	if _current != null:
-		var overlay := _current.get_node_or_null("Overlay")
-		if overlay != null and overlay.has_method("clear_talk"):
-			overlay.clear_talk()
+	if _result_overlay != null and _result_overlay.visible:
+		_result_overlay.clear_talk()
 
 
 ## 固定ステップのキャッチアップ（now － anchor 分だけ step を回す）。
@@ -389,7 +399,12 @@ func _goto(path: String) -> void:
 		_current = null
 	_dive_overlay = null
 	_dive_stage = null
-	_menu_overlay = null
+	# 世界の切替時はシートを畳む（開き直しは呼び出し側の責務）
+	if _menu_overlay != null:
+		_menu_overlay.visible = false
+	if _result_overlay != null:
+		_result_overlay.visible = false
+	_screen = path
 	_speed = 1
 	_in_dive = (path == DIVE)
 	if not _in_dive:
@@ -410,9 +425,6 @@ func _goto(path: String) -> void:
 	if overlay != null:
 		if overlay.has_signal("action_pressed"):
 			overlay.action_pressed.connect(_on_home_action)
-			if overlay.has_method("bind"):
-				overlay.bind(sim)              # メニュー：KuroSim を参照させて実データ描画
-				_menu_overlay = overlay
 			if overlay.has_method("set_data") and not _home_data.is_empty():
 				overlay.set_data(_home_data)   # ホーム：実データ反映（日数/金/セリフ）
 		if overlay.has_signal("command_pressed"):
@@ -445,19 +457,18 @@ func _on_home_action(id: String) -> void:
 				_sfx("chest_open")
 				sim.drain_events()
 				_save()
-				if _current != null:
-					var ov := _current.get_node_or_null("Overlay")
-					if ov != null and ov.has_method("claim_done"):
-						ov.claim_done()
+				if _result_overlay.visible:
+					_result_overlay.claim_done()
 		"continue":
-			# 精算リザルトから翌朝のホームへ（next_morning は浮上時に済み）
-			_refresh_home_data("「おはよう。今日はどこで仕入れる？」")
-			_goto(HOME)
+			# 精算リザルトを閉じて翌朝のホームへ（next_morning は浮上時に済み）
+			_say_home("「おはよう。今日はどこで仕入れる？」")
 		"home", "resume_dive":
-			# フッター「ホーム」＝店へ。ただし潜航中（編成の寄り道）なら潜航へ復帰
-			# ——ランを裏で走らせたまま店に置き去りにしない。
-			if sim != null and bool(sim.state["run"]["active"]) and not _in_dive:
-				_goto(DIVE)
+			# フッター「ホーム」＝店へ。潜航中（編成の寄り道）ならシートを閉じるだけで
+			# 下で走り続けている潜航にそのまま戻る。
+			if sim != null and bool(sim.state["run"]["active"]):
+				_menu_overlay.visible = false
+				if _screen != DIVE:
+					_goto(DIVE)
 			else:
 				_say_home("「おかえり。今日も飯店、開けるよ。」")
 		"member", "market", "management", "workshop":
@@ -472,16 +483,15 @@ func _on_home_action(id: String) -> void:
 			_on_menu_action(id)
 
 
-## メニュー画面を開く（既に開いていればパネル切替のみ＝タブ感覚で軽量）。
+## メニューシートを開く（既に開いていればパネル切替のみ＝タブ感覚で軽量）。
+## シーン切替しないので、下の世界（店ディオラマ／潜航ステージ）は動き続ける。
 func _open_menu(panel: String) -> void:
 	if panel == "market" and sim != null:
 		sim.maybe_rotate_ship(Time.get_unix_time_from_system())  # 入店時に交易船を更新
-	if _menu_overlay != null and is_instance_valid(_menu_overlay):
-		_menu_overlay.set_panel(panel)
-	else:
-		_goto(MENU)
-		if _menu_overlay != null:
-			_menu_overlay.set_panel(panel)
+	if not _menu_overlay.visible:
+		_menu_overlay.visible = true
+		_menu_overlay._panel_t = 0.0   # 開いた時も登場トランジションを出す
+	_menu_overlay.set_panel(panel)
 
 
 ## メニュー各パネルの操作（"動詞:パラメータ"）。KuroSim を駆動して再描画する。
@@ -580,7 +590,10 @@ func _on_menu_action(id: String) -> void:
 func _launch_dive(mode: String) -> void:
 	_sfx("ui_confirm")
 	if bool(sim.state["run"]["active"]):
-		_goto(DIVE)       # すでに潜航中（編成の寄り道から出撃ボタン）→ 復帰のみ
+		# すでに潜航中（編成の寄り道から出撃ボタン）→ シートを閉じて復帰のみ
+		_menu_overlay.visible = false
+		if _screen != DIVE:
+			_goto(DIVE)
 		return
 	sim.drain_events()    # ホーム/メニューの残存イベントを捨ててから開始
 	if mode == "pomo":
@@ -594,9 +607,11 @@ func _launch_dive(mode: String) -> void:
 	_goto(DIVE)
 
 
-## ホームのVNセリフを差し替えて、現在のホームオーバーレイへ即時反映する。
+## 店へ戻ってVNセリフを差し替える（シートは畳み、世界がホームでなければ切替）。
 func _say_home(vn_line: String) -> void:
-	if _menu_overlay != null or _in_dive:
+	_menu_overlay.visible = false
+	_result_overlay.visible = false
+	if _screen != HOME:
 		_goto(HOME)
 	_refresh_home_data(vn_line)
 	if _current != null:
@@ -641,13 +656,12 @@ func _on_dive_command(id: String) -> void:
 			sim.state["manual_skill"] = not bool(sim.state.get("manual_skill", false))
 			_save()
 		"loadout":
-			# 潜航中の編成：メニューへ寄り道する。ランは中断されない——時間は
-			# 実時間アンカーで流れ続け、潜航へ戻った瞬間にキャッチアップされる。
-			# 装備・スキル・キューブ合成の変更は次ステップから即このランに反映。
+			# 潜航中の編成：メニューシートを潜航の上に開くだけ。シーンは切り替わらず
+			# 下でランが走り続ける（＝タスクバーヒーローの窓）。装備・スキル・
+			# キューブ合成の変更は次ステップから即このランに反映。
 			_sfx("ui_confirm")
 			_open_menu("member")
-			if _menu_overlay != null and _menu_overlay.has_method("set_toast"):
-				_menu_overlay.set_toast("潜航は継続中。装備・スキル・合成は即反映される")
+			_menu_overlay.set_toast("潜航は継続中。装備・スキル・合成は即反映される")
 		_:
 			print("[dive] command(未接続): ", id)
 

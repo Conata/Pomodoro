@@ -44,6 +44,7 @@ func set_data(d: Dictionary) -> void:
 		if k in self:
 			set(k, d[k])
 	_t = 0.0
+	_claimed_now = false   # 常駐シートとして再利用するので前夜の受取表示を持ち越さない
 	queue_redraw()
 
 
@@ -61,6 +62,8 @@ func claim_done() -> void:
 
 
 func _process(delta: float) -> void:
+	if not visible:
+		return   # 常駐シート：閉じている間は演出時計も再描画も止める
 	_t += delta
 	queue_redraw()
 

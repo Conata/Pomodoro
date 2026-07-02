@@ -88,6 +88,8 @@ func set_toast(s: String) -> void:
 
 
 func _process(delta: float) -> void:
+	if not visible:
+		return   # 常駐シート：閉じている間は再描画を止める
 	_t += delta
 	_panel_t += delta
 	if _toast_t > 0.0:
@@ -198,7 +200,11 @@ func _draw() -> void:
 	var font := get_theme_default_font()
 	_hits.clear()
 	var accent: Color = PANEL_ACCENT.get(panel, PURPLE)
-	Kit.backdrop(self, sz, String(PANEL_BG_ART.get(panel, "")), accent, 0.72)
+	if sim != null and bool(sim.state["run"]["active"]):
+		# 潜航中の寄り道：背景絵は敷かず暗幕だけ＝下で戦い続けるステージが透ける
+		draw_rect(Rect2(Vector2.ZERO, sz), Color(0.02, 0.02, 0.05, 0.84))
+	else:
+		Kit.backdrop(self, sz, String(PANEL_BG_ART.get(panel, "")), accent, 0.72)
 
 	_draw_header(font, sz)
 	# パネル切替トランジション：内容が下から浮き上がり、暗幕が明ける
