@@ -635,17 +635,40 @@ func _update_dive_ui() -> void:
 		tot += hp
 		mx += mhp
 		party.append({"name": String(g.get("name", gid)), "hp": hp, "mhp": mhp, "sp": 100, "msp": 100})
-	# 交戦中のボス名（バナー＋ステージの巨大化に使う）
+	# 交戦中のボス名（バナー用）
 	var boss_name := ""
 	for m in sim.state["mobs"]:
 		if bool(m.get("boss", false)):
 			boss_name = String(m.get("name", ""))
 			break
-	# 3D ステージの敵を sim の mob 数・スプライト名・戦闘フラグに同期
-	var mob_sprites: Array = []
-	for m in sim.state["mobs"]:
-		mob_sprites.append(String(m.get("sprite", "")))
-	if _dive_stage != null and _dive_stage.has_method("set_dive_state"):
+	# 横スクロールステージ（タスクバーヒーロー型）へ実データを毎フレーム反映
+	if _dive_stage != null and _dive_stage.has_method("set_view"):
+		var girls_view: Array = []
+		for gid in ds:
+			var ready := 0
+			var eq: Array = sim.state["girls"][gid]["skills_eq"]
+			for sid in eq:
+				if float((sim.state["cds"].get(gid, {}) as Dictionary).get(sid, 0.0)) <= 0.0:
+					ready += 1
+			girls_view.append({
+				"id": gid, "hp": float(sim.state["hp"].get(gid, 0)), "mhp": sim.girl_maxhp(gid),
+				"ready": ready, "slots": eq.size(),
+			})
+		var mobs_view: Array = []
+		for m in sim.state["mobs"]:
+			mobs_view.append({"sprite": String(m.get("sprite", "goblin")),
+					"hp": float(m["hp"]), "boss": bool(m.get("boss", false))})
+		_dive_stage.set_view({
+			"dist": float(sim.state["dist"]),
+			"in_combat": bool(sim.state["in_combat"]),
+			"party": girls_view, "mobs": mobs_view,
+			"gold_gain": int(sim.state["gold"]) - int(sim.state["run"]["gold0"]),
+		})
+	elif _dive_stage != null and _dive_stage.has_method("set_dive_state"):
+		# 旧3Dステージ互換
+		var mob_sprites: Array = []
+		for m in sim.state["mobs"]:
+			mob_sprites.append(String(m.get("sprite", "")))
 		_dive_stage.set_dive_state(mob_sprites.size(), bool(sim.state["in_combat"]),
 				boss_name != "", mob_sprites)
 	var run: Dictionary = sim.state["run"]

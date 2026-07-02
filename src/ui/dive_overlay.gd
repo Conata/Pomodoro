@@ -46,6 +46,7 @@ var _ripples: Array = []   # タップ波紋（Kit.ripples）
 var _log: Array = []          # 探索イベントのフィード [{msg, col, life}]
 var _floaters: Array = []     # ダメージ数字 [{txt, col, at, t0, jx, jy}]
 var _flashes: Array = []      # スキルFXの閃光 [{fx, t0}]
+var _banner: Dictionary = {}  # 上部イベントバナー {msg, col, t0}（宝箱/扉/記憶/階突破）
 
 
 func _ready() -> void:
@@ -87,7 +88,11 @@ func add_events(events: Array) -> void:
 				var msg := String(e.get("msg", ""))
 				if msg == "":
 					continue
-				_log.append({"msg": msg, "col": _kind_col(String(e.get("kind", "log"))), "life": 7.0})
+				var kind := String(e.get("kind", "log"))
+				# 見せ場（戦利品/扉/記憶/階突破/ボス）は上部バナーにも昇格
+				if kind in ["loot", "door_loot", "door", "gate", "memory", "boss"]:
+					_banner = {"msg": msg, "col": _kind_col(kind), "t0": _t}
+				_log.append({"msg": msg, "col": _kind_col(kind), "life": 7.0})
 	while _log.size() > 6:
 		_log.pop_front()
 	queue_redraw()
@@ -101,8 +106,9 @@ const FX_COLORS := {
 
 ## スキル閃光＋ダメージ数字（世界の上・UIの下に描く）。
 func _draw_combat_fx(sz: Vector2) -> void:
-	var enemy_zone := Vector2(sz.x * 0.60, sz.y * 0.40)
-	var party_zone := Vector2(sz.x * 0.44, sz.y * 0.63)
+	# 横スクロールステージの頭上（地面=70%・キャラ身長ぶん上）に合わせる
+	var enemy_zone := Vector2(sz.x * 0.72, sz.y * 0.575)
+	var party_zone := Vector2(sz.x * 0.33, sz.y * 0.575)
 	var font := get_theme_default_font()
 	var i := 0
 	while i < _flashes.size():
@@ -202,10 +208,28 @@ func _draw() -> void:
 	_txt(font, Vector2(20, qy + 19), "メインクエスト", 13, GOLD)
 	_txt(font, Vector2(20, qy + 38), quest_text, 14, TEXT)
 
+	# ===== イベントバナー（黒帯・タスクバーヒーロー風。4秒でフェード） =====
+	if not _banner.is_empty():
+		var bage := _t - float(_banner["t0"])
+		if bage < 4.0:
+			var ba := clampf(1.0 - (bage - 3.2) / 0.8, 0.0, 1.0) * clampf(bage / 0.18, 0.0, 1.0)
+			var bmsg := String(_banner["msg"])
+			var bcol2: Color = _banner["col"]
+			var bw2 := minf(font.get_string_size(bmsg, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 44, sz.x - 24)
+			var br2 := Rect2((sz.x - bw2) * 0.5, qy + 54, bw2, 36)
+			var sb2 := StyleBoxFlat.new()
+			sb2.bg_color = Color(0.02, 0.02, 0.04, 0.88 * ba)
+			sb2.set_corner_radius_all(9)
+			draw_style_box(sb2, br2)
+			draw_string(font, Vector2(br2.position.x + 22, br2.position.y + 25), bmsg,
+					HORIZONTAL_ALIGNMENT_LEFT, int(bw2 - 40), 16, Color(bcol2.r, bcol2.g, bcol2.b, ba))
+		else:
+			_banner = {}
+
 	# ===== ボスバナー（交戦中のみ・赤の脈動） =====
 	if boss_name != "":
 		var bw := font.get_string_size(boss_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 76
-		var br := Rect2((sz.x - bw) * 0.5, qy + 54, bw, 40)
+		var br := Rect2((sz.x - bw) * 0.5, qy + 98, bw, 40)
 		var bp := 0.5 + 0.5 * sin(_t * 4.0)
 		var bcol := Color(1.0, 0.3, 0.36)
 		Kit.spot(self, br.get_center(), bw * 0.7, bcol, 0.10 + 0.08 * bp)
