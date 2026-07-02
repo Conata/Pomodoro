@@ -23,6 +23,9 @@ var boxes: Array = []          # [{grade, text, kind}]
 var story := ""                # 住民ストーリー（特注が売れた夜）
 var summary: Dictionary = {}   # {floor, kills, mats, minutes, resyncs, disconnected}
 var talk: Dictionary = {}      # その夜話せる相手 {girl, tier}（無ければ空）
+var daily: Dictionary = {}     # {date, runs, claimed}（ポモドーロ完走の日課）
+var streak := 0                # 連続完走
+var _claimed_now := false      # この画面で報酬を受け取った直後の表示用
 
 var _t := 0.0
 var _hits: Array = []
@@ -46,6 +49,13 @@ func set_data(d: Dictionary) -> void:
 ## 会話を消化した後に呼ぶ：会話ボタンを消す。
 func clear_talk() -> void:
 	talk = {}
+	queue_redraw()
+
+
+## デイリー報酬を受け取った後に呼ぶ：ボタンを受取済表示へ。
+func claim_done() -> void:
+	daily["claimed"] = true
+	_claimed_now = true
 	queue_redraw()
 
 
@@ -123,6 +133,23 @@ func _draw() -> void:
 		if int(summary.get("resyncs", 0)) > 0:
 			sm += " ・ 再同期%d回" % int(summary["resyncs"])
 		_txt(font, Vector2(24, y), sm, 14, TEXT_DIM)
+		y += 28
+
+	# 日課（連続完走・今日のポモドーロ・3完走でご祝儀）
+	if not daily.is_empty():
+		var runs := int(daily.get("runs", 0))
+		_txt(font, Vector2(24, y), "連続完走 %d ・ 今日のポモドーロ %d/3" % [streak, mini(runs, 3)], 14, CYAN)
+		if runs >= 3:
+			if bool(daily.get("claimed", false)):
+				if _claimed_now:
+					_txt(font, Vector2(sz.x - 196, y), "ご祝儀 +500G 受領", 14, GOLD)
+			else:
+				var cb := Rect2(sz.x - 206, y - 20, 190, 30)
+				_panel(cb, Color(GOLD.r * 0.22, GOLD.g * 0.18, GOLD.b * 0.1, 0.95), GOLD, 9, 1.5)
+				var cl := "デイリー報酬 +500G"
+				var clw := font.get_string_size(cl, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+				_txt(font, Vector2(cb.position.x + (cb.size.x - clw) * 0.5, cb.position.y + 20), cl, 13, GOLD)
+				_hits.append({"rect": cb, "id": "claim"})
 		y += 28
 
 	# 三行精算
