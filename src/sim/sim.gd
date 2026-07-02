@@ -84,6 +84,7 @@ static func new_state(seed_value: int) -> Dictionary:
 		"stats": {"days": 0, "focus_min": 0.0, "dives": 0},
 		"events_seen": [],
 		"debug_x10": false,
+		"manual_skill": false,  # 潜航スキルを手動発動にする（未決分岐の実験フラグ）
 		"last_seen": 0.0,
 	}
 
@@ -310,6 +311,53 @@ func equip_skill(id: String, skill_id: String) -> bool:
 	return true
 
 
+## そのスキルが今撃って効果が乗るか（_cast_skill の成功条件の読み取り専用版）。
+## 表示（next_ready_skill）と実発動（manual_cast）のズレを防ぐ。
+func _skill_would_apply(sid: String) -> bool:
+	match String(KuroData.SKILL_DB[sid]["kind"]):
+		"hit", "aoe":
+			return not (state["mobs"] as Array).is_empty()
+		"heal_one":
+			for gid in _alive_divers():
+				if float(state["hp"][gid]) / girl_maxhp(gid) < 0.92:
+					return true
+			return false
+		"heal_all":
+			for gid in _alive_divers():
+				if float(state["hp"][gid]) < girl_maxhp(gid) * 0.98:
+					return true
+			return false
+	return true  # shield_all ほかは常に乗る
+
+
+## 手動モード：次に撃てる（＝効果が乗る）装備スキルを表示用に返す。無ければ空。
+func next_ready_skill() -> Dictionary:
+	if not bool(state["in_combat"]):
+		return {}
+	for id in _alive_divers():
+		for sid in state["girls"][id]["skills_eq"]:
+			if float((state["cds"].get(id, {}) as Dictionary).get(sid, 0.0)) <= 0.0 \
+					and _skill_would_apply(String(sid)):
+				return {"girl": id, "skill": sid, "name": String(KuroData.SKILL_DB[sid]["name"])}
+	return {}
+
+
+## 手動モード：撃てるスキルを1発発動（DESIGN.md未決分岐「ボタン1個」の実験）。
+## 効果が乗らない場合（満タン時の回復など）は次の候補へ流す。成功時のみCDを消費。
+func manual_cast() -> Dictionary:
+	if not bool(state["in_combat"]):
+		return {}
+	for id in _alive_divers():
+		for sid in state["girls"][id]["skills_eq"]:
+			if float((state["cds"].get(id, {}) as Dictionary).get(sid, 0.0)) <= 0.0 \
+					and _cast_skill(id, String(sid)):
+				if not state["cds"].has(id):
+					state["cds"][id] = {}
+				state["cds"][id][sid] = float(KuroData.SKILL_DB[sid]["cd"])
+				return {"girl": id, "skill": sid, "name": String(KuroData.SKILL_DB[sid]["name"])}
+	return {}
+
+
 # --- ダイブ ------------------------------------------------------------------
 
 
@@ -507,14 +555,16 @@ func _combat_step(dt: float) -> void:
 	var alive := _alive_divers()
 	if alive.is_empty():
 		return
-	# 装備スキル（CD制・自動発動）
+	# 装備スキル（CD制）。手動モード（DESIGN.md未決分岐の実験）では CD だけ
+	# 進めて発動はプレイヤーの manual_cast() に委ねる。既定はオート発動。
+	var manual: bool = bool(state.get("manual_skill", false))
 	for id in alive:
 		if not state["cds"].has(id):
 			state["cds"][id] = {}
 		for sid in state["girls"][id]["skills_eq"]:
 			var cd := float(state["cds"][id].get(sid, 0.0)) - dt
 			state["cds"][id][sid] = cd
-			if cd <= 0.0 and _cast_skill(id, String(sid)):
+			if not manual and cd <= 0.0 and _cast_skill(id, String(sid)):
 				state["cds"][id][sid] = float(KuroData.SKILL_DB[sid]["cd"])
 				if state["mobs"].is_empty():
 					return

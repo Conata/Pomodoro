@@ -517,8 +517,8 @@ func _say_home(vn_line: String) -> void:
 			overlay.set_data(_home_data)
 
 
-## 潜航のコマンド。KuroSim はオート戦闘なので、fast=早送り倍率、pause=撤退を実効化。
-## 攻撃/スキル/防御/アイテムの手動発動は KuroSim 側 API（手動アクション）が要るため当面ログ。
+## 潜航のコマンド。home=撤退 / finish=早期浮上 / fast=早送り /
+## cast=手動スキル1発 / toggle_manual=スキル手動⇄自動（未決分岐の実験）。
 func _on_dive_command(id: String) -> void:
 	_ensure_audio_started()
 	match id:
@@ -537,8 +537,22 @@ func _on_dive_command(id: String) -> void:
 				sim.step(KuroData.SIM_DT)   # 終端処理を発火（次フレームの _process が _surface）
 		"fast":
 			_speed = (_speed % 3) + 1        # 1→2→3→1
+		"cast":
+			# 手動スキル発動（撃てるものが無ければ拒否音のみ）
+			var r: Dictionary = sim.manual_cast()
+			if r.is_empty():
+				_sfx("ui_denied")
+			else:
+				_sfx("thunder")
+				if _dive_overlay != null and _dive_overlay.has_method("add_events"):
+					_dive_overlay.add_events([{"kind": "log", "msg": "%s、%s！" % [
+							KuroData.GIRLS[r["girl"]]["name"], String(r["name"])]}])
+		"toggle_manual":
+			# スキル手動⇄自動の切替（未決分岐を遊んで決めるための実験フラグ）
+			sim.state["manual_skill"] = not bool(sim.state.get("manual_skill", false))
+			_save()
 		_:
-			print("[dive] command(未接続: 要KuroSim手動アクションAPI): ", id)
+			print("[dive] command(未接続): ", id)
 
 
 ## 潜航オーバーレイへ KuroSim の実データを流し込む。
@@ -569,4 +583,6 @@ func _update_dive_ui() -> void:
 		"player_exp": prog,
 		"quest_text": "仕入れ中  B%d  残り %d秒" % [sim.current_floor(), int(remain)],
 		"speed_mult": _speed,
+		"manual_skill": bool(sim.state.get("manual_skill", false)),
+		"skill_label": String(sim.next_ready_skill().get("name", "")),
 	})

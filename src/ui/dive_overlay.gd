@@ -28,6 +28,8 @@ var player_hp := 1.0          # 0〜1
 var player_exp := 0.63        # 0〜1
 var quest_text := "中央ゲートへ進む  0/1"
 var speed_mult := 1           # 早送り倍率（≫ボタン表示用）
+var manual_skill := false     # 手動スキルモード（DESIGN.md未決分岐の実験フラグ）
+var skill_label := ""         # 次に撃てるスキル名（空＝準備中）
 
 
 ## main.gd / KuroSim から実データを流し込む。
@@ -36,12 +38,6 @@ func set_data(d: Dictionary) -> void:
 		if k in self:
 			set(k, d[k])
 	queue_redraw()
-const COMMANDS := [
-	{"label": "攻撃", "sub": "通常攻撃", "col": Color(1.0, 0.5, 0.35), "id": "attack"},
-	{"label": "スキル", "sub": "SP 20", "col": CYAN, "id": "skill"},
-	{"label": "防御", "sub": "被ダメ軽減", "col": SP_COL, "id": "guard"},
-	{"label": "アイテム", "sub": "道具を使う", "col": HP_COL, "id": "item"},
-]
 
 var _t := 0.0
 var _hits: Array = []
@@ -133,9 +129,11 @@ func _draw() -> void:
 	_bar(Rect2(112, 20, 180, 12), player_hp, HP_COL)
 	_txt(font, Vector2(300, 32), "%d%%" % int(player_hp * 100.0), 14, TEXT_DIM)
 	_bar(Rect2(112, 40, 180, 8), player_exp, Color(0.5, 0.85, 1.0))  # EXP
-	# 右：戻る（中断）／浮上（早期終了）／倍速
+	# 右：戻る（中断）／浮上（早期終了）／倍速／スキル手動⇄自動の切替
 	var bx := sz.x - 20
-	for it in [["戻る", "home", Color(1.0, 0.5, 0.5)], ["浮上", "finish", GOLD], ["≫%d" % speed_mult, "fast", CYAN]]:
+	for it in [["戻る", "home", Color(1.0, 0.5, 0.5)], ["浮上", "finish", GOLD],
+			["≫%d" % speed_mult, "fast", CYAN],
+			["技:手動" if manual_skill else "技:自動", "toggle_manual", PURPLE]]:
 		var lbl: String = it[0]
 		var col: Color = it[2]
 		var w := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 18
@@ -151,7 +149,8 @@ func _draw() -> void:
 	_txt(font, Vector2(20, qy + 38), quest_text, 14, TEXT)
 
 	# ===== イベントフィード（左下・新しいものほど下、古い行は上へフェード） =====
-	var foot_h := 212.0
+	# 下部の高さ：手動スキル時はボタン1個ぶん高く、観賞モードはカードのみ
+	var foot_h := 176.0 if manual_skill else 116.0
 	var feed_bottom := sz.y - foot_h - 16.0
 	var lh := 24.0
 	for i in _log.size():
@@ -166,7 +165,7 @@ func _draw() -> void:
 		var col: Color = e["col"]
 		_txt(font, Vector2(20, yy), msg, 15, Color(col.r, col.g, col.b, fade))
 
-	# ===== 下部：パーティカード＋コマンド =====
+	# ===== 下部：パーティカード（＋手動時のみスキルボタン） =====
 	var fy := sz.y - foot_h
 	_panel(Rect2(0, fy, sz.x, foot_h), Color(0.03, 0.035, 0.07, 0.92), Color(PINK.r, PINK.g, PINK.b, 0.35), 0, 1)
 
@@ -183,19 +182,20 @@ func _draw() -> void:
 		_txt(font, Vector2(cx + 12, cy + 64), "SP", 11, TEXT_DIM)
 		_bar(Rect2(cx + 36, cy + 55, cw - 50, 9), float(d["sp"]) / float(d["msp"]), SP_COL)
 
-	# コマンド（2x2）
-	var gy := cy + 98
-	var gw := (sz.x - 24) / 2.0
-	var gh := 56.0
-	for i in COMMANDS.size():
-		var c: Dictionary = COMMANDS[i]
-		var gx := 12 + (i % 2) * gw
-		var gyy := gy + (i / 2) * (gh + 8)
-		var r := Rect2(gx + 4, gyy, gw - 8, gh)
-		_hit(r, String(c["id"]))
-		_panel(r, Color(c["col"].r * 0.2, c["col"].g * 0.18, c["col"].b * 0.22, 0.92), c["col"], 10, 2)
-		_txt(font, Vector2(gx + 20, gyy + 26), String(c["label"]), 19, TEXT)
-		_txt(font, Vector2(gx + 20, gyy + 46), String(c["sub"]), 12, TEXT_DIM)
+	# スキルボタン1個（手動モードのみ・DESIGN.md未決分岐の実験）。
+	# 観賞モードでは何も出さない＝オート戦闘を眺めるのが正になる。
+	if manual_skill:
+		var ready := skill_label != ""
+		var r := Rect2(12, cy + 98, sz.x - 24, 52)
+		var col := CYAN if ready else Color(0.4, 0.42, 0.5)
+		var pulse := 0.5 + 0.5 * sin(_t * 3.0) if ready else 0.0
+		_panel(r, Color(col.r * 0.2, col.g * 0.18, col.b * 0.22, 0.94),
+				Color(col.r, col.g, col.b, 0.55 + 0.35 * pulse), 10, 2)
+		var lbl := ("▶ %s" % skill_label) if ready else "スキル準備中…"
+		var lw := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
+		_txt(font, Vector2(r.position.x + (r.size.x - lw) * 0.5, r.position.y + 33), lbl, 19,
+				TEXT if ready else TEXT_DIM)
+		_hit(r, "cast")
 
 
 func _hit(rect: Rect2, id: String) -> void:
