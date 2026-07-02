@@ -29,6 +29,7 @@ var in_combat := false
 var party: Array = []       # [{id, hp, mhp, ready, slots}]
 var mobs: Array = []        # [{sprite, hp, boss}]
 var gold_gain := 0
+var difficulty := 0         # 難易度（章票の色とラベルに使う）
 
 var _t := 0.0
 var _anims: Dictionary = {}       # girl_id -> ChibiAnim
@@ -168,6 +169,7 @@ func set_view(d: Dictionary) -> void:
 	party = d.get("party", [])
 	mobs = d.get("mobs", [])
 	gold_gain = int(d.get("gold_gain", gold_gain))
+	difficulty = int(d.get("diff", difficulty))
 	# 隊列アニメの用意＆パラメーター更新（戦闘中は攻撃を周期リトリガー）
 	for i in party.size():
 		var id := String(party[i]["id"])
@@ -657,13 +659,16 @@ func _draw_portal(base: Vector2, font: Font) -> void:
 	draw_arc(c, pr * 0.62, -_t * 2.6, -_t * 2.6 + TAU * 0.66, 24, CYAN, 3.0)
 	draw_circle(c, pr * 0.34, Color(0.5, 0.85, 1.0, 0.9))
 	_blob_shadow(base, 20.0)
-	# 章票 B{階}-{節}
-	var fl := int(dist / KuroData.FLOOR_LEN) + 1
-	var seg := int(fposmod(dist, KuroData.FLOOR_LEN) / (KuroData.FLOOR_LEN / 3.0)) + 1
-	var chip := "B%d-%d" % [fl, seg]
+	# 章票 幕-番号（タスクバーヒーロー表記）＋難易度
+	var fl := int(dist / KuroData.FLOOR_LEN)
+	var dd: Dictionary = KuroData.DIFFICULTIES[clampi(difficulty, 0, KuroData.DIFFICULTIES.size() - 1)]
+	var dcol: Color = dd["color"]
+	var chip := KuroData.stage_label(fl)
+	if difficulty > 0:
+		chip += "  %s" % String(dd["name"])
 	var cw := font.get_string_size(chip, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 24
 	var cr := Rect2(c.x - cw * 0.5, c.y - 96.0, cw, 30.0)
-	Kit.panel(self, cr, Color(0.05, 0.05, 0.09, 0.9), Color(1, 1, 1, 0.18), 15.0, 1.0)
+	Kit.panel(self, cr, Color(0.05, 0.05, 0.09, 0.9), Color(dcol.r, dcol.g, dcol.b, 0.55), 15.0, 1.0)
 	draw_string(font, Vector2(cr.position.x + 12, cr.position.y + 21), chip,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.92, 0.94, 1.0))
 	# 獲得ゴールド（章票の右）

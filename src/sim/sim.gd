@@ -83,6 +83,9 @@ static func new_state(seed_value: int) -> Dictionary:
 		"ship": {"stock": [], "rotated": 0.0},
 		"stats": {"days": 0, "focus_min": 0.0, "dives": 0},
 		"events_seen": [],
+		"difficulty": 0,        # 難易度（0..3＝ノーマル..トーメント）
+		"stage_sel": -1,        # 選択ステージ（0始まりの階。-1＝従来のチェックポイント続行）
+		"stage_clear": {"0": -1, "1": -1, "2": -1, "3": -1},  # 難易度別クリア済み最深階
 		"debug_x10": false,
 		"manual_skill": false,  # 潜航スキルを手動発動にする（未決分岐の実験フラグ）
 		"last_seen": 0.0,
@@ -239,6 +242,49 @@ func current_floor() -> int:
 	return int(float(state["dist"]) / KuroData.FLOOR_LEN)
 
 
+# --- ステージ制（タスクバーヒーロー準拠）------------------------------------
+
+
+func difficulty_mult() -> float:
+	return float(KuroData.DIFFICULTIES[int(state.get("difficulty", 0))]["mult"])
+
+
+## 指定難易度でのクリア済み最深階（-1＝未クリア）。
+func stage_cleared(d: int) -> int:
+	return int((state.get("stage_clear", {}) as Dictionary).get(str(d), -1))
+
+
+## 現在難易度でそのステージ（階）を選べるか＝クリア済み+1まで。
+func stage_unlocked(fl: int) -> bool:
+	return fl >= 0 and fl <= stage_cleared(int(state.get("difficulty", 0))) + 1
+
+
+## 難易度の解放＝前の難易度で第1幕（ACT_LEN階）を突破していること。
+func diff_unlocked(d: int) -> bool:
+	if d <= 0:
+		return true
+	if d >= KuroData.DIFFICULTIES.size():
+		return false
+	return stage_cleared(d - 1) >= KuroData.ACT_LEN - 1
+
+
+func select_stage(fl: int) -> bool:
+	if not stage_unlocked(fl):
+		return false
+	state["stage_sel"] = fl
+	return true
+
+
+func select_difficulty(d: int) -> bool:
+	if not diff_unlocked(d):
+		return false
+	state["difficulty"] = d
+	# 新しい難易度で未開放の階を選んでいたら、選択を最前線へ丸める
+	if int(state.get("stage_sel", -1)) > stage_cleared(d) + 1:
+		state["stage_sel"] = stage_cleared(d) + 1
+	return true
+
+
 func gold_mult() -> float:
 	return (1.10 if "err404" in state["buffs"] else 1.0) \
 			* (1.0 + renov_bonus("gold") + pet_bonus("gold") + _affix_party("gold") * 0.01)
@@ -363,7 +409,12 @@ func manual_cast() -> Dictionary:
 
 ## mode: "quick"（80秒）/ "pomo"（minutes分）
 func start_run(mode: String, minutes: float, anchor: float, task: String = "") -> void:
-	state["dist"] = maxf(float(state["dist"]), int(state["checkpoint"]) * KuroData.FLOOR_LEN)
+	var sel := int(state.get("stage_sel", -1))
+	if sel >= 0:
+		# 選択ステージの頭から（クリア済み階の周回＝farmも、最前線の攻略もここから）
+		state["dist"] = float(sel) * KuroData.FLOOR_LEN
+	else:
+		state["dist"] = maxf(float(state["dist"]), int(state["checkpoint"]) * KuroData.FLOOR_LEN)
 	state["run"] = {
 		"active": true, "mode": mode, "task": task,
 		"duration": KuroData.QUICK_SEC if mode == "quick" else minutes * 60.0,
@@ -507,7 +558,7 @@ func _regen(dt: float) -> void:
 
 func _spawn_pack(boss: bool) -> void:
 	var fl := current_floor()
-	var sc := KuroData.depth_scale(fl)
+	var sc := KuroData.depth_scale(fl) * difficulty_mult()
 	var biome: Dictionary = KuroData.BIOMES[fl % KuroData.BIOMES.size()]
 	var mobs := []
 	if boss:
@@ -699,7 +750,7 @@ func _damage_mobs(amount: float) -> void:
 
 
 func _on_mob_killed(m: Dictionary) -> void:
-	var sc := KuroData.depth_scale(current_floor())
+	var sc := KuroData.depth_scale(current_floor()) * difficulty_mult()
 	var run: Dictionary = state["run"]
 	run["kills"] = int(run["kills"]) + 1
 	var g := int(KuroData.GOLD_PER_KILL * sc * gold_mult() * gain_mult() \
@@ -731,7 +782,11 @@ func _end_combat() -> void:
 		state["dist"] = gate + 2.0
 		state["checkpoint"] = fl + 1
 		state["best_floor"] = maxi(int(state["best_floor"]), fl + 1)
-		_emit("gate", "欠落を埋めた。B%dFへ——ボス箱は送付済み" % (fl + 2))
+		# ステージ制：現在難易度でこの階をクリア済みに（マップの解放が進む）
+		var scl: Dictionary = state["stage_clear"]
+		var dk := str(int(state.get("difficulty", 0)))
+		scl[dk] = maxi(int(scl.get(dk, -1)), fl)
+		_emit("gate", "ステージ %s 突破。欠落を埋めた——ボス箱は送付済み" % KuroData.stage_label(fl))
 		_maybe_drop_memory(int(state["best_floor"]))
 	for id in divers():
 		if float(state["hp"].get(id, 0.0)) <= 0.0:

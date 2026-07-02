@@ -28,6 +28,7 @@ const NAV := [
 	{"id": "workshop",   "icon": "工", "label": "工房",     "col": CYAN},
 ]
 const PANEL_TITLES := {
+	"map": "深層マップ — ステージ選択",
 	"member": "メンバー — 編成・育成",
 	"market": "市場 — 闇市と交易船",
 	"management": "経営 — 今夜の仕込み",
@@ -36,6 +37,7 @@ const PANEL_TITLES := {
 }
 # パネル毎の背景アートとアクセント（世界観の奥行き。Kit.backdrop で敷く）
 const PANEL_BG_ART := {
+	"map": "res://assets/generated/scene/dungeon.png",
 	"member": "res://assets/generated/scene/restaurant.png",
 	"market": "res://assets/generated/scene/street.png",
 	"management": "res://assets/generated/scene/shop_interior.png",
@@ -43,7 +45,7 @@ const PANEL_BG_ART := {
 	"workshop": "res://assets/generated/bg/interior.png",
 }
 const PANEL_ACCENT := {
-	"member": PINK, "market": GOLD, "management": PURPLE, "renov": PURPLE, "workshop": CYAN,
+	"map": CYAN, "member": PINK, "market": GOLD, "management": PURPLE, "renov": PURPLE, "workshop": CYAN,
 }
 
 var sim = null                 # KuroSim 参照（main.gd が bind() で渡す）
@@ -206,6 +208,7 @@ func _draw() -> void:
 		if pk < 1.0:
 			draw_set_transform(Vector2(0.0, (1.0 - pk) * 16.0), 0.0, Vector2.ONE)
 		match panel:
+			"map": _draw_map(font, sz)
 			"member": _draw_member(font, sz)
 			"market": _draw_market(font, sz)
 			"management": _draw_management(font, sz)
@@ -234,6 +237,97 @@ func _draw_header(font: Font, sz: Vector2) -> void:
 		var info := "Day %d    金 %d    欠片 %d" % [int(s["day"]), int(s["gold"]), int(s["shards"])]
 		var w := _tw(font, info, 15)
 		_txt(font, Vector2(sz.x - w - 14, 62), info, 15, GOLD)
+
+
+# ── 深層マップ（ステージ制・タスクバーヒーロー準拠）──────────────────────────
+
+func _draw_map(font: Font, sz: Vector2) -> void:
+	var y := HEADER_H + 12.0
+	var diff := int(sim.state.get("difficulty", 0))
+
+	# 難易度セレクタ（4段。前難易度で第1幕突破が解放条件）
+	Kit.header(self, font, Vector2(16, y + 4), "難易度", GOLD, sz.x - 32)
+	y += 14
+	var dw := (sz.x - 24 - 8 * 3) / 4.0
+	for d in KuroData.DIFFICULTIES.size():
+		var dd: Dictionary = KuroData.DIFFICULTIES[d]
+		var r := Rect2(12 + d * (dw + 8), y, dw, 52)
+		var unlocked: bool = sim.diff_unlocked(d)
+		var active := d == diff
+		var col: Color = dd["color"]
+		if not unlocked:
+			col = Color(0.4, 0.4, 0.46)
+		_panel(r, Color(col.r * 0.18, col.g * 0.16, col.b * 0.2, 0.94),
+				col if active else Color(col.r, col.g, col.b, 0.35), 9, 2.0 if active else 1.0)
+		if active:
+			Kit.spot(self, r.get_center(), dw * 0.7, col, 0.20)
+		var nm := String(dd["name"])
+		_txt(font, Vector2(r.position.x + (dw - _tw(font, nm, 13)) * 0.5, r.position.y + 22), nm, 13,
+				TEXT if unlocked else TEXT_DIM)
+		var sub := ("×%.1f" % float(dd["mult"])) if unlocked else "第%d幕突破で解放" % 1
+		_txt(font, Vector2(r.position.x + (dw - _tw(font, sub, 10)) * 0.5, r.position.y + 40), sub, 10,
+				col if unlocked else TEXT_DIM)
+		if unlocked:
+			_hit(r, "diff:%d" % d)
+	y += 66
+
+	# ステージ一覧（最前線の前後を窓表示。クリア済みは周回可）
+	var cleared: int = sim.stage_cleared(diff)
+	var frontier := cleared + 1
+	var sel := int(sim.state.get("stage_sel", -1))
+	if sel < 0 or sel > frontier:
+		sel = frontier
+	Kit.header(self, font, Vector2(16, y + 4), "ステージ（クリア済みは周回できる）", CYAN, sz.x - 32)
+	y += 14
+	var first := maxi(0, frontier - 3)
+	if first > 0:
+		_txt(font, Vector2(24, y + 14), "… %d-1 までクリア済み" % (int(first / float(KuroData.ACT_LEN)) + 1), 12, TEXT_DIM)
+		y += 24
+	for fl in range(first, frontier + 3):
+		var r := Rect2(12, y, sz.x - 24, 52)
+		var unlocked: bool = fl <= frontier
+		var is_cleared := fl <= cleared
+		var is_sel := fl == sel
+		var biome: Dictionary = KuroData.BIOMES[fl % KuroData.BIOMES.size()]
+		var bcol: Color = biome["color"]
+		var row_col := CYAN if is_sel else (Color(bcol.r * 2.2, bcol.g * 2.2, bcol.b * 2.2) if unlocked else Color(0.35, 0.35, 0.4))
+		_panel(r, Color(0.05, 0.06, 0.10, 0.93 if unlocked else 0.6),
+				Color(row_col.r, row_col.g, row_col.b, 0.85 if is_sel else 0.4), 10, 2.0 if is_sel else 1.0)
+		# 章票
+		var chip := KuroData.stage_label(fl)
+		_txt(font, Vector2(26, y + 32), chip, 18, TEXT if unlocked else TEXT_DIM)
+		# バイオーム
+		draw_circle(Vector2(96, y + 26), 5.0, Color(bcol.r * 2.0, bcol.g * 2.0, bcol.b * 2.0) if unlocked else TEXT_DIM)
+		_txt(font, Vector2(108, y + 22), String(biome["name"]), 13, TEXT if unlocked else TEXT_DIM)
+		# ボス（心象語）と推奨戦力
+		var psyche: String = KuroData.PSYCHE[fl % KuroData.PSYCHE.size()]
+		var power := int(KuroData.depth_scale(fl) * float(KuroData.DIFFICULTIES[diff]["mult"]) * 10.0)
+		_txt(font, Vector2(108, y + 42), ("BOSS 人格『%s』 ・ 戦力%d" % [psyche, power]) if unlocked else "？？？", 11,
+				TEXT_DIM)
+		# 状態
+		if not unlocked:
+			_txt(font, Vector2(sz.x - 64, y + 32), "🔒", 16, TEXT_DIM)
+		elif is_sel:
+			_txt(font, Vector2(sz.x - 70, y + 32), "▶ 出撃", 14, CYAN)
+		elif is_cleared:
+			_txt(font, Vector2(sz.x - 64, y + 32), "✓", 16, GREEN)
+		else:
+			_txt(font, Vector2(sz.x - 78, y + 32), "最前線", 12, GOLD)
+		if unlocked:
+			_hit(r, "stage:%d" % fl)
+		y += 58
+
+	# 出撃ボタン（フッターの上）
+	var by := sz.y - FOOTER_H - 150.0
+	if y < by:
+		y = by
+	var sortie := Rect2(16, sz.y - FOOTER_H - 140, sz.x - 32, 56)
+	var pulse := 0.5 + 0.5 * sin(_t * 2.5)
+	Kit.cta(self, sortie, Color(PINK.r * 0.22, PINK.g * 0.16, PINK.b * 0.24, 0.96), PINK, pulse)
+	var sl := "▶  ステージ %s に集中して潜る（25分）" % KuroData.stage_label(sel)
+	_txt(font, Vector2(sortie.position.x + (sortie.size.x - _tw(font, sl, 17)) * 0.5, sortie.position.y + 35), sl, 17, TEXT)
+	_hit(sortie, "sortie_pomo")
+	_btn(font, Rect2(16, sz.y - FOOTER_H - 72, sz.x - 32, 44), "クイック仕入れ（80秒）", CYAN, "sortie_quick", true, 15)
 
 
 # ── メンバー ─────────────────────────────────────────────────────────────────

@@ -28,6 +28,7 @@ func _initialize() -> void:
 		["menu_management", func(): main._on_home_action("management"), 15],
 		["menu_renov", func(): main._menu_overlay.set_panel("renov"), 15],
 		["menu_workshop", func(): main._on_home_action("workshop"), 15],
+		["menu_map", func(): main._on_home_action("depart"), 15],
 		["dive", func(): _start_dive(), 45],
 		["result", func(): _finish_dive(), 110],
 		["talk", func(): main._on_home_action("talk"), 45],

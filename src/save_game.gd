@@ -111,7 +111,7 @@ static func normalize(s: Dictionary) -> Dictionary:
 			s["run"]["mats"] = {"dry": int(s["run"].get("mats", 0)), "meat": 0, "sea": 0}
 	# v4初期セーブ（装備システム導入前）との互換
 	for key_def in [["scrap", 0], ["next_item_id", 1], ["streak", 0], ["chest_progress", 0.0],
-			["manual_skill", false]]:
+			["manual_skill", false], ["difficulty", 0], ["stage_sel", -1]]:
 		if not s.has(key_def[0]):
 			s[key_def[0]] = key_def[1]
 	if not s.has("inventory"):
@@ -135,6 +135,12 @@ static func normalize(s: Dictionary) -> Dictionary:
 		s["events_seen"] = []
 	if not s.has("memories"):
 		s["memories"] = []
+	if not s.get("stage_clear") is Dictionary:
+		s["stage_clear"] = {}
+	for d in 4:
+		s["stage_clear"][str(d)] = int((s["stage_clear"] as Dictionary).get(str(d), -1))
+	s["difficulty"] = int(s.get("difficulty", 0))
+	s["stage_sel"] = int(s.get("stage_sel", -1))
 	return s
 
 

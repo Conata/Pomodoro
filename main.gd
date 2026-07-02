@@ -424,24 +424,15 @@ func _goto(path: String) -> void:
 func _on_home_action(id: String) -> void:
 	_ensure_audio_started()   # 最初のタップで店テーマ開始（Web自動再生制限対策）
 	match id:
-		"pomodoro":
-			# 25分ポモドーロ集中＝仕入れ（早送り/早期終了は仕入れ画面のボタンで）
-			_request_notify_permission()   # 完走通知の許可（ユーザー操作起点なのでここ）
-			_sfx("ui_confirm")
-			sim.drain_events()    # ホーム/メニューの残存イベントを捨ててから開始
-			sim.start_run("pomo", 25.0, Time.get_unix_time_from_system(), "集中仕入れ")
-			_schedule_notify(25.0 * 60.0, "浮上。25分の集中、おつかれさま")
-			_save_accum = 0.0
-			_save()       # 開始時点を保存（中断しても再開できる）
-			_goto(DIVE)
+		"pomodoro", "sortie_pomo":
+			# 25分ポモドーロ集中＝仕入れ（選択中のステージ×難易度で出撃）
+			_launch_dive("pomo")
 		"depart", "field":
-			# クイック仕入れ（80秒）
-			_sfx("ui_confirm")
-			sim.drain_events()
-			sim.start_run("quick", 1.0, Time.get_unix_time_from_system(), "仕入れ")
-			_save_accum = 0.0
-			_save()
-			_goto(DIVE)
+			# 「仕入れへ」ポータル＝深層マップ（ステージ・難易度選択）へ
+			_open_menu("map")
+		"sortie_quick":
+			# クイック仕入れ（80秒・マップから）
+			_launch_dive("quick")
 		"talk":
 			# 精算リザルトの会話ボタン → その夜の相手と会話（VN）を再生
 			_sfx("ui_confirm")
@@ -498,7 +489,7 @@ func _on_menu_action(id: String) -> void:
 		"buy": 2, "ship": 2, "keeper": 2, "menu": 2, "renov": 2,
 		"skill": 3, "tree": 3, "bag_store": 2, "salvage_bag": 2,
 		"reroll_storage": 2, "salvage_storage": 2, "equip_storage": 3,
-		"socket_storage": 3, "remove_gem": 3,
+		"socket_storage": 3, "remove_gem": 3, "stage": 2, "diff": 2,
 	}
 	if need.has(verb) and parts.size() < int(need[verb]):
 		return
@@ -529,6 +520,13 @@ func _on_menu_action(id: String) -> void:
 			toast = "スキルを更新" if sim.equip_skill(parts[1], parts[2]) else "スキル枠がいっぱい"
 		"tree":
 			toast = "育成ノードを解放" if sim.tree_unlock(parts[1], parts[2]) else "欠片が足りない／条件未達"
+		"stage":
+			toast = "ステージ %s を選択" % KuroData.stage_label(int(parts[1])) \
+					if sim.select_stage(int(parts[1])) else "まだ開放されていない"
+		"diff":
+			var di := int(parts[1])
+			toast = "難易度 %s（×%.1f）" % [KuroData.DIFFICULTIES[di]["name"], float(KuroData.DIFFICULTIES[di]["mult"])] \
+					if sim.select_difficulty(di) else "前の難易度で第1幕を突破すると開く"
 		"bag_all":
 			var moved := sim.bag_all_to_storage()
 			toast = "バッグから倉庫へ %d件移動" % moved
@@ -570,6 +568,21 @@ func _on_menu_action(id: String) -> void:
 		if toast != "" and _menu_overlay.has_method("set_toast"):
 			_menu_overlay.set_toast(toast)
 		_menu_overlay.queue_redraw()
+
+
+## 出撃：選択中のステージ×難易度でダイブを開始する（pomo/quick 共通）。
+func _launch_dive(mode: String) -> void:
+	_sfx("ui_confirm")
+	sim.drain_events()    # ホーム/メニューの残存イベントを捨ててから開始
+	if mode == "pomo":
+		_request_notify_permission()   # 完走通知の許可（ユーザー操作起点）
+		sim.start_run("pomo", 25.0, Time.get_unix_time_from_system(), "集中仕入れ")
+		_schedule_notify(25.0 * 60.0, "浮上。25分の集中、おつかれさま")
+	else:
+		sim.start_run("quick", 1.0, Time.get_unix_time_from_system(), "仕入れ")
+	_save_accum = 0.0
+	_save()               # 開始時点を保存（中断しても再開できる）
+	_goto(DIVE)
 
 
 ## ホームのVNセリフを差し替えて、現在のホームオーバーレイへ即時反映する。
@@ -665,6 +678,7 @@ func _update_dive_ui() -> void:
 			"in_combat": bool(sim.state["in_combat"]),
 			"party": girls_view, "mobs": mobs_view,
 			"gold_gain": int(sim.state["gold"]) - int(sim.state["run"]["gold0"]),
+			"diff": int(sim.state.get("difficulty", 0)),
 		})
 	elif _dive_stage != null and _dive_stage.has_method("set_dive_state"):
 		# 旧3Dステージ互換
