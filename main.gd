@@ -205,10 +205,12 @@ func _ensure_audio_started() -> void:
 
 
 ## フェーズ・戦況でBGMをクロスフェード（店⇄潜航＋戦闘レイヤー）。
+## 潜航中の編成寄り道（メニュー）でも潜航ドローンを維持＝ランが続いている実感を切らさない。
 func _update_bgm(delta: float) -> void:
+	var diving: bool = _in_dive or (sim != null and bool(sim.state["run"]["active"]))
 	var in_combat: bool = _in_dive and sim != null and bool(sim.state["in_combat"])
-	_fade(_bgm, -42.0 if _in_dive else -16.0, delta)
-	_fade(_bgm_dive, -10.0 if _in_dive else -60.0, delta)
+	_fade(_bgm, -42.0 if diving else -16.0, delta)
+	_fade(_bgm_dive, -10.0 if diving else -60.0, delta)
 	_fade(_bgm_battle, -10.0 if in_combat else -60.0, delta)
 
 
@@ -451,9 +453,13 @@ func _on_home_action(id: String) -> void:
 			# 精算リザルトから翌朝のホームへ（next_morning は浮上時に済み）
 			_refresh_home_data("「おはよう。今日はどこで仕入れる？」")
 			_goto(HOME)
-		"home":
-			# フッター「ホーム」＝店（HD-2D ホーム）へ。既にホームならセリフだけ戻す。
-			_say_home("「おかえり。今日も飯店、開けるよ。」")
+		"home", "resume_dive":
+			# フッター「ホーム」＝店へ。ただし潜航中（編成の寄り道）なら潜航へ復帰
+			# ——ランを裏で走らせたまま店に置き去りにしない。
+			if sim != null and bool(sim.state["run"]["active"]) and not _in_dive:
+				_goto(DIVE)
+			else:
+				_say_home("「おかえり。今日も飯店、開けるよ。」")
 		"member", "market", "management", "workshop":
 			_open_menu(id)
 		"menu", "cat":
@@ -573,6 +579,9 @@ func _on_menu_action(id: String) -> void:
 ## 出撃：選択中のステージ×難易度でダイブを開始する（pomo/quick 共通）。
 func _launch_dive(mode: String) -> void:
 	_sfx("ui_confirm")
+	if bool(sim.state["run"]["active"]):
+		_goto(DIVE)       # すでに潜航中（編成の寄り道から出撃ボタン）→ 復帰のみ
+		return
 	sim.drain_events()    # ホーム/メニューの残存イベントを捨ててから開始
 	if mode == "pomo":
 		_request_notify_permission()   # 完走通知の許可（ユーザー操作起点）
@@ -631,6 +640,14 @@ func _on_dive_command(id: String) -> void:
 			# スキル手動⇄自動の切替（未決分岐を遊んで決めるための実験フラグ）
 			sim.state["manual_skill"] = not bool(sim.state.get("manual_skill", false))
 			_save()
+		"loadout":
+			# 潜航中の編成：メニューへ寄り道する。ランは中断されない——時間は
+			# 実時間アンカーで流れ続け、潜航へ戻った瞬間にキャッチアップされる。
+			# 装備・スキル・キューブ合成の変更は次ステップから即このランに反映。
+			_sfx("ui_confirm")
+			_open_menu("member")
+			if _menu_overlay != null and _menu_overlay.has_method("set_toast"):
+				_menu_overlay.set_toast("潜航は継続中。装備・スキル・合成は即反映される")
 		_:
 			print("[dive] command(未接続): ", id)
 

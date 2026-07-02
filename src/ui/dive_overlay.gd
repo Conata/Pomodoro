@@ -132,11 +132,12 @@ func _draw() -> void:
 	_bar(Rect2(112, 20, 180, 12), player_hp, HP_COL)
 	_txt(font, Vector2(300, 32), "%d%%" % int(player_hp * 100.0), 14, TEXT_DIM)
 	_bar(Rect2(112, 40, 180, 8), player_exp, Color(0.5, 0.85, 1.0))  # EXP
-	# 右：戻る（中断）／浮上（早期終了）／倍速／スキル手動⇄自動の切替
+	# 右：戻る（中断）／浮上（早期終了）／倍速／スキル手動⇄自動／編成（潜航継続のまま装備・合成）
 	var bx := sz.x - 20
 	for it in [["戻る", "home", Color(1.0, 0.5, 0.5)], ["浮上", "finish", GOLD],
 			["≫%d" % speed_mult, "fast", CYAN],
-			["技:手動" if manual_skill else "技:自動", "toggle_manual", PURPLE]]:
+			["技:手動" if manual_skill else "技:自動", "toggle_manual", PURPLE],
+			["編成", "loadout", PINK]]:
 		var lbl: String = it[0]
 		var col: Color = it[2]
 		var w := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 18

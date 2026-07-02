@@ -227,10 +227,21 @@ func _draw() -> void:
 func _draw_header(font: Font, sz: Vector2) -> void:
 	draw_rect(Rect2(0, 0, sz.x, HEADER_H), Color(0.02, 0.02, 0.05, 0.96))
 	draw_rect(Rect2(0, HEADER_H, sz.x, 1.5), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.5))
-	# 戻る
-	_btn(font, Rect2(12, 22, 92, 40), "← 店へ", CYAN, "home", true, 15)
+	# 戻る（潜航中＝編成の寄り道なら「潜航へ復帰」。残り時間はアンカーから実時間で計算）
+	var title_x := 120.0
+	if sim != null and bool(sim.state["run"]["active"]):
+		var run: Dictionary = sim.state["run"]
+		var remain := maxf(float(run["duration"]) \
+				- (Time.get_unix_time_from_system() - float(run["anchor"])), 0.0)
+		var lbl := "▼ %d:%02d 潜航へ" % [int(remain / 60.0), int(remain) % 60]
+		var bw := _tw(font, lbl, 15) + 26
+		var pulse := 0.5 + 0.5 * sin(_t * 3.0)
+		_btn(font, Rect2(12, 22, bw, 40), lbl, GOLD.lerp(Color(1.0, 0.55, 0.4), pulse), "resume_dive", true, 15)
+		title_x = 12.0 + bw + 16.0
+	else:
+		_btn(font, Rect2(12, 22, 92, 40), "← 店へ", CYAN, "home", true, 15)
 	# タイトル
-	_txt(font, Vector2(120, 38), String(PANEL_TITLES.get(panel, "")), 18, TEXT)
+	_txt(font, Vector2(title_x, 38), String(PANEL_TITLES.get(panel, "")), 18, TEXT)
 	# 日数・所持金・欠片
 	if sim != null:
 		var s: Dictionary = sim.state
