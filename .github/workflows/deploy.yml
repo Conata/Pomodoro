@@ -67,6 +67,45 @@ jobs:
         with:
           path: build/web
 
+  # 証拠束：全画面スクショ＋バランスレポートを push 毎に成果物として添付。
+  # 「変更のたびに見て・遊んで判断する」ための材料。失敗してもデプロイは止めない。
+  evidence:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    container:
+      image: barichello/godot-ci:4.6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install xvfb + Mesa (ソフトウェアGLでHD-2Dを実レンダリング)
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends xvfb libgl1 libegl1 libgl1-mesa-dri libglu1-mesa
+
+      - name: Import assets
+        run: godot --headless --import || true
+
+      - name: Balance report (15/25/50分＋7日耐久シミュ)
+        run: godot --headless -s tools/balance_report.gd | tee balance_report.txt
+
+      - name: Screenshots (実フロー駆動で全9画面)
+        run: |
+          xvfb-run -a -s "-screen 0 760x1320x24" \
+            godot --rendering-method gl_compatibility --rendering-driver opengl3 \
+            --path . -s tools/screens_shot.gd
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence
+          path: |
+            _out/screens/
+            balance_report.txt
+          if-no-files-found: warn
+
   deploy:
     needs: build
     runs-on: ubuntu-latest
