@@ -79,10 +79,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install xvfb + Mesa (ソフトウェアGLでHD-2Dを実レンダリング)
+      - name: Install xvfb + X11/GL runtime (ソフトウェアGLでHD-2Dを実レンダリング)
+        # godot-ci コンテナはヘッドレス前提で X11 ランタイムを持たない。
+        # Godot の DisplayServerX11 が動的ロードする libXcursor 等が無いと
+        # Xvfb 下でも即死する（XCursor→wayland フォールバック→全滅）。
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends xvfb libgl1 libegl1 libgl1-mesa-dri libglu1-mesa
+          apt-get install -y --no-install-recommends \
+            xvfb libxcursor1 libxinerama1 libxrandr2 libxrender1 libxext6 libxi6 libxkbcommon0 \
+            libgl1 libegl1 libgl1-mesa-dri libglu1-mesa fontconfig
 
       - name: Import assets
         run: godot --headless --import || true
@@ -94,7 +99,7 @@ jobs:
         run: |
           xvfb-run -a -s "-screen 0 760x1320x24" \
             godot --rendering-method gl_compatibility --rendering-driver opengl3 \
-            --path . -s tools/screens_shot.gd
+            --audio-driver Dummy --path . -s tools/screens_shot.gd
 
       - name: Upload evidence
         if: always()
