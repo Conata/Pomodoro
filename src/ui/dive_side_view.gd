@@ -12,7 +12,8 @@ const PARTY_X0 := 132.0     # 隊列先頭のx
 const PARTY_GAP := 58.0     # 隊列間隔
 const ENEMY_X0 := 0.66      # 敵スロット先頭（画面比）
 const ENEMY_GAP := 62.0
-const GIRL_H := 104.0       # 味方の表示身長(px)
+const GIRL_H := 84.0        # 味方の表示身長(px)
+const GIRL_PIX_H := 32      # 味方スプライトのピクセル化高さ（敵ドットと画素密度を揃える）
 const MOB_H := 78.0         # 雑魚の表示身長(px)
 const BOSS_H := 148.0       # ボスの表示身長(px)
 
@@ -32,6 +33,7 @@ var gold_gain := 0
 var _t := 0.0
 var _anims: Dictionary = {}       # girl_id -> ChibiAnim
 var _tex_cache: Dictionary = {}   # path -> Texture2D|null
+var _pix_cache: Dictionary = {}   # path -> ピクセル化済み Texture2D|null（タスクバーヒーロー密度）
 var _enemy_x: Array = []          # 敵スロットの現在x（右からスライドイン）
 var _mob_hp0: Array = []          # 敵スロットの初期HP（バー比率用）
 var _last_mob_count := 0
@@ -94,6 +96,33 @@ func _tex(path: String) -> Texture2D:
 	return _tex_cache[path]
 
 
+## 味方チビをタスクバーヒーロー密度へ落とす：縮小→α2値化→ニアレスト拡大。
+## 高精細チビ(144x192)と16-32pxの敵ドットの解像度ミスマッチを消し、画面の画素を統一する。
+func _pix_tex(path: String) -> Texture2D:
+	if _pix_cache.has(path):
+		return _pix_cache[path]
+	var t: Texture2D = null
+	var src := _tex(path)
+	if src != null:
+		var img := src.get_image()
+		if img != null:
+			img = img.duplicate()
+			if img.is_compressed():
+				img.decompress()
+			img.convert(Image.FORMAT_RGBA8)
+			var w := maxi(int(round(img.get_width() * float(GIRL_PIX_H) / maxf(img.get_height(), 1.0))), 1)
+			img.resize(w, GIRL_PIX_H, Image.INTERPOLATE_BILINEAR)
+			# αを2値化（本物のドット絵はソフトエッジを持たない）
+			for y in img.get_height():
+				for x in w:
+					var c := img.get_pixel(x, y)
+					c.a = 1.0 if c.a > 0.42 else 0.0
+					img.set_pixel(x, y, c)
+			t = ImageTexture.create_from_image(img)
+	_pix_cache[path] = t
+	return t
+
+
 ## 敵テクスチャ（idle/run 4コマ・dungeon frames）。
 func _mob_tex(sprite_name: String, anim: String, fps := 6.0) -> Texture2D:
 	var f := int(_t * fps) % 4
@@ -143,9 +172,9 @@ func _draw() -> void:
 		var dead: bool = float(p["hp"]) <= 0.0
 		var tex: Texture2D = null
 		if _anims.has(id):
-			tex = _tex((_anims[id] as ChibiAnim).current_path())
+			tex = _pix_tex((_anims[id] as ChibiAnim).current_path())
 		if tex == null:
-			tex = _tex("res://assets/generated/sprites/%s/idle_f0.png" % id)
+			tex = _pix_tex("res://assets/generated/sprites/%s/idle_f0.png" % id)
 		var tint := Color(0.5, 0.5, 0.58) if dead else Color(1, 1, 1)
 		# 接地影
 		_blob_shadow(feet, 20.0)
