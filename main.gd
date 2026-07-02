@@ -244,8 +244,18 @@ func _process(delta: float) -> void:
 	if _dive_overlay != null and _dive_overlay.has_method("add_events"):
 		_dive_overlay.add_events(evs)
 	for e in evs:
-		if String(e.get("kind", "")) == "run_complete":
-			_last_summary = e.get("summary", {})
+		match String(e.get("kind", "")):
+			"run_complete":
+				_last_summary = e.get("summary", {})
+			"dmg_pop":
+				# 被弾（味方側）はカメラを揺らす（打撃感）
+				if String(e.get("at", "")) == "party" and _dive_stage != null and _dive_stage.has_method("punch"):
+					_dive_stage.punch(0.28)
+			"fx":
+				# 大技（爆発/雷）は強めに揺らす
+				if String(e.get("fx", "")) in ["explosion", "lightning"] \
+						and _dive_stage != null and _dive_stage.has_method("punch"):
+					_dive_stage.punch(0.45)
 	if not bool(sim.state["run"]["active"]):
 		_surface()                # 浮上＝精算→リザルト→翌朝→店へ
 		return
@@ -625,9 +635,19 @@ func _update_dive_ui() -> void:
 		tot += hp
 		mx += mhp
 		party.append({"name": String(g.get("name", gid)), "hp": hp, "mhp": mhp, "sp": 100, "msp": 100})
-	# 3D ステージの敵を sim の mob 数＆戦闘フラグに同期
+	# 交戦中のボス名（バナー＋ステージの巨大化に使う）
+	var boss_name := ""
+	for m in sim.state["mobs"]:
+		if bool(m.get("boss", false)):
+			boss_name = String(m.get("name", ""))
+			break
+	# 3D ステージの敵を sim の mob 数・スプライト名・戦闘フラグに同期
+	var mob_sprites: Array = []
+	for m in sim.state["mobs"]:
+		mob_sprites.append(String(m.get("sprite", "")))
 	if _dive_stage != null and _dive_stage.has_method("set_dive_state"):
-		_dive_stage.set_dive_state((sim.state["mobs"] as Array).size(), bool(sim.state["in_combat"]))
+		_dive_stage.set_dive_state(mob_sprites.size(), bool(sim.state["in_combat"]),
+				boss_name != "", mob_sprites)
 	var run: Dictionary = sim.state["run"]
 	var remain := maxf(float(run["duration"]) - float(run["elapsed"]), 0.0)
 	var prog := fmod(float(sim.state["dist"]), KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN
@@ -640,4 +660,5 @@ func _update_dive_ui() -> void:
 		"speed_mult": _speed,
 		"manual_skill": bool(sim.state.get("manual_skill", false)),
 		"skill_label": String(sim.next_ready_skill().get("name", "")),
+		"boss_name": boss_name if bool(sim.state["in_combat"]) else "",
 	})
