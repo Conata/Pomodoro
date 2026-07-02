@@ -42,6 +42,7 @@ var active_nav := "home"   # フッターでハイライトする現在地（ホ
 
 var _t := 0.0
 var _hits: Array = []
+var _ripples: Array = []   # タップ波紋（Kit.ripples）
 var _banter_t   := 0.0
 var _banter_q: Array = []
 var _banter_rng := RandomNumberGenerator.new()
@@ -84,6 +85,7 @@ func _gui_input(event: InputEvent) -> void:
 		return
 	for h in _hits:
 		if (h["rect"] as Rect2).has_point(p):
+			Kit.ripple_add(_ripples, p, _t)
 			action_pressed.emit(String(h["id"]))
 			accept_event()
 			return
@@ -209,6 +211,7 @@ func _draw() -> void:
 
 	# ===== 最下部：各主要機能へのフッターナビ =====
 	_footer(font, sz)
+	Kit.ripples(self, _ripples, _t)
 
 
 ## 各主要機能へつながるフッターナビバー（旧版のボトムタブを踏襲）。

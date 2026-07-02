@@ -174,6 +174,33 @@ static func spot(ci: CanvasItem, center: Vector2, radius: float, accent: Color, 
 			false, Color(accent.r, accent.g, accent.b, alpha))
 
 
+# ── リップル（タップの波紋・押下フィードバック）──────────────────────────
+
+const RIPPLE_LIFE := 0.45
+
+## タップ位置を記録（各オーバーレイの _ripples 配列へ）。now はオーバーレイの _t。
+static func ripple_add(list: Array, pos: Vector2, now: float) -> void:
+	list.append({"pos": pos, "t0": now})
+	while list.size() > 6:
+		list.pop_front()
+
+
+## リップルを描画し、寿命切れを取り除く。_draw の最後に呼ぶ。
+static func ripples(ci: CanvasItem, list: Array, now: float) -> void:
+	var i := 0
+	while i < list.size():
+		var k := (now - float(list[i]["t0"])) / RIPPLE_LIFE
+		if k >= 1.0:
+			list.remove_at(i)
+			continue
+		var e := 1.0 - pow(1.0 - k, 2.0)
+		var p: Vector2 = list[i]["pos"]
+		var r := lerpf(10.0, 46.0, e)
+		ci.draw_circle(p, r, Color(1, 1, 1, (1.0 - k) * 0.06))
+		ci.draw_arc(p, r, 0, TAU, 40, Color(1, 1, 1, (1.0 - k) * 0.30), 2.0)
+		i += 1
+
+
 ## HP/進行バー：内側の溝＋グラデ入り本体＋先端の粒。
 static func bar(ci: CanvasItem, rect: Rect2, frac: float, col: Color) -> void:
 	var bgsb := StyleBoxFlat.new()

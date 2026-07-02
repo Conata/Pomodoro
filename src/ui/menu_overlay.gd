@@ -54,8 +54,10 @@ var _work_item_id := -1         # 工房で選択中の装備ID
 var _work_gem := "em_core"      # 工房で選択中のソケット素材
 var _toast := ""
 var _toast_t := 0.0
+var _panel_t := 9.0            # パネル切替からの経過秒（登場トランジション用）
 var _t := 0.0
 var _hits: Array = []
+var _ripples: Array = []   # タップ波紋（Kit.ripples）
 var _tex: Dictionary = {}      # アイコン/立ち絵テクスチャのキャッシュ（path -> Texture2D|null）
 
 
@@ -71,6 +73,8 @@ func bind(sim_ref) -> void:
 
 
 func set_panel(id: String) -> void:
+	if panel != id:
+		_panel_t = 0.0
 	panel = id
 	queue_redraw()
 
@@ -83,6 +87,7 @@ func set_toast(s: String) -> void:
 
 func _process(delta: float) -> void:
 	_t += delta
+	_panel_t += delta
 	if _toast_t > 0.0:
 		_toast_t -= delta
 	queue_redraw()
@@ -100,6 +105,7 @@ func _gui_input(event: InputEvent) -> void:
 		return
 	for h in _hits:
 		if (h["rect"] as Rect2).has_point(p):
+			Kit.ripple_add(_ripples, p, _t)
 			var id := String(h["id"])
 			if id.begins_with("_"):
 				_local(id)            # 純UI操作（選択など）はその場で処理
@@ -115,6 +121,8 @@ func _local(id: String) -> void:
 		_sel_girl = id.substr(6)
 		queue_redraw()
 	elif id.begins_with("_panel:"):
+		if panel != id.substr(7):
+			_panel_t = 0.0
 		panel = id.substr(7)
 		queue_redraw()
 	elif id.begins_with("_work:"):
@@ -191,16 +199,26 @@ func _draw() -> void:
 	Kit.backdrop(self, sz, String(PANEL_BG_ART.get(panel, "")), accent, 0.72)
 
 	_draw_header(font, sz)
+	# パネル切替トランジション：内容が下から浮き上がり、暗幕が明ける
+	var pk := clampf(_panel_t / 0.25, 0.0, 1.0)
+	pk = pk * pk * (3.0 - 2.0 * pk)
 	if sim != null:
+		if pk < 1.0:
+			draw_set_transform(Vector2(0.0, (1.0 - pk) * 16.0), 0.0, Vector2.ONE)
 		match panel:
 			"member": _draw_member(font, sz)
 			"market": _draw_market(font, sz)
 			"management": _draw_management(font, sz)
 			"renov": _draw_renov(font, sz)
 			"workshop": _draw_workshop(font, sz)
+		if pk < 1.0:
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			draw_rect(Rect2(0, HEADER_H + 2, sz.x, sz.y - HEADER_H - FOOTER_H - 2),
+					Color(0.02, 0.02, 0.05, (1.0 - pk) * 0.65))
 	_draw_footer(font, sz)
 	Kit.vignette(self, sz)
 	_draw_toast(font, sz)
+	Kit.ripples(self, _ripples, _t)
 
 
 func _draw_header(font: Font, sz: Vector2) -> void:

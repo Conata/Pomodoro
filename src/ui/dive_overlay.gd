@@ -41,6 +41,7 @@ func set_data(d: Dictionary) -> void:
 
 var _t := 0.0
 var _hits: Array = []
+var _ripples: Array = []   # タップ波紋（Kit.ripples）
 var _log: Array = []          # 探索イベントのフィード [{msg, col, life}]
 
 
@@ -91,6 +92,7 @@ func _gui_input(event: InputEvent) -> void:
 		return
 	for h in _hits:
 		if (h["rect"] as Rect2).has_point(p):
+			Kit.ripple_add(_ripples, p, _t)
 			command_pressed.emit(String(h["id"]))
 			accept_event()
 			return
@@ -189,6 +191,8 @@ func _draw() -> void:
 		_txt(font, Vector2(r.position.x + (r.size.x - lw) * 0.5, r.position.y + 33), lbl, 19,
 				TEXT if ready else TEXT_DIM)
 		_hit(r, "cast")
+
+	Kit.ripples(self, _ripples, _t)
 
 
 func _hit(rect: Rect2, id: String) -> void:
