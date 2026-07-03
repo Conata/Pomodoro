@@ -363,7 +363,9 @@ func _surface() -> void:
 		_goto(HOME)
 		_night_overlay.set_data({"day": int(result_data["day"]), "script": script,
 				"customers": int(night.get("customers", script.size())),
-				"keeper": String(night.get("keeper", "kiriko"))})
+				"keeper": String(night.get("keeper", "kiriko")),
+				"streak": int(sim.state["streak"]),
+				"regulars": int(night.get("regulars", 0))})
 		_night_overlay.visible = true
 
 

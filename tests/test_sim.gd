@@ -531,6 +531,16 @@ func _test_forecast_night() -> void:
 	sim2.add_tips(12)
 	sim2.add_tips(-99)
 	check(int(sim2.state["gold"]) == g0 + 12, "チップ加算（負値は無視）")
+	# 常連：連続完走が客数を底上げする（上限5・見通しと精算で同式）
+	var sim3 := _fresh(11)
+	var base_c := int(sim3.forecast_night()["customers"])
+	sim3.state["streak"] = 3
+	check(int(sim3.forecast_night()["customers"]) == base_c + 3, "連続3日で客+3")
+	sim3.state["streak"] = 99
+	check(int(sim3.forecast_night()["customers"]) == base_c + 5, "常連は5人まで")
+	var night3: Dictionary = sim3.close_day()
+	check(int(night3["regulars"]) == 5, "close_day も常連を数える")
+	check(int(night3["customers"]) == base_c + 5, "精算の客数も一致")
 
 
 func _test_save_roundtrip() -> void:

@@ -893,6 +893,7 @@ func forecast_night() -> Dictionary:
 		customers += 2
 	if int(state["invites"]) > 0:
 		customers += 3 * int(state["invites"])
+	customers += mini(int(state["streak"]), 5)   # 常連（close_day と同式）
 	if keeper == "muu":
 		customers += 4
 	var tastes := {}
@@ -974,6 +975,11 @@ func close_day() -> Dictionary:
 	if int(state["invites"]) > 0:
 		customers += 3 * int(state["invites"])
 		state["invites"] = 0
+	# 常連：連続完走が席を埋める（習慣がそのまま店の賑わいになる）
+	var regulars := mini(int(state["streak"]), 5)
+	if regulars > 0:
+		customers += regulars
+		synergies.append("常連%d人" % regulars)
 	if keeper == "muu":
 		customers += 4
 		synergies.append("店内ライブ")
@@ -1074,6 +1080,7 @@ func close_day() -> Dictionary:
 		"lines": [line1, line2, line3], "gold": night_gold, "served": served,
 		"story": story, "talk_done": false,
 		"script": script, "customers": customers, "keeper": keeper,
+		"regulars": regulars,
 	}
 	state["pending_night"] = night
 	return night

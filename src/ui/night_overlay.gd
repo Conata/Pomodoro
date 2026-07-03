@@ -27,8 +27,12 @@ const TURNAWAY_MAX := 3      # 素材切れで帰す客の演出数上限
 const SCARF := [Color(0.95, 0.4, 0.5), Color(0.4, 0.8, 0.95), Color(0.95, 0.75, 0.35),
 		Color(0.7, 0.5, 0.95), Color(0.45, 0.9, 0.6), Color(0.9, 0.55, 0.8)]
 
+const REGULAR_NAMES := ["タオ爺", "ノノ", "404さん", "傘の人", "夜勤明けの人"]
+
 var day := 1
 var keeper := "kiriko"
+var streak := 0
+var regulars := 0            # 今夜来ている常連の数（先頭の客がそれになる）
 
 var _script: Array = []      # close_day の配膳記録 [{dish, gold, match}]
 var _next := 0               # 次に配る serving
@@ -59,6 +63,8 @@ func _ready() -> void:
 func set_data(d: Dictionary) -> void:
 	day = int(d.get("day", 1))
 	keeper = String(d.get("keeper", "kiriko"))
+	streak = int(d.get("streak", 0))
+	regulars = int(d.get("regulars", 0))
 	_script = (d.get("script", []) as Array).duplicate()
 	_turnaway = mini(int(d.get("customers", 0)) - _script.size(), TURNAWAY_MAX)
 	_next = 0
@@ -104,9 +110,12 @@ func _process(delta: float) -> void:
 			else:
 				_turnaway -= 1
 			_seats[seat] = true
+			# 先頭 regulars 人は常連（連続完走が連れてきた顔なじみ。チップ2倍）
+			var is_reg := serving >= 0 and serving < regulars
 			_custs.append({"seat": seat, "x": size.x + 30.0, "state": "in", "t": 0.0,
-					"serving": serving, "scarf": SCARF[(_next + _turnaway) % SCARF.size()],
-					"dir": -1.0})
+					"serving": serving, "scarf": GOLD if is_reg else SCARF[(_next + _turnaway) % SCARF.size()],
+					"dir": -1.0, "regular": is_reg,
+					"rname": REGULAR_NAMES[serving % REGULAR_NAMES.size()] if is_reg else ""})
 			_spawn_cd = _interval
 	# 客の状態機械
 	for c in _custs:
@@ -172,7 +181,9 @@ func _serve(c: Dictionary, tapped: bool) -> void:
 			"text": String(s["dish"]) + ("★" if bool(s["match"]) else ""),
 			"col": CYAN if bool(s["match"]) else TEXT, "t": 0.0})
 	if tapped:
-		var tip := maxi(int(int(s["gold"]) * 0.15), 1)
+		# 常連はチップ2倍——顔なじみは覚えていてくれる
+		var rate := 0.30 if bool(c.get("regular", false)) else 0.15
+		var tip := maxi(int(int(s["gold"]) * rate), 1)
 		_tips += tip
 		_floats.append({"pos": Vector2(seat_x, size.y * COUNTER_Y - CUST_H - 44.0),
 				"text": "チップ +%d" % tip, "col": PINK, "t": 0.0})
@@ -269,7 +280,12 @@ func _draw() -> void:
 	# ===== ヘッダー：夜の営業＋売上カウンタ＋スキップ =====
 	draw_rect(Rect2(0, 0, sz.x, 64), Color(0.02, 0.02, 0.05, 0.9))
 	draw_rect(Rect2(0, 64, sz.x, 1.5), Color(PINK.r, PINK.g, PINK.b, 0.5))
-	_sh(font, Vector2(18, 40), "Day %d — 夜の営業" % day, 18, TEXT)
+	var title := "Day %d — 夜の営業" % day
+	_sh(font, Vector2(18, 40), title, 18, TEXT)
+	if regulars > 0:
+		var reg := "連続%d日・常連%d人" % [streak, regulars]
+		_sh(font, Vector2(18 + font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 14, 40),
+				reg, 13, GOLD)
 	var gs := "売上 %dG" % _gold_shown
 	if _tips > 0:
 		gs += "  チップ %d" % _tips
@@ -302,9 +318,17 @@ func _draw_customer(font: Font, c: Dictionary, cy: float) -> void:
 	var y0 := base - h - bob
 	var body := Color(0.10, 0.10, 0.16)
 	var rim: Color = c["scarf"]
+	var is_reg := bool(c.get("regular", false))
+	if is_reg:
+		body = Color(0.14, 0.12, 0.10)   # 常連は少し温かい影
 	# 胴（丸みのある影）＋頭
 	draw_rect(Rect2(x - 14, y0 + 16, 28, h - 16), body)
 	draw_circle(Vector2(x, y0 + 12), 12.0, body)
+	# 常連の名前タグ（着席中のみ・小さく）
+	if is_reg and not walk:
+		var nm := String(c.get("rname", "常連"))
+		var nw := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+		_sh(font, Vector2(x - nw * 0.5, y0 + h + 16), nm, 11, GOLD)
 	# マフラー（差し色）と目（ネオンの点）
 	draw_rect(Rect2(x - 13, y0 + 20, 26, 5), rim)
 	draw_circle(Vector2(x - 4, y0 + 10), 1.6, Color(rim.r, rim.g, rim.b, 0.9))
