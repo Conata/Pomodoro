@@ -429,6 +429,8 @@ func _goto(path: String) -> void:
 	if overlay != null:
 		if overlay.has_signal("action_pressed"):
 			overlay.action_pressed.connect(_on_home_action)
+			if overlay.has_method("bind"):
+				overlay.bind(sim)              # ホーム：仕込みカード等の実データ描画
 			if overlay.has_method("set_data") and not _home_data.is_empty():
 				overlay.set_data(_home_data)   # ホーム：実データ反映（日数/金/セリフ）
 		if overlay.has_signal("command_pressed"):
@@ -477,6 +479,9 @@ func _on_home_action(id: String) -> void:
 				_say_home("「おかえり。今日も飯店、開けるよ。」")
 		"member", "market", "management", "workshop":
 			_open_menu(id)
+		"prep_card":
+			# 仕込みカードの余白タップ＝経営パネル（献立・店番・扉の詳細編集）へ
+			_open_menu("management")
 		"menu", "cat":
 			# ホーム上部の ≡／猫 はメニュー（メンバー）への近道。
 			_open_menu("member")
@@ -536,6 +541,12 @@ func _on_menu_action(id: String) -> void:
 		"keeper":
 			sim.set_keeper(parts[1])
 			toast = "店番を %s に" % KuroData.GIRLS[parts[1]]["name"]
+		"keeper_next":
+			# 仕込みカードの店番チップ：タップで次の子へ巡回
+			var order: Array = KuroData.GIRL_ORDER
+			var ki := order.find(String(sim.state["morning"]["keeper"]))
+			sim.set_keeper(order[(ki + 1) % order.size()])
+			_sfx("ui_confirm")
 		"menu":
 			toast = "献立を更新" if sim.toggle_menu(parts[1]) else "枠がいっぱい／未所持"
 		"door":
@@ -592,8 +603,8 @@ func _on_menu_action(id: String) -> void:
 			return
 	sim.drain_events()  # ログイベントは破棄（トーストで代替）
 	_save()             # 購入・編成・改装などの変更を保存
-	if _menu_overlay != null and is_instance_valid(_menu_overlay):
-		if toast != "" and _menu_overlay.has_method("set_toast"):
+	if _menu_overlay != null and _menu_overlay.visible:
+		if toast != "":
 			_menu_overlay.set_toast(toast)
 		_menu_overlay.queue_redraw()
 

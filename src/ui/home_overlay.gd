@@ -40,6 +40,7 @@ var line := "「後悔が騒いでるね。奥に潜って、静かにしてあ�
 var day_gold := "Day 1   金 120"
 var active_nav := "home"   # フッターでハイライトする現在地（ホーム画面では home）
 
+var sim = null   # KuroSim 参照（main.gd が bind() で渡す）。仕込みカードの実データ用
 var _t := 0.0
 var _hits: Array = []
 var _ripples: Array = []   # タップ波紋（Kit.ripples）
@@ -52,6 +53,11 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	set_process(true)
+
+
+func bind(sim_ref) -> void:
+	sim = sim_ref
+	queue_redraw()
 
 
 func set_data(d: Dictionary) -> void:
@@ -172,6 +178,7 @@ func _draw() -> void:
 	# ===== ポモドーロ集中ボタン（主役CTA・VN窓の上） =====
 	var vh := 96.0
 	var vy0 := sz.y - STRIP_H - vh - 8
+	_prep_card(font, sz, vy0 - 70 - 10)   # 朝の仕込みカード（CTAの直上）
 	var cta := Rect2(sz.x * 0.5 - 145, vy0 - 70, 290, 56)
 	_hit(cta, "pomodoro")
 	var pulse := 0.5 + 0.5 * sin(_t * 2.5)
@@ -214,6 +221,58 @@ func _draw() -> void:
 	# ===== 最下部：各主要機能へのフッターナビ =====
 	_footer(font, sz)
 	Kit.ripples(self, _ripples, _t)
+
+
+## 朝の仕込みカード：予報・店番・扉・献立と「今夜の見込み」を出撃前に見せる。
+## 店番と扉はその場でタップ変更（3タップの儀式）、献立は経営パネルへ。
+## デイブザダイバーの「今日の獲物が今夜の品書き」——因果を潜る前に提示する。
+func _prep_card(font: Font, sz: Vector2, y_bottom: float) -> void:
+	if sim == null:
+		return
+	var h := 96.0
+	var r := Rect2(16, y_bottom - h, sz.x - 32, h)
+	_panel(r, Color(0.04, 0.04, 0.08, 0.86), Color(GOLD.r, GOLD.g, GOLD.b, 0.4), 12)
+	var fc: Dictionary = sim.forecast_night()
+	var m: Dictionary = sim.state["morning"]
+	# 見出し＋予報（右上）
+	_txt(font, Vector2(r.position.x + 14, r.position.y + 22), "今日の仕込み", 13, GOLD)
+	var fst := "予報『%s』" % String(fc["forecast"])
+	var fw := font.get_string_size(fst, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+	_txt(font, Vector2(r.end.x - fw - 14, r.position.y + 22), fst, 14, CYAN)
+	# 行1：店番／扉（タップで変更）＋献立（タップで経営へ）
+	var y1 := r.position.y + 30
+	var x := r.position.x + 12
+	var keeper := String(m["keeper"])
+	var kname := String((KuroData.GIRLS.get(keeper, {}) as Dictionary).get("name", keeper))
+	x = _chip(font, Vector2(x, y1), "店番 %s ▸" % kname, PINK, "keeper_next")
+	var door_open: bool = String(m["door"]) == "open"
+	x = _chip(font, Vector2(x, y1), "扉 %s ▸" % ("開ける" if door_open else "見送る"),
+			CYAN if door_open else TEXT_DIM, "door")
+	var menu: Array = m["menu"]
+	x = _chip(font, Vector2(x, y1), "献立 %d品 ▸" % menu.size(), PURPLE, "management")
+	# 行2：見込み（客・皿・金）と売り逃し警告
+	var y2 := r.position.y + 82
+	var line2 := "見込み  客%d・%d皿・約%dG" % [int(fc["customers"]), int(fc["served"]), int(fc["gold"])]
+	_txt(font, Vector2(r.position.x + 14, y2), line2, 15, TEXT)
+	if int(fc["short"]) > 0:
+		var outs: Array = fc["out"]
+		var lack := ""
+		for i in outs.size():
+			lack += ("・" if i > 0 else "") + String(KuroData.ING_NAMES.get(outs[i], outs[i]))
+		var warn := "⚠ %s切れ（%d皿の売り逃し）" % [lack, int(fc["short"])]
+		var ww := font.get_string_size(warn, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+		_txt(font, Vector2(r.end.x - ww - 14, y2), warn, 14, Color(1.0, 0.5, 0.45))
+	_hit(r, "prep_card")   # 余白タップは経営パネルへ（下の個別チップが優先）
+
+
+## 仕込みカードの小チップを1つ描き、次のX座標を返す。
+func _chip(font: Font, pos: Vector2, label: String, col: Color, id: String) -> float:
+	var w := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 20
+	var cr := Rect2(pos.x, pos.y, w, 30)
+	_hit(cr, id)
+	_panel(cr, Color(col.r * 0.16, col.g * 0.14, col.b * 0.18, 0.9), Color(col.r, col.g, col.b, 0.55), 8, 1.2)
+	_txt(font, Vector2(pos.x + 10, pos.y + 21), label, 14, col.lerp(TEXT, 0.35))
+	return pos.x + w + 8
 
 
 ## 各主要機能へつながるフッターナビバー（旧版のボトムタブを踏襲）。

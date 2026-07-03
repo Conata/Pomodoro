@@ -876,6 +876,82 @@ func _end_run(disconnected: bool) -> void:
 ## 完全に計算式。朝の編成が夜の三行に返ってくる。
 
 
+## 今夜の見通し（朝の仕込みカード用）。close_day と同じ式を、素材を消費せず
+## 乱数も使わずに概算する。皿は重み比例の決定論配分（Sainte-Laguë 風）で
+## RNG プールの期待値に寄せる。返り値：
+##   {customers, prep, capacity, served, gold, short, out:[素材id], forecast}
+func forecast_night() -> Dictionary:
+	var keeper: String = state["morning"]["keeper"]
+	if not (KuroData.GIRLS.get(keeper, {}) as Dictionary).has("keeper_apt"):
+		keeper = "kiriko"
+	var menu: Array = state["morning"]["menu"]
+	var forecast: String = state["forecast"]
+	var apt := float(KuroData.GIRLS[keeper]["keeper_apt"])
+	var prep := int((9.0 + 5.0 * apt) * KuroData.girl_mult(aff(keeper)))
+	var customers := 8 + sign_total()
+	if "tao" in state["buffs"]:
+		customers += 2
+	if int(state["invites"]) > 0:
+		customers += 3 * int(state["invites"])
+	if keeper == "muu":
+		customers += 4
+	var tastes := {}
+	for id in menu:
+		var t: String = KuroData.RECIPES[id]["taste"]
+		tastes[t] = int(tastes.get(t, 0)) + 1
+	for t in tastes:
+		if int(tastes[t]) >= 3:
+			customers += 3
+			break
+	if bool(state["crowd_penalty"]):
+		customers = int(customers * 0.6)
+	if keeper == "yuzuki":
+		prep = int(prep * 1.35)
+	var price_mult := 1.0
+	if keeper == "mil":
+		price_mult *= 1.10
+	if tastes.size() >= 4:
+		price_mult *= 1.15
+	var capacity := mini(customers, prep)
+	# 素材の残量コピー上で配膳をシミュレート（本物の stock は減らさない）
+	var stock := {}
+	for ing in KuroData.INGS:
+		stock[ing] = int(state["stock"].get(ing, 0))
+	var counts := {}
+	var served := 0
+	var gold := 0
+	for i in capacity:
+		var pick := ""
+		var best := -1.0
+		for id in menu:
+			if int(stock.get(KuroData.RECIPES[id]["ing"], 0)) <= 0:
+				continue
+			var w := 1.0 + (2.0 if KuroData.RECIPES[id]["taste"] == forecast else 0.0)
+			var score := w / (1.0 + float(int(counts.get(id, 0))))
+			if score > best:
+				best = score
+				pick = id
+		if pick == "":
+			break
+		var ing_p: String = KuroData.RECIPES[pick]["ing"]
+		stock[ing_p] = int(stock[ing_p]) - 1
+		counts[pick] = int(counts.get(pick, 0)) + 1
+		served += 1
+		var star := int(state["recipes"].get(pick, 1))
+		var is_match: bool = KuroData.RECIPES[pick]["taste"] == forecast or keeper == "kiriko"
+		var price := KuroData.recipe_price(pick, star) * price_mult * (1.2 if is_match else 1.0)
+		gold += int(price * gold_mult() * KuroData.NIGHT_GOLD_SCALE * gain_mult())
+	# 尽きている素材（献立に使うのに在庫0）
+	var out := []
+	for id in menu:
+		var ing: String = KuroData.RECIPES[id]["ing"]
+		if int(stock.get(ing, 0)) <= 0 and not ing in out:
+			out.append(ing)
+	return {"customers": customers, "prep": prep, "capacity": capacity,
+			"served": served, "gold": gold, "short": capacity - served,
+			"out": out, "forecast": forecast}
+
+
 func close_day() -> Dictionary:
 	var keeper: String = state["morning"]["keeper"]
 	var menu: Array = state["morning"]["menu"]

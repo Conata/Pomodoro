@@ -28,6 +28,7 @@ func _initialize() -> void:
 	_test_tree()
 	_test_offline()
 	_test_daily_streak()
+	_test_forecast_night()
 	_test_save_roundtrip()
 	if fails == 0:
 		print("ALL %d CHECKS PASSED" % checks)
@@ -490,6 +491,34 @@ func _test_daily_streak() -> void:
 	sim.abandon_run()
 	check(int(sim.state["streak"]) == 0, "撤退でストリークリセット")
 	check(float(sim.state["weekly"].get("2026-06-12", 0.0)) == 75.0, "週間グラフに分が積まれる")
+
+
+func _test_forecast_night() -> void:
+	print("[forecast_night]")
+	var sim := _fresh(11)
+	var fc: Dictionary = sim.forecast_night()
+	check(int(fc["customers"]) >= 8, "客数は看板ベース以上")
+	check(int(fc["capacity"]) == mini(int(fc["customers"]), int(fc["prep"])), "上限＝min(客,仕込み)")
+	check(int(fc["served"]) + int(fc["short"]) == int(fc["capacity"]), "皿＋売り逃し＝上限")
+	check(int(fc["gold"]) > 0, "在庫ありなら売上見込みが立つ")
+	var stock0: Dictionary = sim.state["stock"].duplicate()
+	sim.forecast_night()
+	check(sim.state["stock"] == stock0, "見通しは素材を消費しない")
+	# 素材ゼロ → 皿ゼロ・全部売り逃し・尽きた素材が並ぶ
+	for ing in KuroData.INGS:
+		sim.state["stock"][ing] = 0
+	fc = sim.forecast_night()
+	check(int(fc["served"]) == 0 and int(fc["short"]) == int(fc["capacity"]), "在庫ゼロで全滅")
+	check(not (fc["out"] as Array).is_empty(), "尽きた素材が報告される")
+	# 見通しと実際の close_day が同程度（乱数の皿選びでズレる分は±40%許容）
+	var sim2 := _fresh(11)
+	var fc2: Dictionary = sim2.forecast_night()
+	var night: Dictionary = sim2.close_day()
+	var actual := int(night["gold"])
+	var est := int(fc2["gold"])
+	check(actual > 0 and absf(est - actual) <= actual * 0.4,
+			"見込み%dGは実績%dGの±40%%以内" % [est, actual])
+	check(int(fc2["served"]) == int(night["served"]), "皿数の見込みが一致（素材潤沢時）")
 
 
 func _test_save_roundtrip() -> void:
