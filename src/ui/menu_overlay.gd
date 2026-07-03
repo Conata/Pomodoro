@@ -313,9 +313,17 @@ func _draw_map(font: Font, sz: Vector2) -> void:
 		# 章票
 		var chip := KuroData.stage_label(fl)
 		_txt(font, Vector2(26, y + 32), chip, 18, TEXT if unlocked else TEXT_DIM)
-		# バイオーム
+		# バイオーム＋落ちる素材（店の需要から行き先を選べるように）
 		draw_circle(Vector2(96, y + 26), 5.0, Color(bcol.r * 2.0, bcol.g * 2.0, bcol.b * 2.0) if unlocked else TEXT_DIM)
 		_txt(font, Vector2(108, y + 22), String(biome["name"]), 13, TEXT if unlocked else TEXT_DIM)
+		if unlocked:
+			var ing := String(biome["ing"])
+			var itag := String(KuroData.ING_NAMES.get(ing, ing))
+			var ix := 112.0 + _tw(font, String(biome["name"]), 13) + 8.0
+			var icol: Color = {"dry": GOLD, "meat": Color(1.0, 0.55, 0.45), "sea": CYAN}.get(ing, TEXT_DIM)
+			_panel(Rect2(ix, y + 10, _tw(font, itag, 11) + 12, 18),
+					Color(icol.r * 0.16, icol.g * 0.14, icol.b * 0.16, 0.9), Color(icol.r, icol.g, icol.b, 0.5), 5, 1.0)
+			_txt(font, Vector2(ix + 6, y + 24), itag, 11, icol)
 		# ボス（心象語）と推奨戦力
 		var psyche: String = KuroData.PSYCHE[fl % KuroData.PSYCHE.size()]
 		var power := int(KuroData.depth_scale(fl) * float(KuroData.DIFFICULTIES[diff]["mult"]) * 10.0)

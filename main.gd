@@ -523,6 +523,7 @@ func _on_menu_action(id: String) -> void:
 		"skill": 3, "tree": 3, "bag_store": 2, "salvage_bag": 2,
 		"reroll_storage": 2, "salvage_storage": 2, "equip_storage": 3,
 		"socket_storage": 3, "remove_gem": 3, "stage": 2, "diff": 2,
+		"restock": 2,
 	}
 	if need.has(verb) and parts.size() < int(need[verb]):
 		return
@@ -562,6 +563,11 @@ func _on_menu_action(id: String) -> void:
 		"stage":
 			toast = "ステージ %s を選択" % KuroData.stage_label(int(parts[1])) \
 					if sim.select_stage(int(parts[1])) else "まだ開放されていない"
+		"restock":
+			# 仕込みカードの売り逃し警告：足りない素材が獲れる階を選んでマップへ
+			if sim.select_stage(int(parts[1])):
+				_open_menu("map")
+				toast = "ステージ %s — 足りない素材はここで獲れる" % KuroData.stage_label(int(parts[1]))
 		"diff":
 			var di := int(parts[1])
 			toast = "難易度 %s（×%.1f）" % [KuroData.DIFFICULTIES[di]["name"], float(KuroData.DIFFICULTIES[di]["mult"])] \

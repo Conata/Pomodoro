@@ -259,10 +259,23 @@ func _prep_card(font: Font, sz: Vector2, y_bottom: float) -> void:
 		var lack := ""
 		for i in outs.size():
 			lack += ("・" if i > 0 else "") + String(KuroData.ING_NAMES.get(outs[i], outs[i]))
-		var warn := "⚠ %s切れ（%d皿の売り逃し）" % [lack, int(fc["short"])]
+		# 足りない素材が獲れる、開放済みで一番深い階を推す（バイオーム＝素材）
+		var want := String(outs[0])
+		var goto_fl := -1
+		var frontier: int = sim.stage_cleared(int(sim.state.get("difficulty", 0))) + 1
+		for f in range(frontier, -1, -1):
+			if String(KuroData.BIOMES[f % KuroData.BIOMES.size()]["ing"]) == want:
+				goto_fl = f
+				break
+		var warn := "⚠ %s切れ（%d皿売り逃し）" % [lack, int(fc["short"])]
+		if goto_fl >= 0:
+			warn += " → %s へ ▸" % KuroData.stage_label(goto_fl)
 		var ww := font.get_string_size(warn, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
-		_txt(font, Vector2(r.end.x - ww - 14, y2), warn, 14, Color(1.0, 0.5, 0.45))
-	_hit(r, "prep_card")   # 余白タップは経営パネルへ（下の個別チップが優先）
+		var wr := Rect2(r.end.x - ww - 22, y2 - 18, ww + 16, 26)
+		if goto_fl >= 0:
+			_hit(wr, "restock:%d" % goto_fl)   # タップ＝その階を選択してマップへ
+		_txt(font, Vector2(wr.position.x + 8, y2), warn, 14, Color(1.0, 0.5, 0.45))
+	_hit(r, "prep_card")   # 余白タップは経営パネルへ（上の個別チップが優先）
 
 
 ## 仕込みカードの小チップを1つ描き、次のX座標を返す。
