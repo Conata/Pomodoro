@@ -108,7 +108,9 @@ func _advance_banter() -> void:
 	if _banter_rng.randf() < 0.3:
 		var ex := Banter.pick_exchange(HOME_CAST, _banter_rng)
 		if not ex.is_empty():
-			_banter_q = Array(ex["lines"])
+			# Array(x) は参照をそのまま返すので duplicate 必須
+			# （const の掛け合いデータに pop_front すると Nil が返り続ける）
+			_banter_q = (ex["lines"] as Array).duplicate()
 			_advance_banter()
 			return
 	var pick := Banter.pick("idle", HOME_CAST, _banter_rng)

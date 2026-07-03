@@ -79,6 +79,10 @@ func _ready() -> void:
 	_result_overlay.visible = false
 	_result_overlay.action_pressed.connect(_on_home_action)
 	sheet_layer.add_child(_result_overlay)
+	# CanvasLayer 直下の Control はアンカーが効かない（TalkView と同じ罠）ので
+	# 画面サイズを明示し、リサイズにも追従させる
+	resized.connect(_fit_sheets)
+	_fit_sheets()
 	sim.apply_offline(Time.get_unix_time_from_system())  # 安息収入＋last_seen 更新
 	if bool(sim.state["run"]["active"]):
 		# 中断したダイブを再開（_process が anchor で時間をキャッチアップする）
@@ -481,6 +485,14 @@ func _on_home_action(id: String) -> void:
 			print("[home] action(未実装): ", id)
 		_:
 			_on_menu_action(id)
+
+
+## 常駐シートを画面いっぱいに合わせる（開く時とリサイズ時に呼ぶ）。
+func _fit_sheets() -> void:
+	for sheet in [_menu_overlay, _result_overlay]:
+		if sheet != null:
+			sheet.position = Vector2.ZERO
+			sheet.size = size
 
 
 ## メニューシートを開く（既に開いていればパネル切替のみ＝タブ感覚で軽量）。
