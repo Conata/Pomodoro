@@ -952,6 +952,13 @@ func forecast_night() -> Dictionary:
 			"out": out, "forecast": forecast}
 
 
+## 夜営業シアターの給仕チップ（タップ給仕の実利・少額）。負値は無視。
+func add_tips(amount: int) -> int:
+	amount = maxi(amount, 0)
+	state["gold"] = int(state["gold"]) + amount
+	return amount
+
+
 func close_day() -> Dictionary:
 	var keeper: String = state["morning"]["keeper"]
 	var menu: Array = state["morning"]["menu"]
@@ -1003,6 +1010,7 @@ func close_day() -> Dictionary:
 	var night_gold := 0
 	var matched := 0
 	var sold_tastes := {}
+	var script: Array = []   # 夜営業シアター用の配膳記録 [{dish名, gold, match}]
 	for i in capacity:
 		var pool := []
 		for id in menu:
@@ -1023,9 +1031,12 @@ func close_day() -> Dictionary:
 		if taste == forecast:
 			matched += 1
 		var price := KuroData.recipe_price(dish, star) * price_mult * (1.2 if is_match else 1.0)
-		night_gold += int(price * gold_mult() * KuroData.NIGHT_GOLD_SCALE * gain_mult())
+		var plate_gold := int(price * gold_mult() * KuroData.NIGHT_GOLD_SCALE * gain_mult())
+		night_gold += plate_gold
 		counts[dish] = int(counts.get(dish, 0)) + 1
 		sold_tastes[taste] = true
+		script.append({"dish": String(KuroData.RECIPES[dish]["name"]), "gold": plate_gold,
+				"match": is_match})
 	state["gold"] = int(state["gold"]) + night_gold
 	# 好感度：ダイブ同行+2／店番+1／好物の味が売れた夜+2
 	for id in divers():
@@ -1062,6 +1073,7 @@ func close_day() -> Dictionary:
 	var night := {
 		"lines": [line1, line2, line3], "gold": night_gold, "served": served,
 		"story": story, "talk_done": false,
+		"script": script, "customers": customers, "keeper": keeper,
 	}
 	state["pending_night"] = night
 	return night

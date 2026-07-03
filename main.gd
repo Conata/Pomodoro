@@ -16,7 +16,9 @@ var _screen := ""                # いま表示中の世界（HOME / DIVE）
 var _dive_overlay: Node = null   # 潜航中のみ。毎フレーム set_data で更新
 var _dive_stage: Node = null     # 潜航中のみ。敵の出し入れを同期
 var _menu_overlay: MenuOverlay = null     # 常駐シート（visible で開閉）
+var _night_overlay: NightOverlay = null   # 夜営業シアター（浮上→精算の間に上演）
 var _result_overlay: ResultOverlay = null # 常駐シート（visible で開閉）
+var _pending_result: Dictionary = {}      # 夜営業の幕が降りたら見せる精算データ
 var _in_dive := false
 var _speed := 1                  # 潜航の早送り倍率（fast コマンドで 1→2→3 巡回）
 var _home_data: Dictionary = {}  # ホーム表示データ（日数/金/セリフ）
@@ -75,6 +77,11 @@ func _ready() -> void:
 	_menu_overlay.bind(sim)
 	_menu_overlay.action_pressed.connect(_on_home_action)
 	sheet_layer.add_child(_menu_overlay)
+	_night_overlay = NightOverlay.new()
+	_night_overlay.visible = false
+	_night_overlay.finished.connect(_on_night_finished)
+	_night_overlay.tip_tapped.connect(func(): _sfx("ui_buy"))
+	sheet_layer.add_child(_night_overlay)
 	_result_overlay = ResultOverlay.new()
 	_result_overlay.visible = false
 	_result_overlay.action_pressed.connect(_on_home_action)
@@ -347,12 +354,38 @@ func _surface() -> void:
 	_refresh_home_data("「お疲れさま。今夜は %dG の売上だったよ」" % int(night.get("gold", 0)))
 	_save()             # 精算・開封・翌朝の確定を保存
 	_sfx("chest_open" if not box_results.is_empty() else "teleport")   # 浮上の音
-	_show_result(result_data)
+	# 皿が出た夜は、精算の前に夜営業シアターを上演（スキップ可・放置でも完走）
+	var script: Array = night.get("script", [])
+	if script.is_empty():
+		_show_result(result_data)
+	else:
+		_pending_result = result_data
+		_goto(HOME)
+		_night_overlay.set_data({"day": int(result_data["day"]), "script": script,
+				"customers": int(night.get("customers", script.size())),
+				"keeper": String(night.get("keeper", "kiriko"))})
+		_night_overlay.visible = true
+
+
+## 夜営業の幕が降りた：タップ給仕のチップを実収入に反映して精算へ。
+func _on_night_finished(tips: int) -> void:
+	_night_overlay.visible = false
+	if tips > 0 and sim != null:
+		sim.add_tips(tips)
+		if _pending_result.has("lines"):
+			(_pending_result["lines"] as Array).append("タップ給仕のチップ +%dG" % tips)
+		_save()
+	if not _pending_result.is_empty():
+		_show_result(_pending_result)
+		_pending_result = {}
 
 
 ## 精算リザルトシートを開いて結果を流し込む（世界は店へ戻しておく）。
 func _show_result(data: Dictionary) -> void:
-	_goto(HOME)                       # シートは _goto が畳む
+	if _screen != HOME:
+		_goto(HOME)                   # シートは _goto が畳む
+	_menu_overlay.visible = false
+	_night_overlay.visible = false
 	_result_overlay.set_data(data)
 	_result_overlay.visible = true
 
@@ -404,10 +437,9 @@ func _goto(path: String) -> void:
 	_dive_overlay = null
 	_dive_stage = null
 	# 世界の切替時はシートを畳む（開き直しは呼び出し側の責務）
-	if _menu_overlay != null:
-		_menu_overlay.visible = false
-	if _result_overlay != null:
-		_result_overlay.visible = false
+	for sheet in [_menu_overlay, _night_overlay, _result_overlay]:
+		if sheet != null:
+			sheet.visible = false
 	_screen = path
 	_speed = 1
 	_in_dive = (path == DIVE)
@@ -494,7 +526,7 @@ func _on_home_action(id: String) -> void:
 
 ## 常駐シートを画面いっぱいに合わせる（開く時とリサイズ時に呼ぶ）。
 func _fit_sheets() -> void:
-	for sheet in [_menu_overlay, _result_overlay]:
+	for sheet in [_menu_overlay, _night_overlay, _result_overlay]:
 		if sheet != null:
 			sheet.position = Vector2.ZERO
 			sheet.size = size

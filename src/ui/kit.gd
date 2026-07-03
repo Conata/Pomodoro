@@ -12,6 +12,34 @@ static var _sheen_tex: ImageTexture = null      # 縦グラデ（天面シーン
 static var _vign_tex: ImageTexture = null       # ビネット（四隅の落ち込み）
 static var _glow_tex: ImageTexture = null       # ラジアルグロー（アクセント下敷き）
 static var _bg_cache: Dictionary = {}           # path -> Texture2D|null
+static var _pix_cache: Dictionary = {}          # "path:h" -> Texture2D|null
+
+
+## 高解像度の立ち絵/アニメフレームをドット絵化（縮小＋α2値化。拡大はニアレスト前提）。
+## 横スクロール潜航と夜営業シアターでピクセル密度を統一するための共通ヘルパー。
+static func pix_tex(path: String, pix_h: int) -> Texture2D:
+	var key := "%s:%d" % [path, pix_h]
+	if _pix_cache.has(key):
+		return _pix_cache[key]
+	var t: Texture2D = null
+	if ResourceLoader.exists(path):
+		var src: Texture2D = load(path)
+		var img := src.get_image()
+		if img != null:
+			img = img.duplicate()
+			if img.is_compressed():
+				img.decompress()
+			img.convert(Image.FORMAT_RGBA8)
+			var w := maxi(int(round(img.get_width() * float(pix_h) / maxf(img.get_height(), 1.0))), 1)
+			img.resize(w, pix_h, Image.INTERPOLATE_BILINEAR)
+			for y in img.get_height():
+				for x in w:
+					var c := img.get_pixel(x, y)
+					c.a = 1.0 if c.a > 0.42 else 0.0
+					img.set_pixel(x, y, c)
+			t = ImageTexture.create_from_image(img)
+	_pix_cache[key] = t
+	return t
 
 
 ## 9-patch ソフトシャドウ。角丸パネルの下に敷く。

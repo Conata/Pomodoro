@@ -519,6 +519,18 @@ func _test_forecast_night() -> void:
 	check(actual > 0 and absf(est - actual) <= actual * 0.4,
 			"見込み%dGは実績%dGの±40%%以内" % [est, actual])
 	check(int(fc2["served"]) == int(night["served"]), "皿数の見込みが一致（素材潤沢時）")
+	# 夜営業シアター用の配膳記録：1皿1エントリで、合計が夜の売上と一致
+	var script: Array = night["script"]
+	check(script.size() == int(night["served"]), "配膳記録は皿数ぶん")
+	var sum := 0
+	for s in script:
+		sum += int(s["gold"])
+	check(sum == actual, "配膳記録の合計＝夜の売上")
+	# タップ給仕のチップは実収入
+	var g0 := int(sim2.state["gold"])
+	sim2.add_tips(12)
+	sim2.add_tips(-99)
+	check(int(sim2.state["gold"]) == g0 + 12, "チップ加算（負値は無視）")
 
 
 func _test_save_roundtrip() -> void:

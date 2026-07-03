@@ -30,7 +30,8 @@ func _initialize() -> void:
 		["menu_workshop", func(): main._on_home_action("workshop"), 15],
 		["menu_map", func(): main._on_home_action("depart"), 15],
 		["dive", func(): _start_dive(), 45],
-		["result", func(): _finish_dive(), 110],
+		["night", func(): _finish_dive(), 90],               # 浮上 → 夜営業シアター
+		["result", func(): main._night_overlay.skip(), 60],  # 幕を降ろして精算へ
 		["talk", func(): main._on_home_action("talk"), 45],
 	]
 	_advance()
