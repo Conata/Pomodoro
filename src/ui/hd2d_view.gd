@@ -59,6 +59,9 @@ var _npc_flip: Array = []
 var _npc_shadow: Array = []     # home の徘徊：影（追従）
 var _npc_rim: Array = []        # 各 NPC のリム発光（無効時 null）
 var _npc_refl: Array = []       # 各 NPC の擬似反射（無効時 null）
+var _npc_ids: Array = []        # ロスターの girl id（配置更新・会話マーカー用）
+var _renov_built: Dictionary = {}   # 建立済みの改装プロップ（node id -> true）
+var _talk_label: Label3D = null     # 会話できる子の頭上「！」
 # リム発光／擬似反射の設定（テーマ別に _ready で決定）
 var _rim_on := true
 var _rim_col := Color(0.45, 0.85, 1.0, 0.22)
@@ -1066,7 +1069,13 @@ func _build_npcs() -> void:
 		roster = DIVE_NPCS
 	elif stage_theme == "strip":
 		roster = STRIP_NPCS
+	_build_npc_roster(roster)
+
+
+## ロスター（[{id, pos, flip}]）から NPC ビルボード一式を構築する。
+func _build_npc_roster(roster: Array) -> void:
 	for d in roster:
+		_npc_ids.append(String(d["id"]))
 		var anim := ChibiAnim.new(String(d["id"]))
 		var spr := _make_billboard()
 		var base_pos: Vector3 = d["pos"]
@@ -1092,6 +1101,108 @@ func _build_npcs() -> void:
 		_npc_refl.append(refl)
 		# 足元のブロブシャドウ（home は徘徊に追従させる）
 		_npc_shadow.append(_add_blob_shadow(base_pos))
+
+
+# ── ホームの経営状態反映（⑤ ゲーム状態がディオラマに見える）─────────────────
+
+# 編成卓まわりの立ち位置（主人公 kiriko は _player_pos=中央にいるので空けてある）
+const TABLE_SLOTS := [Vector3(-2.2, 0, 2.2), Vector3(2.2, 0, 2.2),
+		Vector3(-1.3, 0, 3.1), Vector3(1.3, 0, 3.1), Vector3(0, 0, 3.8)]
+
+
+## 経営状態をディオラマへ反映する（main.gd が HOME 表示時と朝の操作後に呼ぶ）。
+##   keeper: 店番（カウンター中央に立つ）／divers: 潜行メンバー（編成卓へ）
+##   renov: 解放済み改装ノード（見た目プロップを一度だけ建てる）
+##   talk: 今夜会話できる子（頭上に「！」）
+func set_home_state(d: Dictionary) -> void:
+	if stage_theme != "home":
+		return
+	var keeper := String(d.get("keeper", ""))
+	var divers: Array = d.get("divers", [])
+	var roster: Array = []
+	if keeper != "" and keeper != PLAYER_ID:
+		roster.append({"id": keeper, "pos": Vector3(0, 0, -2.6), "flip": false})
+	var ti := 0
+	for id in divers:
+		if String(id) == PLAYER_ID or ti >= TABLE_SLOTS.size():
+			continue   # 主人公は _player としてすでに立っている
+		roster.append({"id": id, "pos": TABLE_SLOTS[ti], "flip": false})
+		ti += 1
+	var ids: Array = []
+	for r in roster:
+		ids.append(String(r["id"]))
+	if ids != _npc_ids:
+		_clear_npcs()
+		_build_npc_roster(roster)
+	for nid in d.get("renov", []):
+		if not _renov_built.has(nid):
+			_renov_built[nid] = true
+			_build_renov_prop(String(nid))
+	_set_talk_marker(String(d.get("talk", "")))
+
+
+## NPC ビルボード一式（本体・リム・反射・影）を破棄して配列を空にする。
+func _clear_npcs() -> void:
+	_talk_label = null   # スプライトの子なので一緒に消える
+	for arr in [_npc_sprites, _npc_rim, _npc_refl, _npc_shadow]:
+		for n in arr:
+			if n != null and is_instance_valid(n):
+				n.queue_free()
+	_npc_sprites = []
+	_npc_anims = []
+	_npc_base = []
+	_npc_pos = []
+	_npc_target = []
+	_npc_flip = []
+	_npc_rim = []
+	_npc_refl = []
+	_npc_shadow = []
+	_npc_ids = []
+
+
+## 会話できる子の頭上に金の「！」を出す（id 空なら消すだけ）。
+func _set_talk_marker(id: String) -> void:
+	if _talk_label != null and is_instance_valid(_talk_label):
+		_talk_label.queue_free()
+	_talk_label = null
+	var i := _npc_ids.find(id)
+	if i < 0 or i >= _npc_sprites.size():
+		return
+	_talk_label = Label3D.new()
+	_talk_label.text = "！"
+	_talk_label.font_size = 72
+	_talk_label.pixel_size = 0.008
+	_talk_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_talk_label.modulate = Color(1.0, 0.82, 0.4)
+	_talk_label.outline_size = 16
+	_talk_label.outline_modulate = Color(0.05, 0.03, 0.0, 0.9)
+	_talk_label.no_depth_test = true
+	_talk_label.position = Vector3(0, _sprite_half_h() + 0.55, 0)
+	_npc_sprites[i].add_child(_talk_label)
+
+
+## 改装ノードの見た目プロップ。解放時に一度だけ建てる（改装は不可逆）。
+func _build_renov_prop(id: String) -> void:
+	match id:
+		"sign1":   # ネオン看板：店先両脇に追加のタテ看板＋灯り
+			_emissive_box(Vector3(3.9, 3.2, -2.0), Vector3(0.4, 1.6, 0.18), Color(0.2, 0.9, 1.0), 3.0)
+			_emissive_box(Vector3(-3.9, 3.2, -2.0), Vector3(0.4, 1.6, 0.18), Color(1.0, 0.32, 0.72), 3.0)
+			_neon_light(Vector3(3.9, 3.0, -1.6), Color(0.2, 0.9, 1.0), 2.2, 5.0)
+		"sign2":   # 増築：2階の窓明かり（店が縦に育つ）
+			for x in [-2.4, 0.0, 2.4]:
+				_emissive_box(Vector3(x, 4.6, -3.4), Vector3(1.2, 0.7, 0.15), Color(1.0, 0.66, 0.34), 1.6)
+		"kitchen": # 厨房拡張：湯気の列が増え、鍋あかりが強くなる
+			_build_steam(Vector3(-1.1, 1.2, -1.1), Vector3(0.4, 0.05, 0.25), Color(1.0, 0.88, 0.65, 0.5), 14, 1.1)
+			_build_steam(Vector3(1.1, 1.2, -1.1), Vector3(0.4, 0.05, 0.25), Color(1.0, 0.88, 0.65, 0.5), 14, 1.1)
+			_neon_light(Vector3(0.0, 1.6, -1.1), Color(1.0, 0.6, 0.3), 1.6, 4.0)
+		"rest":    # 安息：店先の火鉢（閉店中も温かい）
+			_add_box(Vector3(4.6, 0.25, 1.6), Vector3(0.8, 0.5, 0.8), Color(0.15, 0.10, 0.08), 0.7)
+			_emissive_box(Vector3(4.6, 0.55, 1.6), Vector3(0.5, 0.12, 0.5), Color(1.0, 0.45, 0.15), 2.2)
+			_neon_light(Vector3(4.6, 1.0, 1.6), Color(1.0, 0.5, 0.2), 1.8, 3.5)
+		"gold3":   # 老舗の貫禄：金の扁額
+			_emissive_box(Vector3(0.0, 4.15, -2.6), Vector3(2.6, 0.5, 0.15), Color(1.0, 0.82, 0.4), 2.4)
+		"awaken":  # 覚醒：編成卓から立ちのぼる紫の光柱
+			_light_shaft(Vector3(0.0, 1.6, 2.6), Vector2(2.2, 3.4), Color(0.65, 0.3, 1.0, 0.16), 0, 0)
 
 
 ## 足元の楕円ソフトシャドウ。ビルボードは光源視点で薄くなり落ち影が不安定なため、

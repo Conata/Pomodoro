@@ -470,6 +470,8 @@ func _goto(path: String) -> void:
 		if overlay.has_signal("command_pressed"):
 			overlay.command_pressed.connect(_on_dive_command)
 			_dive_overlay = overlay
+	if path == HOME:
+		_sync_home_stage()   # 店番の立ち位置・改装プロップ・会話マーカーを反映
 
 
 ## ホーム／メニューのUI操作。
@@ -647,6 +649,7 @@ func _on_menu_action(id: String) -> void:
 		if toast != "":
 			_menu_overlay.set_toast(toast)
 		_menu_overlay.queue_redraw()
+	_sync_home_stage()  # 店番替え・改装解放をディオラマへ即反映（HOME表示時のみ実働）
 
 
 ## 出撃：選択中のステージ×難易度でダイブを開始する（pomo/quick 共通）。
@@ -668,6 +671,20 @@ func _launch_dive(mode: String) -> void:
 	_save_accum = 0.0
 	_save()               # 開始時点を保存（中断しても再開できる）
 	_goto(DIVE)
+
+
+## ホームのディオラマへ経営状態を反映（店番の立ち位置・改装プロップ・会話マーカー）。
+func _sync_home_stage() -> void:
+	if _screen != HOME or _current == null or sim == null:
+		return
+	var stage := _current.get_node_or_null("DinerStage")
+	if stage != null and stage.has_method("set_home_state"):
+		stage.set_home_state({
+			"keeper": String(sim.state["morning"]["keeper"]),
+			"divers": sim.divers(),
+			"renov": sim.state["renov"],
+			"talk": String(sim.available_talk().get("girl", "")),
+		})
 
 
 ## 店へ戻ってVNセリフを差し替える（シートは畳み、世界がホームでなければ切替）。
