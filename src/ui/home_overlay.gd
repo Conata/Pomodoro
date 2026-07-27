@@ -417,8 +417,10 @@ func _prep_card(font: Font, sz: Vector2, y_bottom: float) -> void:
 	nx += _unit(font, nx, y2, "人") + DS.SP_3
 	nx += _num(font, Vector2(nx, y2), "served", float(int(fc["served"])), DS.T_BODY, TEXT) + 2.0
 	nx += _unit(font, nx, y2, "皿") + DS.SP_3
-	nx += _unit(font, nx, y2, "約")
-	nx += _num(font, Vector2(nx, y2), "gain", float(int(fc["gold"])), DS.T_BODY, GOLD) + 2.0
+	# 見出しの金額は「手元に残る額」＝純益。ここを売上にすると、経営パネルの
+	# 三行精算（純益）と違う数字を同じ夜について約束することになる。
+	nx += _unit(font, nx, y2, "手取り") + DS.SP_2
+	nx += _num(font, Vector2(nx, y2), "gain", float(int(sim.night_profit(fc))), DS.T_SUB, GOLD) + DS.SP_2
 	nx += _unit(font, nx, y2, "G")
 	if int(fc["short"]) > 0:
 		var outs: Array = fc["out"]

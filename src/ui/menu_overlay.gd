@@ -356,7 +356,7 @@ func _keeper_profits() -> Dictionary:
 	for id in KuroData.GIRL_ORDER:
 		m["keeper"] = id
 		var f: Dictionary = sim.forecast_night()
-		out[id] = int(f["gold"]) - int(f["served"]) * MAT_COST
+		out[id] = int(sim.night_profit(f))
 	m["keeper"] = cur
 	_kp_cache = out
 	return out
@@ -1371,7 +1371,7 @@ func _mk_ledger(font: Font, r: Rect2, s: Dictionary, fc: Dictionary) -> void:
 # ── 経営 ─────────────────────────────────────────────────────────────────────
 
 ## 素材1個の原価。闇市の「素材箱（乾・肉・海 +2ずつ）」100G ÷ 6個 から引く。
-const MAT_COST := 17
+const MAT_COST := KuroData.MAT_COST   # 原価はデータ層が持つ（画面ごとに食い違わせない）
 const PAD := 16.0
 
 
@@ -1391,7 +1391,7 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 	var taste := String(s["forecast"])
 	var tcol: Color = KuroData.TASTE_COLORS.get(taste, ac)
 	# 今夜の純益は「この画面の結論」。値の変化はここで捕まえ、操作の手応えに使う。
-	var profit := int(fc["gold"]) - int(fc["served"]) * MAT_COST
+	var profit: int = sim.night_profit(fc)
 	var pn: Dictionary = Kit.num(_fx, "profit", float(profit), _t)
 	if absf(float(pn["d"])) >= 1.0:
 		_chg_d = float(pn["d"])

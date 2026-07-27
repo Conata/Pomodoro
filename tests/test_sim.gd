@@ -698,3 +698,11 @@ func _test_sync_level() -> void:
 		var lines: Array = nk.get("lines", [])
 		check(lines.size() == 3 and String(lines[2]) != "",
 				"%s を店番にしても精算の三行が揃う" % kid)
+	# 手元に残る額は1箇所で決める（ホームと経営が違う数字を約束していた）
+	var sp := _fresh(91)
+	sp.state["stock"] = {"dry": 30, "meat": 30, "sea": 30}
+	var fcp := sp.forecast_night()
+	check(sp.night_profit(fcp) == int(fcp["gold"]) - int(fcp["served"]) * KuroData.MAT_COST,
+			"純益 = 売上 - 皿数×原価")
+	check(sp.night_profit(fcp) < int(fcp["gold"]), "純益は売上より小さい")
+	check(sp.night_profit({}) == 0, "空の見込みでも落ちない")

@@ -1069,6 +1069,12 @@ func forecast_night() -> Dictionary:
 
 
 ## 夜営業シアターの給仕チップ（タップ給仕の実利・少額）。負値は無視。
+## 見込み／実績の辞書から「手元に残る額」を出す。売上 - 皿数×原価。
+## ホームの仕込みカードと経営の三行精算が同じ数字を約束するための一本化。
+func night_profit(d: Dictionary) -> int:
+	return int(d.get("gold", 0)) - int(d.get("served", 0)) * KuroData.MAT_COST
+
+
 func add_tips(amount: int) -> int:
 	amount = maxi(amount, 0)
 	state["gold"] = int(state["gold"]) + amount
