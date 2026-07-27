@@ -42,9 +42,11 @@ const PANEL_BG_ART := {
 	"map": "res://assets/generated/scene/dungeon.png",
 	"member": "res://assets/generated/scene/restaurant.png",
 	"market": "res://assets/generated/scene/street.png",
-	# management / renov は背景アートを持たない。shop_interior.png は看板と垂れ幕に
-	# 実在しない漢字（「秸乄たっリ」等）が描かれており、日本語話者には一目で偽物と分かる。
-	# 素材を等倍で描き直すまでは無地の地の方が良い（この2画面はUIで埋まっている）。
+	# management / renov は背景アートを持たない。**必要が無いことを実測で確かめた**：
+	# shop_interior.png の文字が無い下部を取り出して敷いてみたが、この2画面は
+	# UI が画面を覆い尽くすため、地の明るさは 7.8 で背景なしと同一だった（＝見えない）。
+	# 元絵の看板と垂れ幕には実在しない漢字（「秸乄たっリ」等）が描かれているので、
+	# もし将来ここに絵を置くなら、その領域を使わないこと。
 	"workshop": "res://assets/generated/bg/interior.png",
 }
 const PANEL_ACCENT := {
