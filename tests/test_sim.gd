@@ -30,6 +30,7 @@ func _initialize() -> void:
 	_test_daily_streak()
 	_test_forecast_night()
 	_test_save_roundtrip()
+	_test_sync_level()
 	if fails == 0:
 		print("ALL %d CHECKS PASSED" % checks)
 	else:
@@ -559,3 +560,37 @@ func _test_save_roundtrip() -> void:
 		sim2.step(KuroData.SIM_DT)
 	check(int(sim.state["gold"]) == int(sim2.state["gold"]), "復元後も決定論で一致")
 	check(float(sim.state["dist"]) == float(sim2.state["dist"]), "距離も一致")
+
+
+func _test_sync_level() -> void:
+	print("[同期率]")
+	var sim := _fresh(77)
+	sim.start_run("pomo", 25.0, 0.0)
+	check(sim.sync_level() == 1, "潜航開始時は Lv.1")
+	check(is_equal_approx(sim.sync_atk_mult(), 1.0), "Lv.1 の攻撃倍率は等倍")
+	var base_crit := sim.crit_mult()
+	_run_for(sim, 120.0)
+	check(sim.sync_level() >= 3, "2分でレベルが上がる（Lv.%d）" % sim.sync_level())
+	check(sim.sync_atk_mult() > 1.0, "同期率で攻撃倍率が伸びる")
+	check(sim.crit_mult() > base_crit, "Lv.3 の共鳴・急所が会心に効く")
+	check(sim.sync_resonances().size() >= 1, "取得済みの共鳴が一覧に出る")
+	var p := sim.sync_progress()
+	check(p >= 0.0 and p <= 1.0, "進捗は 0〜1 に収まる")
+	# レベルアップはイベントとして流れる（UIの演出はこれを拾う）
+	var sim2 := _fresh(78)
+	sim2.start_run("pomo", 25.0, 0.0)
+	var seen := 0
+	var named := 0
+	for i in int(180.0 / KuroData.SIM_DT):
+		sim2.step(KuroData.SIM_DT)
+		for e in sim2.drain_events():
+			if String(e.get("kind", "")) == "levelup":
+				seen += 1
+				if String(e.get("res_name", "")) != "":
+					named += 1
+	check(seen >= 3, "3分で levelup イベントが複数回流れる（%d回）" % seen)
+	check(named >= 1, "共鳴の名前が付いたレベルアップがある")
+	# 潜航ごとにリセットされる（25分そのものが山を登る形）
+	sim2.abandon_run()
+	sim2.start_run("pomo", 25.0, 0.0)
+	check(sim2.sync_level() == 1, "次の潜航では Lv.1 に戻る")

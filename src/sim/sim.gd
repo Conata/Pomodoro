@@ -312,11 +312,17 @@ func _tree_party(key: String) -> float:
 
 
 func crit_mult() -> float:
-	return 1.0 + renov_bonus("crit") + _tree_party("crit") + _affix_party("crit") * 0.01
+	var m := 1.0 + renov_bonus("crit") + _tree_party("crit") + _affix_party("crit") * 0.01
+	if _has_resonance("crit"):
+		m += 0.10   # 共鳴・急所
+	return m
 
 
 func dive_speed() -> float:
-	return KuroData.DIVE_SPEED * (1.0 + renov_bonus("spd") + _affix_party("spd") * 0.01)
+	var m := 1.0 + renov_bonus("spd") + _affix_party("spd") * 0.01
+	if _has_resonance("speed"):
+		m += 0.15   # 共鳴・健脚
+	return KuroData.DIVE_SPEED * m
 
 
 func sign_total() -> int:
@@ -422,6 +428,7 @@ func start_run(mode: String, minutes: float, anchor: float, task: String = "") -
 		"boxes": [], "mats": {"dry": 0, "meat": 0, "sea": 0},
 		"gold0": int(state["gold"]), "kills": 0,
 		"resyncs": 0, "door_pending": 0.0, "banked": 0,
+		"sync_xp": 0, "sync_lv": 1,
 	}
 	state["hp"] = {}
 	for id in divers():
@@ -624,6 +631,7 @@ func _combat_step(dt: float) -> void:
 	for id in alive:
 		dps += girl_atk(id)
 	dps *= crit_mult()
+	dps *= sync_atk_mult()   # 同期率レベルぶんの伸び（画面のレベル表示と一致させる）
 	# ムュウの歌（たまに全体回復）
 	if "muu" in alive and rng.chance(0.06 * dt / 0.2):
 		for id in alive:
@@ -640,6 +648,9 @@ func _combat_step(dt: float) -> void:
 				low = id
 		if low != "" and worst < 0.9:
 			state["hp"][low] = minf(girl_maxhp(low), float(state["hp"][low]) + girl_maxhp(low) * 0.03 * dt)
+	if _has_resonance("mend"):
+		for id in alive:
+			state["hp"][id] = minf(girl_maxhp(id), float(state["hp"][id]) + girl_maxhp(id) * 0.012 * dt)
 	_damage_mobs(dps * dt)
 	_dmg_pop_cd = maxf(0.0, _dmg_pop_cd - dt)
 	if _dmg_pop_cd <= 0.0 and not state["mobs"].is_empty():
@@ -734,6 +745,84 @@ func _sweep_dead_mobs() -> void:
 		_end_combat()
 
 
+
+# ── 同期率（潜航中だけ上がるレベル）────────────────────────────────────────
+# 25分の潜航で撃破は約600体（2.5秒に1体）。数字は動いているのに画面に出ていない、
+# というのが最大の問題だったので、撃破を「見える上昇」に変換する軸を1本通す。
+# 潜航ごとにリセットされる＝25分そのものが山を登る形になる。
+const SYNC_BASE := 10        # Lv1→2 に必要な XP
+const SYNC_STEP := 9         # レベルごとの増分（Lv12 到達で約605XP＝25分ぶん）
+const SYNC_ATK_PER_LV := 0.05  # 1レベルごとの攻撃倍率
+# 3レベルごとに手に入る「共鳴」＝名前の付いた効果。取った瞬間が演出の山になる。
+const SYNC_RESONANCE := {
+	3: {"id": "crit", "name": "共鳴・急所", "desc": "会心 +10%"},
+	6: {"id": "speed", "name": "共鳴・健脚", "desc": "潜行速度 +15%"},
+	9: {"id": "mend", "name": "共鳴・治癒", "desc": "戦闘中に少しずつ回復"},
+	12: {"id": "pierce", "name": "共鳴・貫通", "desc": "攻撃 +20%"},
+}
+
+
+## 同期率レベル（潜航中のみ意味を持つ。非潜航時は1）。
+func sync_level() -> int:
+	return int((state["run"] as Dictionary).get("sync_lv", 1))
+
+
+## 次のレベルまでに必要な XP。
+func sync_need(lv: int) -> int:
+	return SYNC_BASE + (lv - 1) * SYNC_STEP
+
+
+## 現レベル内の進捗 0.0〜1.0（バーの描画用）。
+func sync_progress() -> float:
+	var run: Dictionary = state["run"]
+	var need := sync_need(int(run.get("sync_lv", 1)))
+	return clampf(float(run.get("sync_xp", 0)) / maxf(need, 1.0), 0.0, 1.0)
+
+
+## 同期率による攻撃倍率。
+func sync_atk_mult() -> float:
+	var m := 1.0 + float(sync_level() - 1) * SYNC_ATK_PER_LV
+	if _has_resonance("pierce"):
+		m *= 1.20
+	return m
+
+
+## 取得済みの共鳴か。
+func _has_resonance(id: String) -> bool:
+	for lv in SYNC_RESONANCE:
+		if int(lv) <= sync_level() and String(SYNC_RESONANCE[lv]["id"]) == id:
+			return true
+	return false
+
+
+## 取得済みの共鳴の一覧（UI表示用）。
+func sync_resonances() -> Array:
+	var out := []
+	for lv in SYNC_RESONANCE:
+		if int(lv) <= sync_level():
+			out.append(SYNC_RESONANCE[lv])
+	return out
+
+
+## 撃破で同期率を上げる。レベルが上がったら levelup イベントを積む（演出はUI側）。
+func _add_sync_xp(n: int) -> void:
+	var run: Dictionary = state["run"]
+	if not bool(run.get("active", false)):
+		return
+	run["sync_xp"] = int(run.get("sync_xp", 0)) + n
+	while int(run["sync_xp"]) >= sync_need(int(run.get("sync_lv", 1))):
+		run["sync_xp"] = int(run["sync_xp"]) - sync_need(int(run["sync_lv"]))
+		run["sync_lv"] = int(run["sync_lv"]) + 1
+		var lv := int(run["sync_lv"])
+		var res: Dictionary = SYNC_RESONANCE.get(lv, {})
+		_emit("levelup", "同期率 Lv.%d" % lv, {
+			"lv": lv,
+			"res_name": String(res.get("name", "")),
+			"res_desc": String(res.get("desc", "")),
+			"atk": sync_atk_mult(),
+		})
+
+
 func _damage_mobs(amount: float) -> void:
 	var mobs: Array = state["mobs"]
 	while amount > 0.0 and not mobs.is_empty():
@@ -753,6 +842,7 @@ func _on_mob_killed(m: Dictionary) -> void:
 	var sc := KuroData.depth_scale(current_floor()) * difficulty_mult()
 	var run: Dictionary = state["run"]
 	run["kills"] = int(run["kills"]) + 1
+	_add_sync_xp(10 if m["boss"] else (3 if m["elite"] else 1))
 	var g := int(KuroData.GOLD_PER_KILL * sc * gold_mult() * gain_mult() \
 			* (10.0 if m["boss"] else (3.0 if m["elite"] else 1.0)))
 	state["gold"] = int(state["gold"]) + g
