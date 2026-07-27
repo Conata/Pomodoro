@@ -1139,7 +1139,7 @@ func close_day() -> Dictionary:
 		tastes[t] = int(tastes.get(t, 0)) + 1
 	for t in tastes:
 		if int(tastes[t]) >= 3:
-			customers += 3
+			customers += 2
 			synergies.append("ご当地フェア")
 			break
 	var penalized: bool = state["crowd_penalty"]
@@ -1154,7 +1154,7 @@ func close_day() -> Dictionary:
 		price_mult *= 1.10
 		synergies.append("静かな給仕")
 	if tastes.size() >= 4:
-		price_mult *= 1.15
+		price_mult *= 1.28
 		synergies.append("フルコース")
 	if keeper == "kiriko":
 		synergies.append("解析仕込み")

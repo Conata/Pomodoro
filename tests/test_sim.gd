@@ -661,3 +661,31 @@ func _test_sync_level() -> void:
 		check(int(r2["lost_gold"]) > 0, "帰られた客のぶん売上を失う")
 		check(int(sim6.state["pending_night"]["served"]) == served6 - 1, "精算の皿数が減る")
 	check(sim6.settle_service(-5, -1, -1)["delta"] == 0, "負の値は0として扱う")
+	# 献立の戦略が拮抗していること（どれか一つが支配的だと選択が消える）
+	var tastes := {}
+	for rid in KuroData.RECIPES:
+		var t := String(KuroData.RECIPES[rid]["taste"])
+		if not tastes.has(t): tastes[t] = []
+		(tastes[t] as Array).append(rid)
+	var same_deck: Array = []
+	var vary_deck: Array = []
+	for t in tastes:
+		if (tastes[t] as Array).size() >= 3 and same_deck.is_empty():
+			same_deck = (tastes[t] as Array).slice(0, 3)
+	for t in tastes:
+		if vary_deck.size() < 4: vary_deck.append((tastes[t] as Array)[0])
+		if same_deck.size() == 3 and String(KuroData.RECIPES[(tastes[t] as Array)[0]]["taste"]) \
+				!= String(KuroData.RECIPES[same_deck[0]]["taste"]):
+			same_deck.append((tastes[t] as Array)[0])
+	var function_gold := func(deck: Array, sv: int) -> int:
+		var sm := _fresh(sv)
+		sm.state["stock"] = {"dry": 40, "meat": 40, "sea": 40}
+		sm.state["morning"]["menu"] = deck
+		return int(sm.close_day()["gold"])
+	var same_tot := 0
+	var vary_tot := 0
+	for i in 12:
+		same_tot += function_gold.call(same_deck, 200 + i)
+		vary_tot += function_gold.call(vary_deck, 200 + i)
+	var ratio := float(maxi(same_tot, vary_tot)) / float(maxi(mini(same_tot, vary_tot), 1))
+	check(ratio < 1.20, "同じ味で固める戦略と4種そろえる戦略が拮抗する（比 %.2f）" % ratio)
