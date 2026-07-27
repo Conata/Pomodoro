@@ -282,9 +282,62 @@ func _num(font: Font, pos: Vector2, key: String, v: float, size: int, col: Color
 	return w
 
 
+# ── 見込みのキャッシュ ────────────────────────────────────────────────────
+# forecast_night() は献立を全皿ぶん回すので軽くはない。ところが描画は即時モードで、
+# 店番6人ぶんの比較（_keeper_profits）と罰の前後（_forecast_base）を合わせて
+# **毎フレーム最大9回**呼んでいた。入力が変わらない限り結果は同じなので、
+# 入力から署名を作って変化したときだけ計算し直す。
+# 署名にはプレイヤーの操作で動くものを入れる（店番・扉・献立・予報・日・所持金・
+# 在庫・切断フラグ・連続日数）。改装や好感度は所持金か日が必ず動くので拾える。
+var _fc_sig := ""
+var _fc_cache: Dictionary = {}
+var _fc_base_cache: Dictionary = {}
+var _kp_cache: Dictionary = {}
+
+
+func _fc_signature() -> String:
+	var m: Dictionary = sim.state["morning"]
+	var st: Dictionary = sim.state["stock"]
+	return "%s|%s|%s|%s|%d|%d|%d,%d,%d|%s|%d" % [
+		String(m.get("keeper", "")), String(m.get("door", "")),
+		",".join(PackedStringArray(m.get("menu", []))),
+		String(sim.state.get("forecast", "")),
+		int(sim.state.get("day", 0)), int(sim.state.get("gold", 0)),
+		int(st.get("dry", 0)), int(st.get("meat", 0)), int(st.get("sea", 0)),
+		str(bool(sim.state.get("crowd_penalty", false))),
+		int(sim.state.get("streak", 0)),
+	]
+
+
+## 署名が変わっていたらキャッシュを捨てる。各アクセサの先頭で呼ぶ。
+func _fc_invalidate() -> void:
+	var sig := _fc_signature()
+	if sig != _fc_sig:
+		_fc_sig = sig
+		_fc_cache = {}
+		_fc_base_cache = {}
+		_kp_cache = {}
+
+
+## 今夜の見込み（キャッシュ付き）。描画中はこれを使い、sim を直接叩かない。
+func _forecast() -> Dictionary:
+	_fc_invalidate()
+	if _fc_cache.is_empty():
+		_fc_cache = sim.forecast_night()
+	return _fc_cache
+
+
 ## 切断ペナルティが「無かった場合」の見込みを sim 自身に計算させる。
 ## UI 側で 0.6 を割り戻すと式が二重管理になるので、フラグを一瞬倒して読む。
 func _forecast_base() -> Dictionary:
+	_fc_invalidate()
+	if not _fc_base_cache.is_empty():
+		return _fc_base_cache
+	_fc_base_cache = _forecast_base_uncached()
+	return _fc_base_cache
+
+
+func _forecast_base_uncached() -> Dictionary:
 	sim.state["crowd_penalty"] = false
 	var b: Dictionary = sim.forecast_night()
 	sim.state["crowd_penalty"] = true
@@ -294,6 +347,9 @@ func _forecast_base() -> Dictionary:
 ## 「その子を店番にしたら今夜の純益はいくらか」を、店番の数だけ sim に計算させる。
 ## 適性だけでは決まらない（シナジー×献立×予報）ことを、数字の差分で見せるための材料。
 func _keeper_profits() -> Dictionary:
+	_fc_invalidate()
+	if not _kp_cache.is_empty():
+		return _kp_cache
 	var m: Dictionary = sim.state["morning"]
 	var cur := String(m["keeper"])
 	var out := {}
@@ -302,6 +358,7 @@ func _keeper_profits() -> Dictionary:
 		var f: Dictionary = sim.forecast_night()
 		out[id] = int(f["gold"]) - int(f["served"]) * MAT_COST
 	m["keeper"] = cur
+	_kp_cache = out
 	return out
 
 
@@ -1094,7 +1151,7 @@ func _draw_market(font: Font, sz: Vector2) -> void:
 	var top := HEADER_H
 	var bot := sz.y - FOOTER_H
 	Kit.hatch(self, Rect2(0, top, sz.x, bot - top), Color(ac.r, ac.g, ac.b, 0.05), 26.0, 9.0)
-	var fc: Dictionary = sim.forecast_night()
+	var fc: Dictionary = _forecast()
 	var y := top + 12.0
 
 	_stag()
@@ -1317,7 +1374,7 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 	# 斜めの地紋：無情報の平面を作らない
 	Kit.hatch(self, Rect2(0, top, sz.x, bot - top), Color(ac.r, ac.g, ac.b, 0.055), 26.0, 9.0)
 
-	var fc: Dictionary = sim.forecast_night()
+	var fc: Dictionary = _forecast()
 	var pen: bool = bool(s.get("crowd_penalty", false))
 	var base: Dictionary = _forecast_base() if pen else fc
 	var taste := String(s["forecast"])
