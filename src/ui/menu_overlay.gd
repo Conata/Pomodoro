@@ -902,8 +902,8 @@ func _draw_member(font: Font, sz: Vector2) -> void:
 
 	_stag()
 	# ③ 装備3枠（今まで画面に無かった事実。工房への導線も兼ねる）---------
-	y = _sec(font, y, w, "装備", ac, "タップで工房へ")
-	_mb_gear(font, Rect2(M, y, w, 92.0), gid)
+	y = _sec(font, y, w, "装備", ac, "装備中はタップで外す ／ 空きは工房へ")
+	_mb_gear(font, Rect2(M, y, w, 118.0), gid)
 	y += 108.0
 
 	# ⑥ 下端固定：編成の見立て（この画面の結論。経営の三行精算と同じ置き方）
@@ -1064,7 +1064,8 @@ func _mb_next(gid: String) -> String:
 	return "育成はすべて解放済"
 
 
-## 装備3枠（武器・防具・装飾）。ここでは外さない＝加工は工房に集約する。
+## 装備3枠（武器・防具・装飾）。装備中の枠は「外す」、空き枠は工房への導線。
+## 同じ枠が状態で役割を変える＝押せる場所を増やさずに操作を足す。
 func _mb_gear(font: Font, area: Rect2, gid: String) -> void:
 	var eq: Dictionary = sim.state["girls"][gid]["equip"]
 	var slots := ["weapon", "armor", "trinket"]
@@ -1088,11 +1089,16 @@ func _mb_gear(font: Font, area: Rect2, gid: String) -> void:
 					DS.T_BODY, col)
 			_txt(font, Vector2(r.position.x + 16.0, r.position.y + 80.0),
 					"score %.1f" % float(it.get("score", 0.0)), DS.T_MICRO, TEXT_DIM)
+			# 装備中の枠は「外す」。倉庫が満杯ならシム側が廃材化するので、そのことも書く。
+			var full: bool = (sim.state["storage"] as Array).size() >= KuroData.STORAGE_MAX
+			_txt(font, Vector2(r.position.x + 16.0, r.position.y + 102.0),
+					"廃材にする ▸" if full else "外す ▸", DS.T_MICRO, DS.DANGER if full else CYAN)
 		else:
 			_txt(font, Vector2(r.position.x + 16.0, r.position.y + 58.0), "空き", DS.T_SUB, TEXT_DIM)
 			_txt(font, Vector2(r.position.x + 16.0, r.position.y + 80.0), "工房で付ける", DS.T_MICRO, TEXT_DIM)
 		_end_sink(pv)
-		_hit(r, "_panel:workshop")
+		# 装備中は外す／空きは工房へ（同じ枠が状態で役割を変える＝押す場所を増やさない）
+		_hit(r, "unequip:%s:%s" % [gid, sid] if has else "_panel:workshop")
 
 
 ## 編成の見立て（この画面の結論）。潜るのは店番以外、という事実を数字で置く。

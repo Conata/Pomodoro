@@ -577,6 +577,7 @@ func _on_menu_action(id: String) -> void:
 		"skill": 3, "tree": 3, "bag_store": 2, "salvage_bag": 2,
 		"reroll_storage": 2, "salvage_storage": 2, "equip_storage": 3,
 		"socket_storage": 3, "remove_gem": 3, "stage": 2, "diff": 2,
+		"unequip": 3,
 		"restock": 2,
 	}
 	if need.has(verb) and parts.size() < int(need[verb]):
@@ -653,7 +654,20 @@ func _on_menu_action(id: String) -> void:
 			toast = "分解 → 廃材%d" % dust_storage if dust_storage > 0 else "分解できない"
 		"equip_storage":
 			var gid := parts[2]
-			toast = "%s に装備" % KuroData.GIRLS[gid]["name"] if sim.equip_from_storage(int(parts[1]), gid) else "装備できない"
+			if not KuroData.GIRLS.has(gid):
+				return
+			toast = "%s に装備" % String(KuroData.GIRLS[gid]["name"]) \
+					if sim.equip_from_storage(int(parts[1]), gid) else "装備できない"
+		"unequip":
+			# メンバー画面の装備枠から外して倉庫へ（倉庫満杯なら廃材化はシム側の判断）。
+			# 未知の id で GIRLS/SLOTS を引くと落ちるので、引く前に必ず存在を確かめる。
+			var ug := parts[1]
+			var uslot := parts[2]
+			if not KuroData.GIRLS.has(ug) or not SimItems.SLOTS.has(uslot):
+				return
+			toast = "%s の%sを外した" % [String(KuroData.GIRLS[ug]["name"]),
+					String((SimItems.SLOTS[uslot] as Dictionary)["name"])] \
+					if sim.unequip_to_storage(ug, uslot) else "外せる装備が無い"
 		"socket_storage":
 			toast = "装飾を嵌めた" if sim.socket_gem(int(parts[1]), parts[2]) else "装飾できない"
 		"remove_gem":
