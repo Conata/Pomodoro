@@ -2051,8 +2051,12 @@ func _draw_renov(font: Font, sz: Vector2) -> void:
 	# ツリーは残りの領域いっぱいに置く。節点は方向を持たない＝円のまま中央に組む。
 	var area := Rect2(M, y, w, maxf(conc_top - 16.0 - y, 320.0))
 	var nodes: Dictionary = KuroData.RENOV_NODES
-	var cell := minf(104.0, minf((area.size.x - 76.0) / 6.0, (area.size.y - 76.0) / 6.0))
-	var rad := clampf(cell * 0.34, 22.0, 34.0)
+	# 格子の間隔は縦横で別に取る。共通にすると狭い方（横幅）に頭打ちされ、
+	# 縦に大きな余白が残っていた。節点は円のままなので、行間だけ広げても
+	# 「ツリーの節点は方向を持たない」という形の意味は壊れない。
+	var cell_x := minf(104.0, (area.size.x - 76.0) / 6.0)
+	var cell_y := clampf((area.size.y - 76.0) / 6.0, cell_x, 148.0)
+	var rad := clampf(cell_x * 0.34, 22.0, 34.0)
 	var ox := area.position.x + area.size.x * 0.5
 	var oy := area.position.y + area.size.y * 0.5
 
@@ -2071,10 +2075,10 @@ func _draw_renov(font: Font, sz: Vector2) -> void:
 	for nid in nodes:
 		var node: Dictionary = nodes[nid]
 		var np: Array = node["pos"]
-		var to := Vector2(ox + float(np[0]) * cell, oy + float(np[1]) * cell)
+		var to := Vector2(ox + float(np[0]) * cell_x, oy + float(np[1]) * cell_y)
 		for p in node["prev"]:
 			var pp: Array = nodes[p]["pos"]
-			var fr := Vector2(ox + float(pp[0]) * cell, oy + float(pp[1]) * cell)
+			var fr := Vector2(ox + float(pp[0]) * cell_x, oy + float(pp[1]) * cell_y)
 			var owned_link: bool = (nid in s["renov"]) and (p in s["renov"])
 			var k := -1.0
 			if _burst.has(nid) and owned_link:
@@ -2085,7 +2089,7 @@ func _draw_renov(font: Font, sz: Vector2) -> void:
 	for nid in nodes:
 		var node: Dictionary = nodes[nid]
 		var np: Array = node["pos"]
-		var c := Vector2(ox + float(np[0]) * cell, oy + float(np[1]) * cell)
+		var c := Vector2(ox + float(np[0]) * cell_x, oy + float(np[1]) * cell_y)
 		var is_owned: bool = nid in s["renov"]
 		var avail: bool = sim.renov_available(nid)
 		var can: bool = avail and int(s["gold"]) >= int(node["cost"])
