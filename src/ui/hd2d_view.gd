@@ -89,18 +89,22 @@ func _ready() -> void:
 	# テーマ別リム発光／擬似反射：濡れた夜の街は反射＋冷色リム、店は暖色リム、自然はリム無し
 	match stage_theme:
 		"home":
-			_rim_col = Color(1.0, 0.55, 0.72, 0.20); _refl_on = false
+			# リム発光は use_hdr_2d 下で半透明ビルボードが不透明な板として焼ける不具合が出る
+			# （スプライトの透明部分がピンクの矩形になる）ため home では使わない。
+			_rim_on = false; _refl_on = false
 		"cyberpunk", "dive", "strip":
 			_rim_col = Color(0.45, 0.85, 1.0, 0.22); _refl_on = true
 		_:
 			_rim_on = false; _refl_on = false
 	# テーマ別カメラ：home は店先を見るので低い角度（見下ろしを弱める）
 	if stage_theme == "home":
-		_player_pos = Vector3(0, 0, 2.6)   # 主人公はパーティテーブル（VN窓に被らない位置へ）
-		_cam_target_override = Vector3(0, 0.8, 0.2)  # カウンター/バーを主役に
-		_cam_height = 6.0
-		_cam_dist = 12.0
-		_cam_dist_target = 12.0
+		# 下部UI（仕込みカード＋CTA＋VN窓）が約480px を占めるので、キャラは奥へ寄せ、
+		# 注視点を上げてディオラマの重心を画面の上寄りに置く。手前に出すとUIに脚を食われる。
+		_player_pos = Vector3(0, 0, 1.6)   # 主人公はパーティテーブル
+		_cam_target_override = Vector3(0, 1.35, -0.3)  # カウンター/バーを主役に
+		_cam_height = 5.2
+		_cam_dist = 13.5
+		_cam_dist_target = 13.5
 	elif stage_theme == "dive":
 		# 戦闘：パーティ手前(z+)・敵奥(z-)。下部UIに隠れないようパーティを少し奥へ。
 		_player_pos = Vector3(0, 0, 2.4)   # 主人公はパーティ中央
@@ -165,6 +169,9 @@ func _build_viewport() -> void:
 	_sub.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	_sub.msaa_3d = Viewport.MSAA_2X
 	_sub.positional_shadow_atlas_size = 2048
+	# HDR で描く。これが無いと RGBA8(LDR) に直接焼かれ、emission energy > 1.0 の指定が
+	# すべて純白へのクリップに化ける（ネオンが色を失って白い板になる）。
+	_sub.use_hdr_2d = true
 	vpc.add_child(_sub)
 
 
@@ -380,7 +387,8 @@ func _make_ground_texture() -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 
-func _add_box(pos: Vector3, sz: Vector3, col: Color, rough: float = 0.9, yaw: float = 0.0) -> void:
+func _add_box(pos: Vector3, sz: Vector3, col: Color, rough: float = 0.9, yaw: float = 0.0,
+		grain: float = 0.0) -> void:
 	var mi := MeshInstance3D.new()
 	var bm := BoxMesh.new()
 	bm.size = sz
@@ -390,11 +398,46 @@ func _add_box(pos: Vector3, sz: Vector3, col: Color, rough: float = 0.9, yaw: fl
 	var m := StandardMaterial3D.new()
 	m.albedo_color = col
 	m.roughness = rough
+	# grain > 0 で木目テクスチャを貼る。無地の直方体は「Blender初日の白箱」に見えるので、
+	# 面積の大きい什器（カウンター・棚板・壁）には必ず素地を入れる。
+	if grain > 0.0:
+		m.albedo_texture = _get_wood_tex()
+		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		m.uv1_scale = Vector3(sz.x * grain, sz.y * grain, sz.z * grain)
 	mi.material_override = m
 	_sub.add_child(mi)
 
 
+## 木目テクスチャ（手続き生成・32x32）。縦の板目と節を薄く入れた白木のグレースケール。
+## albedo_color に乗算されるので、色は呼び出し側の col が決める。
+var _wood_tex: ImageTexture = null
+
+func _get_wood_tex() -> ImageTexture:
+	if _wood_tex != null:
+		return _wood_tex
+	var n := 32
+	var img := Image.create(n, n, false, Image.FORMAT_RGB8)
+	for y in n:
+		for x in n:
+			# 板の継ぎ目（8px ごと）＋板ごとにずらした縦の木目
+			var plank := int(x / 8)
+			var seam := 1 if (x % 8 == 0) else 0
+			var g := 1.0
+			g -= 0.22 * float(seam)
+			g += sin(float(y) * 0.9 + float(plank) * 2.3) * 0.05
+			g += (float((x * 13 + y * 7) % 11) / 11.0 - 0.5) * 0.07
+			var knot := absf(sin(float(y) * 0.35 + float(plank))) > 0.985
+			if knot:
+				g -= 0.18
+			g = clampf(g, 0.55, 1.15)
+			img.set_pixel(x, y, Color(g, g * 0.985, g * 0.96))
+	_wood_tex = ImageTexture.create_from_image(img)
+	return _wood_tex
+
+
 ## 発光する箱（ネオン看板/提灯）。emission を glow_hdr_threshold 超えまで上げて滲ませる。
+## emission は最大チャンネルで正規化してから energy を掛ける。col をそのまま入れると
+## 暗いチャンネルまで一緒に持ち上がり、明るくするほど白に寄って「色の無いネオン」になる。
 func _emissive_box(pos: Vector3, sz: Vector3, col: Color, energy: float = 3.0, yaw: float = 0.0) -> void:
 	var mi := MeshInstance3D.new()
 	var bm := BoxMesh.new()
@@ -403,13 +446,62 @@ func _emissive_box(pos: Vector3, sz: Vector3, col: Color, energy: float = 3.0, y
 	mi.position = pos
 	mi.rotation_degrees = Vector3(0, yaw, 0)
 	var m := StandardMaterial3D.new()
-	m.albedo_color = col
+	m.albedo_color = col * 0.22   # 本体は暗い色板。光っているのは emission の側
 	m.emission_enabled = true
-	m.emission = col
+	var peak := maxf(maxf(col.r, col.g), col.b)
+	m.emission = col / maxf(peak, 0.001)   # 純色に正規化（彩度を保つ）
 	m.emission_energy_multiplier = energy
 	mi.material_override = m
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_sub.add_child(mi)
+
+
+
+## 赤提灯1個（紡錘形の胴＋上下の口金＋吊り紐＋白い芯）。
+## 発光する箱は「光る板」にしか見えないので、シルエットで提灯だと分かる形にする。
+func _add_lantern(pos: Vector3, col: Color) -> void:
+	# 胴：カプセルを縦に潰して紡錘形に
+	var body := MeshInstance3D.new()
+	var cm := CapsuleMesh.new()
+	cm.radius = 0.24
+	cm.height = 0.62
+	cm.radial_segments = 10
+	cm.rings = 4
+	body.mesh = cm
+	body.position = pos
+	body.scale = Vector3(1.0, 0.78, 1.0)
+	var m := StandardMaterial3D.new()
+	m.albedo_color = col * 0.25
+	m.emission_enabled = true
+	var peak := maxf(maxf(col.r, col.g), col.b)
+	m.emission = col / maxf(peak, 0.001)
+	m.emission_energy_multiplier = 1.25
+	m.roughness = 0.7
+	body.material_override = m
+	body.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_sub.add_child(body)
+	# 上下の黒い口金（提灯の輪郭を締める）
+	for dy in [0.28, -0.28]:
+		_add_box(pos + Vector3(0, dy, 0), Vector3(0.16, 0.06, 0.16), Color(0.06, 0.03, 0.03), 0.6)
+	# 吊り紐
+	_add_box(pos + Vector3(0, 0.46, 0), Vector3(0.03, 0.34, 0.03), Color(0.10, 0.06, 0.05), 0.8)
+	# 芯：小さく強い白。夜の画で一番明るい点になる
+	var core := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.075
+	sm.height = 0.15
+	sm.radial_segments = 8
+	sm.rings = 4
+	core.mesh = sm
+	core.position = pos
+	var cmat := StandardMaterial3D.new()
+	cmat.albedo_color = Color(0.3, 0.15, 0.12)
+	cmat.emission_enabled = true
+	cmat.emission = Color(1.0, 0.93, 0.86)
+	cmat.emission_energy_multiplier = 3.2
+	core.material_override = cmat
+	core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_sub.add_child(core)
 
 
 ## 漂うボクセル粒子（小さな発光キューブ）。空気の粒子感＝HD-2Dのアトモスフィア。
@@ -665,16 +757,29 @@ func _build_env_home() -> void:
 	env.background_color = Color(0.03, 0.035, 0.06)  # 夜
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.34, 0.28, 0.24)  # 暖色寄りの環境光（店内）
-	env.ambient_light_energy = 0.5
+	env.ambient_light_energy = 0.25
 	env.glow_enabled = true
-	# 露出対策：閾値を1.0超に上げ「本当に光る面」だけ滲ませる（舞台の白飛び防止）
-	env.glow_intensity = 0.40
-	env.glow_bloom = 0.04
-	env.glow_hdr_threshold = 1.35
+	# HDR 描画（use_hdr_2d）前提。閾値1.0＝「1を超えた分だけ」滲ませ、加算合成で色を残す。
+	# SOFTLIGHT（既定）はハローを白へ寄せるのでネオンの色が死ぬ。
+	env.glow_intensity = 0.55
+	env.glow_bloom = 0.10
+	env.glow_hdr_threshold = 1.0
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE
+	env.set("glow_levels/4", true)   # 小さい光芯
+	env.set("glow_levels/5", true)   # 広い色ハロー
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.tonemap_white = 3.0   # 既定1.0だとフィルミックのロールオフが効かず1.0超が即白になる
+	# 空気遠近：奥のネオン街を沈ませて主役（店先）を前に出す
 	env.fog_enabled = true
-	env.fog_light_color = Color(0.10, 0.12, 0.22)
-	env.fog_density = 0.02
+	env.fog_light_color = Color(0.05, 0.06, 0.13)
+	env.fog_density = 0.05
+	env.fog_aerial_perspective = 0.6
+	env.fog_sky_affect = 1.0
+	# 夜の露出：全体を少し締め、ネオンの彩度を取り戻す
+	env.adjustment_enabled = true
+	env.adjustment_contrast = 1.18
+	env.adjustment_brightness = 0.90
+	env.adjustment_saturation = 1.30
 	var we := WorldEnvironment.new()
 	we.environment = env
 	_sub.add_child(we)
@@ -702,27 +807,27 @@ func _build_props_home() -> void:
 	_add_gltf(P + "Platform_4x4.gltf", Vector3(-6.4, 4.0, -11.0), 2.0, 0)
 	_add_gltf(P + "Platform_4x4.gltf", Vector3(6.4, 4.4, -11.4), 2.1, 0)
 	_add_gltf(P + "Platform_4x2.gltf", Vector3(0.0, 5.0, -12.0), 2.0, 0)
-	_add_gltf(P + "Sign_1.gltf", Vector3(-4.4, 3.6, -9.6), 2.6, 0, 2.6)
-	_add_gltf(P + "Sign_3.gltf", Vector3(4.4, 3.8, -9.8), 2.6, 0, 2.6)
-	_add_gltf(P + "Sign_Corner_1.gltf", Vector3(6.0, 2.8, -8.6), 2.2, -25, 2.6)
+	_add_gltf(P + "Sign_1.gltf", Vector3(-4.4, 3.6, -9.6), 2.6, 0, 1.0)
+	_add_gltf(P + "Sign_3.gltf", Vector3(4.4, 3.8, -9.8), 2.6, 0, 1.0)
+	_add_gltf(P + "Sign_Corner_1.gltf", Vector3(6.0, 2.8, -8.6), 2.2, -25, 1.0)
 	_add_gltf(P + "Antenna_1.gltf", Vector3(-5.4, 5.6, -10.6), 1.6, 0)
 	_add_gltf(P + "AC_Stacked.gltf", Vector3(5.6, 1.8, -8.8), 1.3, -15)
-	_neon_light(Vector3(-4.2, 2.8, -8.6), NEON_MAGENTA, 3.0, 9.0)
-	_neon_light(Vector3(4.2, 2.8, -8.8), NEON_CYAN, 3.0, 9.0)
+	_neon_light(Vector3(-4.2, 2.8, -8.6), NEON_MAGENTA, 1.3, 7.0)
+	_neon_light(Vector3(4.2, 2.8, -8.8), NEON_CYAN, 1.3, 7.0)
 
 	# ── 店先「黒猫飯店」：カウンター＋暖色の店内＋赤い看板 ──
 	# カウンター（横長の台）
-	_add_box(Vector3(0.0, 0.55, -1.2), Vector3(7.0, 1.1, 1.0), Color(0.16, 0.10, 0.08), 0.5)
-	_add_box(Vector3(0.0, 1.15, -1.2), Vector3(7.2, 0.12, 1.2), Color(0.28, 0.18, 0.12), 0.4)  # 天板
+	_add_box(Vector3(0.0, 0.55, -1.2), Vector3(7.0, 1.1, 1.0), Color(0.16, 0.10, 0.08), 0.5, 0.0, 0.9)
+	_add_box(Vector3(0.0, 1.15, -1.2), Vector3(7.2, 0.12, 1.2), Color(0.28, 0.18, 0.12), 0.4, 0.0, 0.9)  # 天板
 	# 背後の店内壁（暖色で発光させて「店内の灯り」）
-	_add_box(Vector3(0.0, 1.8, -3.6), Vector3(8.0, 3.6, 0.4), Color(0.18, 0.10, 0.06), 0.6)
-	_emissive_box(Vector3(0.0, 1.7, -3.35), Vector3(6.4, 2.0, 0.1), WARM, 0.5)  # 暖色の店内窓
+	_add_box(Vector3(0.0, 1.8, -3.6), Vector3(8.0, 3.6, 0.4), Color(0.18, 0.10, 0.06), 0.6, 0.0, 0.7)
+	_emissive_box(Vector3(0.0, 1.7, -3.35), Vector3(6.4, 2.0, 0.1), WARM, 0.35)  # 暖色の店内窓
 	# ピンクのネオン看板「黒猫飯店」（カウンター上・店の主役サイン）
 	# 発光は看板の"面"を光らせるだけに留め（強すぎると白飛びして文字が消える）、
 	# 店名は Label3D で面の手前に置く。看板に文字が無いと「作りかけ」に見えるため。
 	const PINK := Color(1.0, 0.32, 0.72)
 	_add_box(Vector3(0.0, 3.5, -2.62), Vector3(4.9, 1.0, 0.22), Color(0.10, 0.03, 0.07), 0.5)  # 看板の枠
-	_emissive_box(Vector3(0.0, 3.5, -2.6), Vector3(4.8, 0.9, 0.2), PINK, 1.15)
+	_emissive_box(Vector3(0.0, 3.5, -2.6), Vector3(4.8, 0.9, 0.2), PINK, 1.6)
 	_sign_text("黒猫飯店", Vector3(0.0, 3.5, -2.46), 0.62, Color(1.0, 0.93, 0.98))
 	_emissive_box(Vector3(-2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), PINK, 1.1)  # タテ看板
 	_sign_text("酒", Vector3(-2.9, 3.32, -2.28), 0.30, Color(1.0, 0.95, 0.99))
@@ -730,9 +835,10 @@ func _build_props_home() -> void:
 	_emissive_box(Vector3(2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), NEON_CYAN, 1.05)  # 対のシアン
 	_sign_text("点", Vector3(2.9, 3.32, -2.28), 0.30, Color(0.92, 0.99, 1.0))
 	_sign_text("心", Vector3(2.9, 2.72, -2.28), 0.30, Color(0.92, 0.99, 1.0))
-	# 赤提灯を店先に吊るす（中華）
+	# 赤提灯を店先に吊るす（中華）。箱ではなく紡錘形＋上下の黒い口金＋吊り紐で「提灯の形」にし、
+	# 中心に白に近い芯を仕込む（画面で最も明るい点を意図的に作る＝夜の絵の基準点）。
 	for x in [-3.4, -2.0, -0.7, 0.7, 2.0, 3.4]:
-		_emissive_box(Vector3(x, 2.7, -0.4), Vector3(0.42, 0.6, 0.42), NEON_RED, 1.15)
+		_add_lantern(Vector3(x, 2.7, -0.4), NEON_RED)
 	# 「千客万来」の赤い札（黒猫飯店サインの下）
 	_emissive_box(Vector3(0.0, 2.45, -2.5), Vector3(1.7, 0.46, 0.15), NEON_RED, 1.05)
 	_sign_text("千客萬来", Vector3(0.0, 2.45, -2.40), 0.26, Color(1.0, 0.90, 0.72))
@@ -742,22 +848,24 @@ func _build_props_home() -> void:
 		Color(0.95, 0.6, 0.3), Color(0.4, 0.85, 0.6), Color(0.85, 0.4, 0.55),
 		Color(0.5, 0.65, 0.95), Color(0.95, 0.82, 0.4),
 	]
-	_add_box(Vector3(0.0, 1.30, -3.2), Vector3(7.6, 0.06, 0.3), Color(0.22, 0.14, 0.09), 0.5)  # 棚板
-	_add_box(Vector3(0.0, 1.86, -3.2), Vector3(7.6, 0.06, 0.3), Color(0.22, 0.14, 0.09), 0.5)
+	_add_box(Vector3(0.0, 1.30, -3.2), Vector3(7.6, 0.06, 0.3), Color(0.22, 0.14, 0.09), 0.5, 0.0, 1.2)  # 棚板
+	_add_box(Vector3(0.0, 1.86, -3.2), Vector3(7.6, 0.06, 0.3), Color(0.22, 0.14, 0.09), 0.5, 0.0, 1.2)
 	for row in 2:
 		var sy := 1.5 + row * 0.56
 		for i in 9:
 			_emissive_box(Vector3(-3.6 + i * 0.9, sy, -3.12), Vector3(0.15, 0.4, 0.12),
-					bottle_cols[i % bottle_cols.size()], 0.85)
+					bottle_cols[i % bottle_cols.size()], 0.45)
 
 	# ── パーティテーブル（光る紫＝編成卓）。VN窓に被らないよう奥めに小さく ──
 	const PURPLE := Color(0.65, 0.3, 1.0)
 	_add_box(Vector3(0.0, 0.30, 2.6), Vector3(2.4, 0.6, 1.4), Color(0.10, 0.08, 0.14), 0.4)  # 卓本体
-	_emissive_box(Vector3(0.0, 0.62, 2.6), Vector3(2.1, 0.12, 1.1), PURPLE, 2.6)  # 天面の発光
+	_add_box(Vector3(0.0, 0.62, 2.6), Vector3(2.1, 0.12, 1.1), Color(0.07, 0.05, 0.10), 0.4)  # 天面
+	_emissive_box(Vector3(0.0, 0.62, 3.14), Vector3(2.1, 0.05, 0.06), PURPLE, 1.4)  # 縁だけ光らせる
+	_emissive_box(Vector3(0.0, 0.62, 2.06), Vector3(2.1, 0.05, 0.06), PURPLE, 1.4)
 	_neon_light(Vector3(0.0, 1.3, 2.6), PURPLE, 3.2, 5.5)  # 卓からの紫光
 
 	# ── 店内の暖色光（カウンター裏）＋提灯＋窓外のネオンで寒暖対比 ──
-	_neon_light(Vector3(0.0, 2.0, -2.8), WARM, 4.0, 8.0)
+	_neon_light(Vector3(0.0, 2.0, -2.8), WARM, 1.8, 5.5)
 	_neon_light(Vector3(-2.6, 2.4, -0.4), NEON_RED, 1.8, 5.0)
 	_neon_light(Vector3(2.6, 2.4, -0.4), PINK, 1.8, 5.0)
 
@@ -863,7 +971,7 @@ func _make_blob_mesh(w: float) -> MeshInstance3D:
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	m.albedo_texture = _get_blob_tex()
-	m.albedo_color = Color(0, 0, 0, 0.55)
+	m.albedo_color = Color(0.02, 0.0, 0.04, 0.78)
 	m.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 	mi.material_override = m
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -1068,8 +1176,8 @@ const HOME_NPCS := [
 	{"id": "nurse",  "pos": Vector3(-2.4, 0.0, -2.6), "flip": false},  # 店番
 	{"id": "mil",    "pos": Vector3(0.0, 0.0, -2.6),  "flip": false},  # 店番（店長）
 	{"id": "muu",    "pos": Vector3(2.4, 0.0, -2.6),  "flip": false},  # 店番
-	{"id": "doctor", "pos": Vector3(-2.1, 0.0, 2.2),  "flip": false},  # パーティ
-	{"id": "yuzuki", "pos": Vector3(2.1, 0.0, 2.2),   "flip": false},  # パーティ
+	{"id": "doctor", "pos": Vector3(-1.5, 0.0, 1.4),  "flip": false},  # パーティ
+	{"id": "yuzuki", "pos": Vector3(1.5, 0.0, 1.4),   "flip": false},  # パーティ
 ]
 
 
@@ -1134,8 +1242,8 @@ func _build_npc_roster(roster: Array) -> void:
 # ── ホームの経営状態反映（⑤ ゲーム状態がディオラマに見える）─────────────────
 
 # 編成卓まわりの立ち位置（主人公 kiriko は _player_pos=中央にいるので空けてある）
-const TABLE_SLOTS := [Vector3(-2.2, 0, 2.2), Vector3(2.2, 0, 2.2),
-		Vector3(-1.3, 0, 3.1), Vector3(1.3, 0, 3.1), Vector3(0, 0, 3.8)]
+const TABLE_SLOTS := [Vector3(-1.5, 0, 1.4), Vector3(1.5, 0, 1.4),
+		Vector3(-0.9, 0, 2.2), Vector3(0.9, 0, 2.2), Vector3(0, 0, 2.9)]
 
 
 ## 経営状態をディオラマへ反映する（main.gd が HOME 表示時と朝の操作後に呼ぶ）。
@@ -1237,7 +1345,7 @@ func _build_renov_prop(id: String) -> void:
 ## HD-2D の定番どおり板の影テクスチャを地面に寝かせて確実に接地させる。
 var _blob_tex: Texture2D = null
 
-func _add_blob_shadow(pos: Vector3, w: float = 1.5) -> MeshInstance3D:
+func _add_blob_shadow(pos: Vector3, w: float = 1.05) -> MeshInstance3D:
 	var mi := _make_blob_mesh(w)
 	mi.position = pos + Vector3(0, 0.03, 0)
 	_sub.add_child(mi)
@@ -1272,7 +1380,7 @@ func _make_billboard() -> Sprite3D:
 	spr.double_sided = true
 	spr.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	spr.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD  # 影を落とし、輪郭をくっきり
-	spr.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	spr.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return spr
 
 
@@ -1468,7 +1576,7 @@ func _build_vignette() -> void:
 	# strip(横帯)は左右対峙で中央、それ以外は見下ろし構図で中央やや下。
 	var focus := 0.52
 	var fsize := 0.16
-	var blur := 2.4
+	var blur := 3.4
 	if stage_theme == "home":
 		focus = 0.46
 		fsize = 0.18
