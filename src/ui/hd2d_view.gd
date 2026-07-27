@@ -74,6 +74,7 @@ var _npc_refl: Array = []       # 各 NPC の擬似反射（無効時 null）
 var _npc_ids: Array = []        # ロスターの girl id（配置更新・会話マーカー用）
 var _renov_built: Dictionary = {}   # 建立済みの改装プロップ（node id -> true）
 var _talk_label: Label3D = null     # 会話できる子の頭上「！」
+var _talk_id := ""                  # その子の id（頭上の高さはキャラの表示倍率で変わる）
 # リム発光／擬似反射の設定（テーマ別に _ready で決定）
 var _rim_on := true
 var _rim_col := Color(0.45, 0.85, 1.0, 0.22)
@@ -1337,7 +1338,7 @@ func _build_props() -> void:
 func _build_player() -> void:
 	_player_anim = ChibiAnim.new(PLAYER_ID)
 	_player_rig = _make_rig(PLAYER_ID, 0)
-	_player = _make_billboard()
+	_player = _make_billboard(PLAYER_ID)
 	_sub.add_child(_player)
 	if _rim_on:
 		_player_rim = _make_aura(_rim_col, false)
@@ -1415,9 +1416,9 @@ func _build_npc_roster(roster: Array) -> void:
 		_npc_dir.append(Vector3(1, 0, 0))
 		_npc_lean.append(0.0)
 		var anim := ChibiAnim.new(String(d["id"]))
-		var spr := _make_billboard()
+		var spr := _make_billboard(String(d["id"]))
 		var base_pos: Vector3 = d["pos"]
-		spr.position = base_pos + Vector3(0, _sprite_half_h(), 0)
+		spr.position = base_pos + Vector3(0, _half_h_for(String(d["id"])), 0)
 		spr.flip_h = bool(d["flip"])
 		_sub.add_child(spr)
 		_npc_sprites.append(spr)
@@ -1523,7 +1524,8 @@ func _set_talk_marker(id: String) -> void:
 	_talk_label.outline_size = 16
 	_talk_label.outline_modulate = Color(0.05, 0.03, 0.0, 0.9)
 	_talk_label.no_depth_test = true
-	_talk_label.position = Vector3(0, _sprite_half_h() + 0.55, 0)
+	_talk_label.position = Vector3(0, _half_h_for(id) + 0.55, 0)
+	_talk_id = id
 	_npc_sprites[i].add_child(_talk_label)
 
 
@@ -1539,7 +1541,7 @@ func _update_talk_marker() -> void:
 	elif u < 0.62:
 		var v := (u - 0.30) / 0.32
 		h = 1.0 - v * v                        # 落下：二次で加速
-	_talk_label.position.y = _sprite_half_h() + 0.55 + h * 0.20
+	_talk_label.position.y = _half_h_for(_talk_id) + 0.55 + h * 0.20
 
 
 ## 改装ノードの見た目プロップ。解放時に一度だけ建てる（改装は不可逆）。
@@ -1595,9 +1597,35 @@ func _get_blob_tex() -> Texture2D:
 
 
 ## 共通のビルボード Sprite3D を生成（Y 固定ビルボード＝直立したまま常にカメラを向く）。
-func _make_billboard() -> Sprite3D:
+# ── 等身のばらつきを和らげる暫定の表示倍率 ──────────────────────────────
+# 生成スプライトは頭の大きさがキャラ間で 1.47倍ばらついている（頭幅/全高の実測は
+# ドクター 0.266 に対しキリコ・ミル・ユズキ 0.391）。この比は絵に焼き込まれていて
+# 拡大縮小では直せない＝本当の解決は作り直し（docs/BACKLOG.md の A）。
+#
+# ただし「並んだときに同じ絵の世界の住人に見えるか」は、頭の**絶対的な大きさ**が
+# 揃っているかに強く効く。そこで頭幅を目標値へ寄せる倍率の平方根だけ掛ける。
+# 完全に頭を揃えると身長が 1.47倍ばらついて別の不自然さが出るので、その中間を取る。
+# 実測の頭幅：キリコ/ミル/ユズキ 75・ムュウ 60・ドクター 51・ナース 66（目標 70）。
+const CHAR_SCALE := {
+	"kiriko": 0.966, "mil": 0.966, "yuzuki": 0.966,
+	"muu": 1.080, "doctor": 1.171, "nurse": 1.030,
+}
+
+
+func _char_scale(id: String) -> float:
+	return float(CHAR_SCALE.get(id, 1.0))
+
+
+## そのキャラの足元を地面に合わせるための中心オフセット。
+func _half_h_for(id: String) -> float:
+	return 192.0 * PIXEL_SIZE * _char_scale(id) * 0.5
+
+
+## 共通のビルボード Sprite3D を生成（Y 固定ビルボード＝直立したまま常にカメラを向く）。
+## id を渡すと表示倍率が乗る（オーラは _sync_aura が本体から倍率をコピーする）。
+func _make_billboard(id := "") -> Sprite3D:
 	var spr := Sprite3D.new()
-	spr.pixel_size = PIXEL_SIZE
+	spr.pixel_size = PIXEL_SIZE * _char_scale(id)
 	spr.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 	# shaded=true でシーンライト（ネオン/月光）を受け、環境に馴染ませる。
 	# Y固定ビルボードは法線がカメラ向きに回るので、周囲の OmniLight がキャラを染める。
@@ -1882,7 +1910,7 @@ func _process(delta: float) -> void:
 	# バネを通して「体が遅れて追いつく」ようにする（止まった瞬間に一度沈んで戻る）
 	var p_y := _spring(_player_body, "y", "vy", p_ty, 150.0, 16.0, delta)
 	var p_x := _spring(_player_body, "x", "vx", p_tx, 60.0, 12.0, delta)
-	_player.position = _player_pos + Vector3(p_x, _sprite_half_h() + p_y, 0)
+	_player.position = _player_pos + Vector3(p_x, _half_h_for(PLAYER_ID) + p_y, 0)
 	if _player_light != null:
 		_player_light.position = _player_pos + Vector3(0, 2.2, 0.8)
 	_place_shadow(_player_shadow, _player_pos, p_y)
@@ -1911,7 +1939,8 @@ func _process(delta: float) -> void:
 		var by := _spring(body, "y", "vy", ty, 150.0, 16.0, delta)
 		var bx := _spring(body, "x", "vx", tx, 60.0, 12.0, delta)
 		var ground: Vector3 = _npc_pos[i]
-		_npc_sprites[i].position = ground + Vector3(bx, _sprite_half_h() + by, 0)
+		var half_i := _half_h_for(String(_npc_ids[i]) if i < _npc_ids.size() else "")
+		_npc_sprites[i].position = ground + Vector3(bx, half_i + by, 0)
 		if i < _npc_shadow.size():
 			_place_shadow(_npc_shadow[i], ground, by)
 		if nmoving and nmove != Vector3.ZERO:
