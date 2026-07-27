@@ -689,3 +689,12 @@ func _test_sync_level() -> void:
 		vary_tot += function_gold.call(vary_deck, 200 + i)
 	var ratio := float(maxi(same_tot, vary_tot)) / float(maxi(mini(same_tot, vary_tot), 1))
 	check(ratio < 1.20, "同じ味で固める戦略と4種そろえる戦略が拮抗する（比 %.2f）" % ratio)
+	# 店番は6人から選べる。誰を選んでも精算が通ること（台詞プールの取りこぼしで落ちていた）
+	for kid in KuroData.GIRL_ORDER:
+		var sk := _fresh(90)
+		sk.state["stock"] = {"dry": 30, "meat": 30, "sea": 30}
+		sk.set_keeper(kid)
+		var nk := sk.close_day()
+		var lines: Array = nk.get("lines", [])
+		check(lines.size() == 3 and String(lines[2]) != "",
+				"%s を店番にしても精算の三行が揃う" % kid)
