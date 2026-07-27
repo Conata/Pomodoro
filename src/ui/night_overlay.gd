@@ -46,7 +46,7 @@ const WOOD_EDGE := Color(0.82, 0.60, 0.34)
 const WOOD_APRON := Color(0.215, 0.145, 0.105)
 const WOOD_DARK := Color(0.115, 0.08, 0.065)
 const FLOOR_C := Color(0.058, 0.052, 0.078)
-const LANT_CORE := Color(1.0, 0.96, 0.88)
+const LANT_CORE := Color(1.0, 0.99, 0.96)   # 提灯の芯＝画面最大輝度。揺らさない。
 const LANT_WARM := Color(1.0, 0.72, 0.36)
 const RIM := Color(1.0, 0.80, 0.50, 0.85)
 const INK := Color(0.02, 0.02, 0.045, 0.92)
@@ -284,7 +284,7 @@ func _serve(c: Dictionary, tapped: bool) -> void:
 		var tip := maxi(int(int(s["gold"]) * rate), 1)
 		_tips += tip
 		_floats.append({"pos": Vector2(seat_x, cy - CUST_H - 6.0),
-				"text": "チップ +%d" % tip, "col": PINK, "t": 0.0})
+				"text": "チップ +%d" % tip, "col": GOLD, "t": 0.0})
 		tip_tapped.emit()
 
 
@@ -361,8 +361,7 @@ func _draw() -> void:
 
 	# ── 8. 前板（下半身を隠す）＋天面の光る前縁 ─────────────────────
 	_draw_apron(sz, cy)
-	draw_rect(Rect2(0, cy - 3, sz.x, 4), WOOD_EDGE)
-	draw_rect(Rect2(0, cy + 1, sz.x, 2), Color(1.0, 0.86, 0.60, 0.55))
+	_draw_edge(sz, cy)
 
 	# ── 9. 天面の上のもの（席札・おしぼり・出された皿）────────────
 	_draw_counter_props(font, cy)
@@ -376,10 +375,10 @@ func _draw() -> void:
 		var pos: Vector2 = (f["pos"] as Vector2) + Vector2(0, -26.0 * ft)
 		var col: Color = f["col"]
 		var s := String(f["text"])
-		var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+		var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.M)).x
 		var fx := clampf(pos.x - w * 0.5, 10.0, sz.x - w - 10.0)
-		draw_string(font, Vector2(fx + 1, pos.y + 2), s, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0, 0, 0, 0.65 * a))
-		draw_string(font, Vector2(fx, pos.y), s, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(col.r, col.g, col.b, a))
+		draw_string(font, Vector2(fx + 1, pos.y + 2), s, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.M), Color(0, 0, 0, 0.65 * a))
+		draw_string(font, Vector2(fx, pos.y), s, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.M), Color(col.r, col.g, col.b, a))
 
 	# ── 11. 土間（反射・スキャンライン・黒猫）──────────────────────
 	_draw_floor(sz, cy, floor_y, rec.position.y)
@@ -390,11 +389,11 @@ func _draw() -> void:
 	# ── 13. ヒント ─────────────────────────────────────────────────
 	if _t < 8.0:
 		var hint := "！の客をタップで給仕 — チップが入る"
-		var hw := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+		var hw := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S)).x
 		var ha := clampf((8.0 - _t) / 1.2, 0.0, 1.0)
 		var hr := Rect2(q((sz.x - hw) * 0.5 - 15.0), rec.position.y - 48.0, q(hw + 30.0), 33.0)
 		_panel(hr, Color(0.04, 0.035, 0.06, 0.86 * ha), Color(GOLD.r, GOLD.g, GOLD.b, 0.40 * ha), 8, 1.0)
-		_sh(font, Vector2(hr.position.x + 15, hr.position.y + 23), hint, 15, Color(TEXT.r, TEXT.g, TEXT.b, ha))
+		_sh(font, Vector2(hr.position.x + 15, hr.position.y + 23), hint, int(FS.S), Color(TEXT.r, TEXT.g, TEXT.b, ha))
 
 	# ── 14. ヘッダー（右端基点で右から積む）─────────────────────────
 	_draw_header(font, sz)
@@ -498,7 +497,7 @@ func _draw_wall(sz: Vector2, art_top: float) -> void:
 func _draw_plant(top: Vector2) -> void:
 	var pot_y := q(top.y + 42.0)
 	for dx in [-12.0, 0.0, 12.0]:
-		draw_line(Vector2(top.x + dx * 0.3, top.y), Vector2(top.x + dx, pot_y), Color(0.30, 0.24, 0.16), 2.0)
+		_pxdiag(Vector2(top.x + dx * 0.3, top.y), Vector2(top.x + dx, pot_y), Color(0.30, 0.24, 0.16))
 	draw_rect(Rect2(top.x - 15, pot_y, 30, 21), Color(0.36, 0.20, 0.14))
 	draw_rect(Rect2(top.x - 18, pot_y, 36, 6), Color(0.46, 0.27, 0.18))
 	var leaf := Color(0.16, 0.32, 0.20)
@@ -532,6 +531,8 @@ func _draw_backart(sz: Vector2, cy: float) -> void:
 ## 画面で最も明るい点はここ。芯を白に近い暖色で置き、周りへ光をこぼす。
 func _draw_lanterns(sz: Vector2, art_top: float, cy: float) -> void:
 	var flick := 1.0 + 0.05 * sin(_t * 3.1) + 0.03 * sin(_t * 7.7)
+	# 環境光は提灯より先に。芯の上に半透明を重ねると最明部が245を割る。
+	_glow(Vector2(sz.x * 0.5, cy - 150.0), sz.x * 0.75, LANT_WARM, 0.10)
 	_lantern(Vector2(q(sz.x * 0.22), 93.0), q(66.0), 20.0, flick)
 	_lantern(Vector2(q(sz.x * 0.50), 93.0), q(105.0), 26.0, 1.0 / flick)
 	_lantern(Vector2(q(sz.x * 0.78), 93.0), q(66.0), 20.0, flick * 0.98)
@@ -539,7 +540,6 @@ func _draw_lanterns(sz: Vector2, art_top: float, cy: float) -> void:
 	for fx in [0.20, 0.80]:
 		var lp := Vector2(q(sz.x * fx), q(art_top + 24.0))
 		_lantern(lp - Vector2(0, 24.0), 24.0, 13.0, flick)
-	_glow(Vector2(sz.x * 0.5, cy - 150.0), sz.x * 0.75, LANT_WARM, 0.10)
 
 
 func _lantern(top: Vector2, cord: float, r: float, flick: float) -> void:
@@ -564,15 +564,14 @@ func _lantern(top: Vector2, cord: float, r: float, flick: float) -> void:
 	# 上下の口金
 	draw_rect(Rect2(q(top.x - r * 0.5), by - 3, q(r), 6), Color(0.20, 0.15, 0.10))
 	draw_rect(Rect2(q(top.x - r * 0.5), by + h - 3, q(r), 6), Color(0.20, 0.15, 0.10))
-	# 光のにじみ → 芯（画面最大輝度）
+	# 光のにじみ（揺らぐのはここだけ）→ 芯（画面最大輝度・揺らさない）
 	var c := Vector2(top.x, by + h * 0.5)
 	_glow(c, r * 5.2, LANT_WARM, 0.30 * flick)
 	_glow(c, r * 2.1, Color(1.0, 0.88, 0.66), 0.55 * flick)
-	var core := maxf(q(r * 0.42), 6.0)
-	draw_rect(Rect2(q(c.x - core * 0.5), q(c.y - core * 0.75), core, core * 1.5),
-			Color(LANT_CORE.r, LANT_CORE.g, LANT_CORE.b, clampf(0.95 * flick, 0.0, 1.0)))
-	draw_rect(Rect2(q(c.x - core * 0.5) - 3, q(c.y - core * 0.75) + 3, core + 6, core * 1.5 - 6),
-			Color(1.0, 0.90, 0.70, 0.45))
+	# 芯に flick を掛けると「最も明るい点」が消えるフレームができる。
+	# 小さく・不透明・固定値で置き、画面の輝度の頂点をここに釘付けにする。
+	draw_rect(Rect2(q(c.x - 6.0), q(c.y - 9.0), 15, 21), Color(1.0, 0.90, 0.70, 0.45))
+	draw_rect(Rect2(q(c.x - 3.0), q(c.y - 6.0), 6, 9), LANT_CORE)
 
 
 # ── カウンター ───────────────────────────────────────────────────────
@@ -596,16 +595,66 @@ func _draw_apron(sz: Vector2, cy: float) -> void:
 		for k in int(sh / 9.0) - 1:
 			draw_rect(Rect2(sr.position.x + 11, q(sr.position.y + 9.0 + k * 9.0), 8, 3),
 					Color(0.14, 0.09, 0.07, 0.9))
-	# 足掛けの横棒（真鍮）
+	# 足掛けの横棒（真鍮）。前縁と同じ理由で、ここも全幅一様の直線にはしない
+	# ——明るい水平線が2本走ると、画面がもう一度上下に割れる。
 	var rail_y := cy + APRON_H - 33.0
-	draw_rect(Rect2(0, rail_y, sz.x, 5), Color(0.42, 0.30, 0.14))
-	draw_rect(Rect2(0, rail_y, sz.x, 2), Color(0.72, 0.56, 0.28))
+	draw_rect(Rect2(0, rail_y, sz.x, 5), Color(0.28, 0.20, 0.10))
+	var rsig := sz.x * 0.28
+	var rseg := q(30.0)
+	var rx := 0.0
+	var ri := 0
+	while rx < sz.x:
+		var rmid := rx + rseg * 0.5
+		var rd := sz.x
+		for lx in [sz.x * 0.22, sz.x * 0.50, sz.x * 0.78]:
+			rd = minf(rd, absf(rmid - float(lx)))
+		var rg := exp(-(rd * rd) / (2.0 * rsig * rsig))
+		draw_rect(Rect2(rx, rail_y, rseg - 3.0 * float((ri * 5 + 1) % 3), 2),
+				Color(0.72, 0.56, 0.28, clampf(0.10 + 0.72 * rg, 0.0, 1.0)))
+		rx += rseg
+		ri += 1
+	# 支持金具（ここで横棒が視覚的に切れる）
 	for i in int(sz.x / 120.0) + 1:
-		draw_rect(Rect2(q(i * 120.0), rail_y, 8, 12), Color(0.28, 0.20, 0.11))
+		draw_rect(Rect2(q(i * 120.0), rail_y - 3, 8, 15), Color(0.22, 0.16, 0.09))
 	# 幅木
 	draw_rect(Rect2(0, cy + APRON_H - 12, sz.x, 12), Color(0.145, 0.10, 0.075))
 	draw_rect(Rect2(0, cy + APRON_H - 12, sz.x, 3), Color(0.30, 0.21, 0.13))
 	draw_rect(Rect2(0, cy + APRON_H, sz.x, 9), Color(0, 0, 0, 0.45))
+
+
+## 天面の前縁（木口）。全幅・均一輝度の直線は画面を上下に断ち切ってしまうので、
+## 提灯からの距離でガウス減衰させた短い矩形の連なりにし、数箇所は木口を欠けさせる。
+func _draw_edge(sz: Vector2, cy: float) -> void:
+	var lant := [sz.x * 0.22, sz.x * 0.50, sz.x * 0.78]
+	var chips := [0.075, 0.29, 0.505, 0.70, 0.925]      # 木口の欠け（5箇所）
+	var seg := q(24.0)
+	var sig := sz.x * 0.26
+	var i := 0
+	var sx := 0.0
+	while sx < sz.x:
+		var mid := sx + seg * 0.5
+		var f := mid / sz.x
+		var chipped := false
+		for cf in chips:
+			if absf(f - float(cf)) < 0.014:
+				chipped = true
+		var d := sz.x
+		for lx in lant:
+			d = minf(d, absf(mid - float(lx)))
+		var g := exp(-(d * d) / (2.0 * sig * sig))       # 提灯からのガウス減衰
+		# 目地は等間隔にしない（等間隔だと破線に見えて、また「線」に戻ってしまう）
+		var w := seg - 3.0 * float((i * 7 + 3) % 4)
+		if chipped:
+			# 欠け＝木口が剥げて光が乗らない。ここで直線が切れる。
+			draw_rect(Rect2(sx, cy - 3, w, 4), WOOD_SLAB.darkened(0.42))
+			draw_rect(Rect2(sx + 3, cy - 3, w - 6, 2), Color(0.06, 0.04, 0.03, 0.75))
+		else:
+			draw_rect(Rect2(sx, cy - 3, w, 4),
+					Color(WOOD_EDGE.r, WOOD_EDGE.g, WOOD_EDGE.b, clampf(0.16 + 0.80 * g, 0.0, 1.0)))
+			draw_rect(Rect2(sx, cy + 1, w, 2),
+					Color(1.0, 0.86, 0.60, clampf(0.06 + 0.62 * g, 0.0, 1.0)))
+		sx += seg
+		i += 1
 
 
 ## 天面の上：席札・おしぼり・出された皿。
@@ -629,23 +678,48 @@ func _draw_counter_props(font: Font, cy: float) -> void:
 		# 席札（常連＝この席の顔なじみ）
 		if bool(c.get("regular", false)):
 			var nm := String(c.get("rname", "常連"))
-			var nw := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x
+			var nw := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.XS)).x
 			var pw := q(nw + 14.0)
 			var pr := Rect2(q(x - pw * 0.5), cy - 18, pw, 15)
 			draw_rect(Rect2(pr.position + Vector2(0, 3), pr.size), Color(0, 0, 0, 0.45))
 			draw_rect(pr, Color(0.42, 0.31, 0.18))
 			draw_rect(Rect2(pr.position, Vector2(pr.size.x, 2)), Color(0.66, 0.50, 0.30))
 			draw_string(font, Vector2(pr.position.x + 7, pr.position.y + 11), nm,
-					HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1.0, 0.90, 0.66))
-		# 出された皿
+					HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.XS), Color(1.0, 0.90, 0.66))
+		# 出された皿。着地でグローと湯気が立つ＝「今この瞬間置かれた」が読める。
 		if String(c["state"]) == "eat":
 			var s: Dictionary = _script[int(c["serving"])]
-			var pt := clampf(float(c["t"]) / 0.28, 0.0, 1.0)
-			var px := q(lerpf(size.x * KEEPER_X, x + 42.0, pt))
-			var py := cy - 12.0 - (1.0 - pt) * 18.0
+			var p := _plate_pos(c, cy)
+			var land := clampf((float(c["t"]) - PLATE_FLY) / 0.45, 0.0, 1.0)
+			if land > 0.0:
+				_glow(p + Vector2(0, -6), lerpf(66.0, 24.0, land), Color(1.0, 0.88, 0.62),
+						(1.0 - land) * 0.42)
 			if bool(s.get("match", false)):
-				_glow(Vector2(px, py - 6), 42.0, CYAN, 0.28)
-			_dish(Vector2(px, py), 33.0, _dish_kind(String(s["dish"])))
+				_glow(p + Vector2(0, -6), 42.0, CYAN, 0.28)
+			_dish(p, 33.0, _dish_kind(String(s["dish"])))
+			# 湯気（上へ上る半透明の小矩形×3）
+			if land > 0.05:
+				for k in 3:
+					var wob := sin(_t * 1.9 + k * 2.1) * 6.0
+					draw_rect(Rect2(q(p.x - 9.0 + k * 9.0 + wob), q(p.y - 27.0 - k * 9.0), 3, 9),
+							Color(1, 1, 1, (0.22 - k * 0.05) * land))
+
+
+const PLATE_FLY := 0.34      # 店番の手元から席へ皿が飛ぶ時間
+
+
+## 皿の位置。落下は ease(pt, 2.4) で加速し、着地でいちど2pxめり込ませて戻す。
+## 客の腕もここを終点にするので、皿と人が同じ1点を共有する。
+func _plate_pos(c: Dictionary, cy: float) -> Vector2:
+	var x := _seat_x(int(c["seat"]))
+	var t := float(c["t"])
+	var pt := clampf(t / PLATE_FLY, 0.0, 1.0)
+	var fall := ease(pt, 2.4)
+	var px := q(lerpf(size.x * KEEPER_X, x + 51.0, pt))
+	var sink := 0.0
+	if pt >= 1.0:
+		sink = sin(clampf((t - PLATE_FLY) / 0.16, 0.0, 1.0) * PI) * 2.0
+	return Vector2(px, cy - 12.0 - (1.0 - fall) * 24.0 + sink)
 
 
 # ── 客 ────────────────────────────────────────────────────────────────
@@ -658,9 +732,9 @@ const POSE_PETITE := 2   # 小柄（背が低く頭が相対的に大きい）
 
 # 体格倍率（±25%以上振らないと別人にならない。±7%では同じ人の呼吸に見えた）
 const POSE_H := [0.98, 1.18, 0.74]
-const POSE_W := [0.98, 1.36, 0.80]
+const POSE_W := [0.98, 1.26, 0.80]
 const POSE_HEAD := [1.00, 0.96, 1.16]
-const POSE_NECK := [0.40, 1.25, 0.85]   # 首の長さ
+const POSE_NECK := [0.62, 1.25, 0.88]   # 首の長さ
 const POSE_SLOPE := [10.0, -5.0, 4.0]   # 肩の下がり（負＝いかり肩）
 const POSE_HEADDX := [4.5, 0.0, 0.0]    # 頭の前傾
 
@@ -677,7 +751,7 @@ func _cust_spec(c: Dictionary) -> Dictionary:
 	var pose := sd % 3
 	var jitter := float((sd / 3) % 5) * 0.035 - 0.07
 	var style := (sd / 11) % 6
-	var prop := [PROP_UMBRELLA, PROP_HAT, PROP_SMOKE, PROP_NONE][(sd / 13) % 4]
+	var prop: int = [PROP_UMBRELLA, PROP_HAT, PROP_SMOKE, PROP_NONE][(sd / 13) % 4]
 	if prop == PROP_HAT and style == 3:
 		prop = PROP_NONE                      # 鳥打帽の上に笠は被らない
 	# 目線：隣を見る／店番を見る／うつむく の3状態。全員正面だと「客」ではなく「的」に見える。
@@ -716,82 +790,135 @@ func _draw_customer(c: Dictionary, cy: float) -> void:
 	# 食べている間は腕の終点を皿へ寄せる。腕が届くだけで「その皿はこの人のもの」になる。
 	if st == "eat":
 		sp["eat"] = clampf((float(c["t"]) - 0.12) / 0.34, 0.0, 1.0)
-		sp["reach"] = _plate_pos(c, cy) + Vector2(-9.0, 3.0)
+		sp["reach"] = _plate_pos(c, cy) + Vector2(-15.0, 6.0)
 		sp["look"] = 0.0
 		sp["down"] = true
 	# 影（天面に落ちる接地影）
 	draw_rect(Rect2(x - float(sp["sw"]) - 6, cy - SLAB_H, float(sp["sw"]) * 2.0 + 12, 3), Color(0, 0, 0, 0.35))
 	# 濃い輪郭 → 暖色のリムライト → 本体
-	for o in [Vector2(-2, 0), Vector2(2, 0), Vector2(0, -2), Vector2(0, 2)]:
+	for o in [Vector2(-3, 0), Vector2(3, 0), Vector2(0, -3), Vector2(0, 3)]:
 		_person(x + o.x, base + o.y, sp, INK, true)
 	# リムライトは提灯のある上側だけ（全周に回すとシール状になる）
-	for o2 in [Vector2(0, -3), Vector2(-2, -2)]:
+	for o2 in [Vector2(0, -3), Vector2(-3, -3)]:
 		_person(x + o2.x, base + o2.y, sp, RIM, true)
 	_person(x, base, sp, INK, false)
 
 
-## 手続き描画の人。頭・髪型・首・肩の傾斜・腕・体格が客ごとに違う。
+## 手続き描画の人。骨格（pose）・目線（look）・持ち物（prop）が客ごとに違う。
 func _person(x: float, base: float, sp: Dictionary, flat: Color, use_flat: bool) -> void:
 	var h: float = sp["h"]
 	var sw: float = sp["sw"]
 	var hr: float = sp["hr"]
+	var pose := int(sp.get("pose", 0))
+	var look: float = sp.get("look", 0.0)
+	var down := bool(sp.get("down", false))
+	var eat: float = sp.get("eat", 0.0)
+	var reach: Vector2 = sp.get("reach", Vector2.ZERO)
 	var hair: Color = flat if use_flat else sp["hair"]
 	var cloth: Color = flat if use_flat else sp["cloth"]
 	var skin: Color = flat if use_flat else sp["skin"]
 	var top := base - h
-	var hcy := top + hr + 3.0
-	var sy := top + hr * 2.0 + 12.0        # 肩の高さ
+	var slope: float = POSE_SLOPE[pose]
+	var hx := x + float(POSE_HEADDX[pose]) * (0.6 if down else 1.0)
+	var hcy := top + hr + 3.0 + (3.0 if pose == POSE_STOOP else 0.0)
+	var sy := top + hr * 2.0 + 12.0 * float(POSE_NECK[pose])   # 肩の高さ
 	var style := int(sp["style"])
+
+	# 傘は体の後ろ（外形を変えるので輪郭パスでも描く）
+	if int(sp.get("prop", PROP_NONE)) == PROP_UMBRELLA:
+		var ux := x - sw - 12.0
+		draw_rect(Rect2(q(ux), q(sy - 21.0), 5, base - sy + 21.0), flat if use_flat else Color(0.20, 0.22, 0.30))
+		draw_rect(Rect2(q(ux - 3), q(sy - 30.0), 11, 12), flat if use_flat else Color(0.24, 0.26, 0.36))
+		draw_rect(Rect2(q(ux - 9), q(sy - 33.0), 9, 5), flat if use_flat else Color(0.42, 0.30, 0.18))
 
 	# 髪（後ろ髪：頭より一回り大きい）
 	if style == 1:
-		draw_rect(Rect2(x - hr - 3, hcy - hr, hr * 2.0 + 6, hr + (sy - hcy) + 21), hair)
-	draw_circle(Vector2(x, hcy - 3), hr + 3.0, hair)
-	# 首
-	draw_rect(Rect2(x - 7.5, hcy + hr - 6, 15, 18), skin.darkened(0.25))
-	# 胴（首→肩の傾斜→腰）
+		draw_rect(Rect2(hx - hr - 3, hcy - hr, hr * 2.0 + 6, hr + (sy - hcy) + 21), hair)
+	_pxcircle(Vector2(hx, hcy - 3), int(round((hr + 3.0) / U)), hair)
+	# 首（猫背は短く肩に埋まる）
+	var neck_w: float = 15.0 if pose != POSE_SQUARE else 18.0
+	draw_rect(Rect2(hx - neck_w * 0.5, hcy + hr - 6, neck_w, maxf(sy - (hcy + hr) + 9.0, 6.0)), skin.darkened(0.25))
+	# 胴（首→肩の傾斜→腰）。slope が肩の張りをつくる。
 	draw_colored_polygon(PackedVector2Array([
-			Vector2(x - 10.5, sy - 15), Vector2(x - sw, sy + 3), Vector2(x - sw * 0.95, base),
-			Vector2(x + sw * 0.95, base), Vector2(x + sw, sy + 3), Vector2(x + 10.5, sy - 15)]), cloth)
+			Vector2(hx - 10.5, sy - 15), Vector2(x - sw, sy + 3 + slope), Vector2(x - sw * 0.95, base),
+			Vector2(x + sw * 0.95, base), Vector2(x + sw, sy + 3 + slope), Vector2(hx + 10.5, sy - 15)]), cloth)
 	if not use_flat:
 		# 服の陰影と前立て（べた塗りを避けて布に見せる）
 		draw_colored_polygon(PackedVector2Array([
-				Vector2(x - 10.5, sy - 15), Vector2(x - sw, sy + 3), Vector2(x - sw * 0.95, base),
+				Vector2(hx - 10.5, sy - 15), Vector2(x - sw, sy + 3 + slope), Vector2(x - sw * 0.95, base),
 				Vector2(x - sw * 0.45, base), Vector2(x - sw * 0.42, sy - 6)]),
 				Color(0, 0, 0, 0.20))
 		draw_rect(Rect2(x - 2, sy - 6, 4, base - sy + 6), cloth.darkened(0.35))
-		draw_rect(Rect2(x - sw * 0.55, sy - 4, 6, 4), cloth.lightened(0.25))
-		draw_rect(Rect2(x + sw * 0.55 - 6, sy - 4, 6, 4), cloth.lightened(0.25))
-	# 腕（肩からカウンターへ）＋天面に置いた手
+		draw_rect(Rect2(x - sw * 0.55, sy - 4 + slope * 0.4, 6, 4), cloth.lightened(0.25))
+		draw_rect(Rect2(x + sw * 0.55 - 6, sy - 4 + slope * 0.4, 6, 4), cloth.lightened(0.25))
+	# 腕。通常は天面へ、食事中は右腕の終点を皿へ寄せる（＝皿と人が繋がる）。
 	var arm_y := base - 27.0
 	for s in [-1.0, 1.0]:
-		draw_colored_polygon(PackedVector2Array([
-				Vector2(x + s * (sw - 3), sy), Vector2(x + s * (sw + 9), sy + 12),
-				Vector2(x + s * (sw + 9), arm_y + 3), Vector2(x + s * (sw - 6), arm_y + 3)]),
+		var sh := Vector2(x + s * (sw - 3), sy + slope * 0.6)
+		var hand := Vector2(x + s * (sw + 4.5), arm_y)
+		if eat > 0.0 and s > 0.0 and reach != Vector2.ZERO:
+			hand = hand.lerp(reach, eat)
+		var d := (hand - sh)
+		if d.length() < 1.0:
+			d = Vector2(0, 1)
+		var nrm := Vector2(-d.y, d.x).normalized() * 7.5
+		draw_colored_polygon(PackedVector2Array([sh - nrm, sh + nrm, hand + nrm, hand - nrm]),
 				cloth.darkened(0.28))
 		if not use_flat:
-			draw_rect(Rect2(x + s * (sw + 4.5) - 7.5, arm_y - 7.5, 15, 10.5), skin)
+			draw_rect(Rect2(q(hand.x - 7.5), q(hand.y - 7.5), 15, 10.5), skin)
 	# 顔
-	draw_circle(Vector2(x, hcy), hr, skin)
-	draw_rect(Rect2(x - hr * 0.72, hcy, hr * 1.44, hr * 0.9), skin)
+	_pxcircle(Vector2(hx, hcy), int(round(hr / U)), skin)
+	draw_rect(Rect2(hx - hr * 0.72, hcy, hr * 1.44, hr * 0.9), skin)
 	# 前髪・髪型
 	if not use_flat:
-		_hair_style(x, hcy, hr, style, hair, cloth)
-		# 目と口（人に見せる最後のひと押し）
-		var ey := hcy + 2.0
+		_hair_style(hx, hcy, hr, style, hair, cloth)
+		# 目と口。look で横へ、うつむきで下へずらす＝「会話している店内」になる。
+		var lx := look * hr * 0.22
+		var ey := hcy + 2.0 + (5.0 if down else 0.0)
 		var eye := Color(0.10, 0.07, 0.09)
-		draw_rect(Rect2(q(x - hr * 0.56), q(ey), 4, 6), eye)
-		draw_rect(Rect2(q(x + hr * 0.24), q(ey), 4, 6), eye)
-		draw_rect(Rect2(q(x - hr * 0.56), q(ey - 5), 5, 2), hair.darkened(0.2))
-		draw_rect(Rect2(q(x + hr * 0.24), q(ey - 5), 5, 2), hair.darkened(0.2))
-		draw_rect(Rect2(q(x - 3), q(ey + 11), 7, 3), Color(0.34, 0.16, 0.16, 0.85))
+		draw_rect(Rect2(q(hx - hr * 0.56 + lx), q(ey), 4, 6 if not down else 3), eye)
+		draw_rect(Rect2(q(hx + hr * 0.24 + lx), q(ey), 4, 6 if not down else 3), eye)
+		draw_rect(Rect2(q(hx - hr * 0.56 + lx), q(ey - 5), 5, 2), hair.darkened(0.2))
+		draw_rect(Rect2(q(hx + hr * 0.24 + lx), q(ey - 5), 5, 2), hair.darkened(0.2))
+		draw_rect(Rect2(q(hx - 3 + lx * 0.7), q(ey + 11), 7, 3), Color(0.34, 0.16, 0.16, 0.85))
 		# 頬にかかる提灯の光
-		draw_rect(Rect2(q(x - hr * 0.92), q(hcy - hr * 0.35), 5, 12), Color(1.0, 0.86, 0.62, 0.28))
+		draw_rect(Rect2(q(hx - hr * 0.92), q(hcy - hr * 0.35), 5, 12), Color(1.0, 0.86, 0.62, 0.28))
 		# 差し色（マフラー／襟）
-		draw_rect(Rect2(x - 15, sy - 15, 30, 10), (sp["accent"] as Color).darkened(0.15))
-		draw_rect(Rect2(x - 15, sy - 15, 30, 3), (sp["accent"] as Color).lightened(0.15))
+		var cy_collar := maxf(sy - 15.0, hcy + hr - 1.0)
+		draw_rect(Rect2(hx - 15, cy_collar, 30, 10), (sp["accent"] as Color).darkened(0.15))
+		draw_rect(Rect2(hx - 15, cy_collar, 30, 3), (sp["accent"] as Color).lightened(0.15))
 	else:
-		_hair_style(x, hcy, hr, style, flat, flat)
+		_hair_style(hx, hcy, hr, style, flat, flat)
+	# 笠と煙草（頭・手の外形を変える持ち物）
+	_person_prop(sp, hx, hcy, hr, x, sw, arm_y, flat, use_flat)
+
+
+## 持ち物。シルエットの外形を変えるのが目的なので、輪郭パスでも同じ形を描く。
+func _person_prop(sp: Dictionary, hx: float, hcy: float, hr: float, x: float, sw: float,
+		arm_y: float, flat: Color, use_flat: bool) -> void:
+	match int(sp.get("prop", PROP_NONE)):
+		PROP_HAT:
+			# 笠。つばで頭の輪郭は変えるが、目線が読めないと客が「人」でなくなるので
+			# 縁は眉の上まで。顔は必ず出す。
+			var brim := hr * 1.55
+			var col: Color = flat if use_flat else Color(0.62, 0.50, 0.28)
+			draw_colored_polygon(PackedVector2Array([
+					Vector2(hx - brim, hcy - hr * 0.72), Vector2(hx, hcy - hr - 15.0),
+					Vector2(hx + brim, hcy - hr * 0.72)]), col)
+			draw_rect(Rect2(q(hx - brim), q(hcy - hr * 0.72), q(brim * 2.0), 4),
+					flat if use_flat else Color(0.44, 0.34, 0.18))
+		PROP_SMOKE:
+			# 煙草（手の先に一本＋立ちのぼる煙）
+			var sx := x + sw + 12.0
+			draw_rect(Rect2(q(sx), q(arm_y - 12.0), 9, 4), flat if use_flat else Color(0.90, 0.88, 0.82))
+			draw_rect(Rect2(q(sx + 9), q(arm_y - 12.0), 4, 4), flat if use_flat else Color(1.0, 0.52, 0.22))
+			if not use_flat:
+				for k in 3:
+					var wob := sin(_t * 1.3 + k * 1.7) * 6.0
+					draw_rect(Rect2(q(sx + 9 + wob), q(arm_y - 24.0 - k * 12.0), 3, 8),
+							Color(1, 1, 1, 0.16 - k * 0.04))
+		_:
+			pass
 
 
 func _hair_style(x: float, hcy: float, hr: float, style: int, hair: Color, cloth: Color) -> void:
@@ -807,7 +934,7 @@ func _hair_style(x: float, hcy: float, hr: float, style: int, hair: Color, cloth
 			draw_rect(Rect2(x + hr - 4.5, hcy - hr, 7.5, hr * 2.1), hair)
 		2:   # 団子頭（かんざし付き）
 			draw_rect(Rect2(x - hr, fringe, hr * 2.0, hr * 0.40), hair)
-			draw_circle(Vector2(x, fringe - hr * 0.34), hr * 0.46, hair)
+			_pxcircle(Vector2(x, fringe - hr * 0.34), maxi(int(round((hr * 0.46) / U)), 1), hair)
 			draw_rect(Rect2(x - hr * 0.6, fringe - hr * 0.40, hr * 1.2, 3), Color(0.85, 0.66, 0.30))
 		3:   # 帽子（鳥打帽）
 			draw_rect(Rect2(x - hr - 1.5, hcy - hr - 7.5, hr * 2.0 + 3, hr * 0.72), cloth.lightened(0.14))
@@ -822,8 +949,8 @@ func _hair_style(x: float, hcy: float, hr: float, style: int, hair: Color, cloth
 						Vector2(sx + 3, fringe - hr * 0.66), Vector2(sx + 7.5, fringe + 3)]), hair)
 		5:   # ポニーテール
 			draw_rect(Rect2(x - hr, fringe, hr * 2.0, hr * 0.46), hair)
-			draw_circle(Vector2(x + hr + 4.5, hcy - 3), 7.5, hair)
-			draw_circle(Vector2(x + hr + 7.5, hcy + 10.5), 6.0, hair)
+			_pxcircle(Vector2(x + hr + 4.5, hcy - 3), maxi(int(round((7.5) / U)), 1), hair)
+			_pxcircle(Vector2(x + hr + 7.5, hcy + 10.5), maxi(int(round((6.0) / U)), 1), hair)
 			draw_rect(Rect2(x + hr - 3, hcy - 12, 6, 9), Color(0.85, 0.35, 0.45))
 		_:
 			draw_rect(Rect2(x - hr, fringe, hr * 2.0, hr * 0.52), hair)
@@ -841,7 +968,7 @@ func _draw_bubble(font: Font, c: Dictionary, cy: float) -> void:
 	var bh := 66.0
 	var by := q(top - bh - 18.0)
 	var pulse := 0.5 + 0.5 * sin(_t * 5.0)
-	var accent := GOLD if st == "wait" else Color(1.0, 0.45, 0.42)
+	var accent := GOLD if st == "wait" else DENY
 	var bx := clampf(q(x - bw * 0.5), 6.0, size.x - bw - 6.0)
 	var r := Rect2(bx, by, bw, bh)
 	_glow(Vector2(x, by + bh * 0.5), 78.0, accent, 0.14 + 0.12 * pulse)
@@ -853,11 +980,11 @@ func _draw_bubble(font: Font, c: Dictionary, cy: float) -> void:
 		var s: Dictionary = _script[int(c["serving"])]
 		_dish(Vector2(bx + bw * 0.5, by + bh * 0.62), 54.0, _dish_kind(String(s["dish"])), true)
 		if bool(s.get("match", false)):
-			draw_circle(Vector2(bx + bw - 15, by + 15), 10.0, Color(0.20, 0.62, 0.78))
-			_sh(font, Vector2(bx + bw - 21, by + 20), "★", 12, Color(0.95, 1.0, 1.0))
+			_pxcircle(Vector2(bx + bw - 15, by + 15), maxi(int(round((10.0) / U)), 1), Color(0.20, 0.62, 0.78))
+			_sh(font, Vector2(bx + bw - 21, by + 20), "★", int(FS.XS), Color(0.95, 1.0, 1.0))
 	else:
-		draw_line(Vector2(bx + 21, by + 18), Vector2(bx + bw - 21, by + bh - 18), Color(0.75, 0.25, 0.22), 5.0)
-		draw_line(Vector2(bx + bw - 21, by + 18), Vector2(bx + 21, by + bh - 18), Color(0.75, 0.25, 0.22), 5.0)
+		_pxdiag(Vector2(bx + 21, by + 18), Vector2(bx + bw - 21, by + bh - 18), Color(0.75, 0.25, 0.22), 2)
+		_pxdiag(Vector2(bx + bw - 21, by + 18), Vector2(bx + 21, by + bh - 18), Color(0.75, 0.25, 0.22), 2)
 
 
 # ── 店番 ──────────────────────────────────────────────────────────────
@@ -1029,22 +1156,27 @@ func _draw_floor(sz: Vector2, cy: float, floor_y: float, rec_top: float) -> void
 	var h := rec_top - floor_y
 	if h <= 0.0:
 		return
-	# 背景アートの縦反転＝濡れた土間の反射（奥行き方向に潰す）
-	if _bg_t != null:
-		var ts := _bg_t.get_size()
-		var s := sz.x / ts.x
-		draw_set_transform(Vector2(0, floor_y), 0.0, Vector2(1, -0.42))
-		draw_texture_rect(_bg_t, Rect2(0, -ts.y * s, ts.x * s, ts.y * s), false, Color(1, 1, 1, 0.10))
-		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	# カウンター前板の反射（すぐ下に濃く）
+	# 背景の半透明コピーを反転して敷くのはやめた（描画バグにしか見えない）。
+	# 濡れた土間に落ちるのは「提灯の光柱」だけ。sin で横に蛇行し、下ほど幅が広がる。
 	_vgrad(Rect2(0, floor_y, sz.x, 48.0), Color(0.30, 0.20, 0.13, 0.30), Color(0.30, 0.20, 0.13, 0.0))
-	# 提灯の映り込み（縦に長く伸びる暖色の筋）
-	for fx in [0.22, 0.50, 0.78]:
-		var rx := q(sz.x * fx)
-		_vgrad(Rect2(rx - 15, floor_y, 30, h * 0.72), Color(1.0, 0.72, 0.36, 0.16), Color(1.0, 0.72, 0.36, 0.0))
 	# 反射を下へ向けて消す
 	_vgrad(Rect2(0, floor_y, sz.x, h), Color(FLOOR_C.r, FLOOR_C.g, FLOOR_C.b, 0.0),
 			Color(FLOOR_C.r, FLOOR_C.g, FLOOR_C.b, 0.95))
+	# 光柱は暗幕の上に落とす（下に敷くと自分の落とす影に消される）
+	var lant_fx := [0.22, 0.50, 0.78]
+	for li in 3:
+		var lx := q(sz.x * float(lant_fx[li]))
+		var col_h := h * (0.90 if li == 1 else 0.66)
+		var base_w := 21.0 if li == 1 else 15.0
+		var peak := 0.30 if li == 1 else 0.20
+		var yy := floor_y
+		while yy < floor_y + col_h:
+			var f := (yy - floor_y) / maxf(col_h, 1.0)
+			var wdt := q(base_w * lerpf(1.0, 1.6, f))
+			var wob := sin(f * 5.2 + _t * 0.8 + li * 2.1) * 12.0 * f
+			var a := (1.0 - f) * (1.0 - f) * peak
+			draw_rect(Rect2(q(lx - wdt * 0.5 + wob), yy, wdt, U), Color(1.0, 0.74, 0.40, a))
+			yy += U
 	# 灯だまり
 	_glow(Vector2(sz.x * 0.5, floor_y + 30.0), sz.x * 0.55, LANT_WARM, 0.10)
 	_glow(Vector2(sz.x * 0.22, floor_y + 66.0), 132.0, LANT_WARM, 0.07)
@@ -1114,9 +1246,9 @@ func _draw_crates(base: Vector2) -> void:
 		draw_rect(r, dark.darkened(i * 0.06))
 		draw_rect(Rect2(r.position, Vector2(r.size.x, 3)), rim)
 		draw_rect(Rect2(r.position, Vector2(3, r.size.y)), rim.darkened(0.4))
-		draw_line(r.position + Vector2(6, 6), r.position + r.size - Vector2(6, 6), Color(0, 0, 0, 0.35), 3.0)
-		draw_line(r.position + Vector2(r.size.x - 6, 6), r.position + Vector2(6, r.size.y - 6),
-				Color(0, 0, 0, 0.35), 3.0)
+		_pxdiag(r.position + Vector2(6, 6), r.position + r.size - Vector2(6, 6), Color(0, 0, 0, 0.35))
+		_pxdiag(r.position + Vector2(r.size.x - 6, 6), r.position + Vector2(6, r.size.y - 6),
+				Color(0, 0, 0, 0.35))
 		draw_rect(Rect2(r.position.x + 27, r.position.y + 15, 42, 18), Color(0.85, 0.68, 0.32, 0.30))
 		draw_rect(Rect2(r.position.x + 33, r.position.y + 21, 30, 3), Color(0.20, 0.12, 0.07, 0.8))
 		draw_rect(Rect2(r.position.x + 33, r.position.y + 27, 21, 3), Color(0.20, 0.12, 0.07, 0.8))
@@ -1132,7 +1264,7 @@ func _draw_cat(pos: Vector2) -> void:
 	for s in [-1.0, 1.0]:
 		draw_rect(Rect2(pos.x + s * 12.0 - 3, pos.y + 4, 6, 10), body)
 	var hx := pos.x + 20.0 * dirx
-	draw_circle(Vector2(hx, pos.y - 9), 10.5, body)
+	_pxcircle(Vector2(hx, pos.y - 9), maxi(int(round((10.5) / U)), 1), body)
 	draw_colored_polygon(PackedVector2Array([Vector2(hx - 9, pos.y - 14),
 			Vector2(hx - 3, pos.y - 25), Vector2(hx + 1, pos.y - 13)]), body)
 	draw_colored_polygon(PackedVector2Array([Vector2(hx + 9, pos.y - 14),
@@ -1141,8 +1273,8 @@ func _draw_cat(pos: Vector2) -> void:
 	draw_rect(Rect2(q(hx - 6.0 * dirx), q(pos.y - 12), 4, 4), Color(1.0, 0.82, 0.4, 0.75))
 	var tx := pos.x - 21.0 * dirx
 	var sway := sin(_t * 2.2) * 7.5
-	draw_line(Vector2(tx, pos.y - 3), Vector2(tx - 14.0 * dirx + sway * 0.4, pos.y - 24 - absf(sway) * 0.4),
-			body, 4.0)
+	_pxdiag(Vector2(tx, pos.y - 3), Vector2(tx - 14.0 * dirx + sway * 0.4, pos.y - 24 - absf(sway) * 0.4),
+			body)
 
 
 # ── 今夜の伝票 ────────────────────────────────────────────────────────
@@ -1161,14 +1293,14 @@ func _draw_receipt(font: Font, r: Rect2) -> void:
 	var hx := r.position.x + 21.0
 	var hy := r.position.y + 36.0
 	draw_rect(Rect2(hx - 9, hy - 15, 4, 18), GOLD)
-	_sh(font, Vector2(hx, hy), "今夜の伝票", 18, TEXT)
+	_sh(font, Vector2(hx, hy), "今夜の伝票", int(FS.M), TEXT)
 	var sub := "%d / %d 皿" % [_served_shown, maxi(_total, 1)]
-	var sw := font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
-	_sh(font, Vector2(r.position.x + r.size.x - 21 - sw, hy), sub, 14, TEXT_DIM)
+	var sw := font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S)).x
+	_sh(font, Vector2(r.position.x + r.size.x - 21 - sw, hy), sub, int(FS.S), TEXT_DIM)
 	if _matched > 0:
 		var mt := "★予報的中 %d" % _matched
-		var mw := font.get_string_size(mt, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
-		_sh(font, Vector2(r.position.x + r.size.x - 21 - sw - mw - 18, hy), mt, 13, CYAN)
+		var mw := font.get_string_size(mt, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S)).x
+		_sh(font, Vector2(r.position.x + r.size.x - 21 - sw - mw - 18, hy), mt, int(FS.S), CYAN)
 	# 進捗バー（空の伝票でも「これから埋まる夜」が見える）
 	var pb := Rect2(r.position.x + 18, hy + 12, r.size.x - 36, 6)
 	draw_rect(pb, Color(0, 0, 0, 0.45))
@@ -1197,6 +1329,7 @@ func _draw_receipt(font: Font, r: Rect2) -> void:
 	var ox := r.position.x + 21.0 + (r.size.x - 42.0 - cols * pitch) * 0.5
 	var oy := band_top + (band_h - rows * pitch) * 0.5
 	var ring := pitch * 0.44
+	var ru := maxi(int(round(ring / U)), 2)     # 皿スロットは3px単位の円環で打つ
 	for i in slots:
 		var cx := q(ox + (i % cols) * pitch + pitch * 0.5)
 		var cyy := q(oy + int(i / cols) * pitch + pitch * 0.5)
@@ -1204,13 +1337,13 @@ func _draw_receipt(font: Font, r: Rect2) -> void:
 			var pl: Dictionary = _plates[i]
 			if bool(pl["match"]):
 				_glow(Vector2(cx, cyy), ring * 2.2, CYAN, 0.30)
-				draw_arc(Vector2(cx, cyy), ring, 0, TAU, 28, Color(CYAN.r, CYAN.g, CYAN.b, 0.9), 2.5)
+				_pxring(Vector2(cx, cyy), ru, Color(CYAN.r, CYAN.g, CYAN.b, 0.9))
 			else:
-				draw_arc(Vector2(cx, cyy), ring, 0, TAU, 28, Color(1, 1, 1, 0.14), 1.5)
+				_pxring(Vector2(cx, cyy), ru, Color(1, 1, 1, 0.16))
 			_dish(Vector2(cx, cyy + pitch * 0.13), pitch * 0.62, int(pl["kind"]))
 		else:
 			# 未配膳＝伏せた空皿。これから埋まる余白として読ませる
-			draw_arc(Vector2(cx, cyy), ring, 0, TAU, 28, Color(1, 1, 1, 0.09), 1.5)
+			_pxring(Vector2(cx, cyy), ru, Color(1, 1, 1, 0.11))
 			_ellipse(Vector2(cx, cyy + pitch * 0.08), Vector2(ring * 0.72, ring * 0.27), Color(1, 1, 1, 0.09))
 			_ellipse(Vector2(cx, cyy + pitch * 0.05), Vector2(ring * 0.52, ring * 0.19), Color(0, 0, 0, 0.30))
 
@@ -1223,25 +1356,37 @@ func _draw_receipt(font: Font, r: Rect2) -> void:
 	_coin(Vector2.ZERO, 21.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	var gs := "%d" % int(round(_gold_disp))
-	var gw := font.get_string_size(gs, HORIZONTAL_ALIGNMENT_LEFT, -1, 48).x
+	var gw := font.get_string_size(gs, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.XL)).x
 	var gp := Vector2(coin.x + 36.0, gy)
 	draw_set_transform(gp, 0.0, Vector2(pk, pk))
-	draw_string(font, Vector2(2, 3), gs, HORIZONTAL_ALIGNMENT_LEFT, -1, 48, Color(0, 0, 0, 0.6))
-	draw_string(font, Vector2.ZERO, gs, HORIZONTAL_ALIGNMENT_LEFT, -1, 48, Color(1.0, 0.88, 0.52))
-	draw_string(font, Vector2(gw + 6, -2), "G", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(0.85, 0.66, 0.34))
+	draw_string(font, Vector2(2, 3), gs, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.XL), Color(0, 0, 0, 0.6))
+	draw_string(font, Vector2.ZERO, gs, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.XL), Color(1.0, 0.88, 0.52))
+	draw_string(font, Vector2(gw + 6, -2), "G", HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.L), Color(0.85, 0.66, 0.34))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	_sh(font, Vector2(coin.x - 21.0, gy - 51.0), "今夜の売上", 13, TEXT_DIM)
+	_sh(font, Vector2(coin.x - 21.0, gy - 51.0), "今夜の売上", int(FS.XS), TEXT_DIM)
+	# 右下は空けない。伝票の朱印（毎晩必ず捺す）＋チップを常時置いて、
+	# 平均輝度9の死に領域を潰す。チップも金色＝シアンは「予報的中」専用に戻す。
+	var stamp := Vector2(q(r.position.x + r.size.x - 51.0), q(gy - 24.0))
+	var seal := Color(0.74, 0.20, 0.17, 0.92)
+	_glow(stamp, 66.0, Color(0.95, 0.32, 0.24), 0.10)
+	_pxring(stamp, 9, seal, 1)
+	_pxring(stamp, 6, Color(seal.r, seal.g, seal.b, 0.5), 1)
+	draw_rect(Rect2(stamp.x - 9, stamp.y - 3, 18, 3), seal)
+	draw_rect(Rect2(stamp.x - 3, stamp.y - 9, 6, 18), seal)
+	draw_rect(Rect2(stamp.x - 9, stamp.y + 6, 18, 3), seal)
+	_sh(font, Vector2(stamp.x - 24.0, stamp.y + 39.0), "夜%d" % day, int(FS.XS), TEXT_DIM)
+	var ts := ("チップ +%dG" % _tips) if _tips > 0 else "チップ　—"
+	var tcol := GOLD if _tips > 0 else TEXT_DIM
+	var tw := font.get_string_size(ts, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.M)).x
 	if _tips > 0:
-		var ts := "チップ +%dG" % _tips
-		var tw := font.get_string_size(ts, HORIZONTAL_ALIGNMENT_LEFT, -1, 20).x
-		_glow(Vector2(r.position.x + r.size.x - 21 - tw * 0.5, gy - 9), 90.0, PINK, 0.14)
-		_sh(font, Vector2(r.position.x + r.size.x - 21 - tw, gy - 3), ts, 20, PINK)
+		_glow(Vector2(stamp.x - 39.0 - tw * 0.5, gy - 15), 90.0, GOLD, 0.14)
+	_sh(font, Vector2(stamp.x - 39.0 - tw, gy - 9), ts, int(FS.M), tcol)
 
 
 func _coin(c: Vector2, r: float) -> void:
-	draw_circle(c, r, Color(0.55, 0.38, 0.12))
-	draw_circle(c, r - 2.0, Color(1.0, 0.80, 0.32))
-	draw_circle(c - Vector2(r * 0.22, r * 0.22), r * 0.62, Color(1.0, 0.92, 0.60))
+	_pxcircle(c, maxi(int(round((r) / U)), 1), Color(0.55, 0.38, 0.12))
+	_pxcircle(c, maxi(int(round((r - 2.0) / U)), 1), Color(1.0, 0.80, 0.32))
+	_pxcircle(c - Vector2(r * 0.22, r * 0.22), maxi(int(round((r * 0.62) / U)), 1), Color(1.0, 0.92, 0.60))
 	draw_rect(Rect2(c.x - r * 0.26, c.y - r * 0.26, r * 0.52, r * 0.52), Color(0.42, 0.28, 0.09))
 	draw_rect(Rect2(c.x - r * 0.16, c.y - r * 0.16, r * 0.32, r * 0.32), Color(0.62, 0.44, 0.16))
 
@@ -1279,8 +1424,8 @@ func _dish(c: Vector2, s: float, kind: int, on_light := false) -> void:
 			draw_rect(Rect2(c.x - s * 0.30, c.y - u * 1.6, s * 0.60, u * 1.1), Color(0.92, 0.80, 0.42))
 			for i in 3:
 				draw_rect(Rect2(q(c.x - s * 0.24 + i * s * 0.20), c.y - u * 2.4, u * 0.9, u * 1.2), Color(0.96, 0.86, 0.50))
-			draw_circle(Vector2(c.x + s * 0.16, c.y - u * 1.8), u * 1.3, Color(0.98, 0.94, 0.86))
-			draw_circle(Vector2(c.x + s * 0.16, c.y - u * 1.8), u * 0.6, Color(0.98, 0.70, 0.24))
+			_pxcircle(Vector2(c.x + s * 0.16, c.y - u * 1.8), maxi(int(round((u * 1.3) / U)), 1), Color(0.98, 0.94, 0.86))
+			_pxcircle(Vector2(c.x + s * 0.16, c.y - u * 1.8), maxi(int(round((u * 0.6) / U)), 1), Color(0.98, 0.70, 0.24))
 			draw_rect(Rect2(c.x - s * 0.30, c.y - u * 2.0, u * 1.6, u * 0.7), Color(0.24, 0.52, 0.28))
 			_steam(c, s)
 		1:   # 麻婆
@@ -1294,8 +1439,8 @@ func _dish(c: Vector2, s: float, kind: int, on_light := false) -> void:
 		2:   # 湯
 			_bowl(c, s, bowl_out, Color(0.34, 0.30, 0.28))
 			draw_rect(Rect2(c.x - s * 0.30, c.y - u * 1.8, s * 0.60, u * 1.4), Color(0.88, 0.74, 0.44))
-			draw_circle(Vector2(c.x - s * 0.12, c.y - u * 1.4), u * 1.4, Color(0.96, 0.92, 0.84))
-			draw_circle(Vector2(c.x + s * 0.14, c.y - u * 1.2), u * 1.2, Color(0.96, 0.92, 0.84))
+			_pxcircle(Vector2(c.x - s * 0.12, c.y - u * 1.4), maxi(int(round((u * 1.4) / U)), 1), Color(0.96, 0.92, 0.84))
+			_pxcircle(Vector2(c.x + s * 0.14, c.y - u * 1.2), maxi(int(round((u * 1.2) / U)), 1), Color(0.96, 0.92, 0.84))
 			_steam(c, s)
 		3:   # 飯
 			_plate(c, s)
@@ -1315,13 +1460,13 @@ func _dish(c: Vector2, s: float, kind: int, on_light := false) -> void:
 					Vector2(c.x + s * 0.24, c.y - u * 2.6), Vector2(c.x + s * 0.16, c.y + u * 1.2),
 					Vector2(c.x - s * 0.16, c.y + u * 1.2)]), Color(0.90, 0.90, 0.94))
 			draw_rect(Rect2(c.x - s * 0.22, c.y - u * 2.6, s * 0.44, u * 1.4), Color(0.98, 0.96, 0.92))
-			draw_circle(Vector2(c.x + s * 0.10, c.y - u * 2.9), u * 1.0, Color(0.90, 0.26, 0.30))
+			_pxcircle(Vector2(c.x + s * 0.10, c.y - u * 2.9), maxi(int(round((u * 1.0) / U)), 1), Color(0.90, 0.26, 0.30))
 			draw_rect(Rect2(c.x - s * 0.28, c.y + u * 1.2, s * 0.56, u * 0.8), Color(0.72, 0.72, 0.78))
 		6:   # 団子
 			_plate(c, s)
 			for i in 3:
-				draw_circle(Vector2(c.x - s * 0.20 + i * s * 0.20, c.y - u * 1.4), u * 1.6, Color(0.80, 0.62, 0.32))
-				draw_circle(Vector2(c.x - s * 0.22 + i * s * 0.20, c.y - u * 1.8), u * 0.6, Color(0.96, 0.86, 0.60))
+				_pxcircle(Vector2(c.x - s * 0.20 + i * s * 0.20, c.y - u * 1.4), maxi(int(round((u * 1.6) / U)), 1), Color(0.80, 0.62, 0.32))
+				_pxcircle(Vector2(c.x - s * 0.22 + i * s * 0.20, c.y - u * 1.8), maxi(int(round((u * 0.6) / U)), 1), Color(0.96, 0.86, 0.60))
 		_:
 			_plate(c, s)
 			draw_colored_polygon(PackedVector2Array([Vector2(c.x - s * 0.24, c.y - u * 0.4),
@@ -1368,26 +1513,26 @@ func _steam(c: Vector2, s: float) -> void:
 func _draw_header(font: Font, sz: Vector2) -> void:
 	var h := 66.0
 	_vgrad(Rect2(0, 0, sz.x, h), Color(0.02, 0.02, 0.045, 0.96), Color(0.03, 0.025, 0.055, 0.86))
-	draw_rect(Rect2(0, h, sz.x, 2), Color(PINK.r, PINK.g, PINK.b, 0.55))
-	draw_rect(Rect2(0, h + 2, sz.x, 8), Color(PINK.r, PINK.g, PINK.b, 0.06))
+	draw_rect(Rect2(0, h, sz.x, 2), Color(GOLD.r, GOLD.g, GOLD.b, 0.45))
+	draw_rect(Rect2(0, h + 2, sz.x, 8), Color(GOLD.r, GOLD.g, GOLD.b, 0.06))
 	var m := 16.0
 	# 左：タイトル
-	_sh(font, Vector2(m, 42), "Day %d — 夜の営業" % day, 19, TEXT)
+	_sh(font, Vector2(m, 42), "Day %d — 夜の営業" % day, int(FS.M), TEXT)
 	# 右：右端から積む（スキップ → 常連チップ）
 	var right := sz.x - m
 	var skip_w := 86.0
 	var skip_r := Rect2(q(right - skip_w), 15.0, skip_w, 36.0)
 	_hits.append({"rect": skip_r, "id": "skip"})
-	_panel(skip_r, Color(0.05, 0.05, 0.09, 0.9), Color(CYAN.r, CYAN.g, CYAN.b, 0.55), 8, 1.2)
-	var sw := font.get_string_size("スキップ", HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
-	_sh(font, Vector2(skip_r.position.x + (skip_w - sw) * 0.5, skip_r.position.y + 24), "スキップ", 14, CYAN)
+	_panel(skip_r, Color(0.05, 0.05, 0.09, 0.9), Color(TEXT.r, TEXT.g, TEXT.b, 0.40), 8, 1.2)
+	var sw := font.get_string_size("スキップ", HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S)).x
+	_sh(font, Vector2(skip_r.position.x + (skip_w - sw) * 0.5, skip_r.position.y + 24), "スキップ", int(FS.S), TEXT)
 	right = skip_r.position.x - 12.0
 	if regulars > 0:
 		var reg := "連続%d日・常連%d人" % [streak, regulars]
-		var rw := font.get_string_size(reg, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
+		var rw := font.get_string_size(reg, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S)).x
 		var rr := Rect2(q(right - rw - 20.0), 18.0, q(rw + 20.0), 30.0)
 		_panel(rr, Color(GOLD.r * 0.22, GOLD.g * 0.18, 0.05, 0.85), Color(GOLD.r, GOLD.g, GOLD.b, 0.35), 7, 1.0)
-		_sh(font, Vector2(rr.position.x + 10, rr.position.y + 20), reg, 13, GOLD)
+		_sh(font, Vector2(rr.position.x + 10, rr.position.y + 20), reg, int(FS.S), GOLD)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1444,6 +1589,47 @@ func _panel(r: Rect2, bg: Color, border: Color, radius := 8, bw := 1.5) -> void:
 	draw_style_box(sb, r)
 
 
+## 3px単位のブレゼンハム円。draw_circle は必ずアンチエイリアスされるので、
+## ドット絵の中に混ぜるとベクター図形が浮く。r_units は3pxモジュール数。
+func _pxcircle(center: Vector2, r_units: int, col: Color) -> void:
+	var cx: float = round(center.x / U) * U
+	var cy: float = round(center.y / U) * U
+	var r := maxi(r_units, 1)
+	var rr := float(r * r) + 0.35
+	for dy in range(-r, r + 1):
+		var sp := int(floor(sqrt(maxf(rr - float(dy * dy), 0.0))))
+		draw_rect(Rect2(cx - sp * U, cy + dy * U, (sp * 2 + 1) * U, U), col)
+
+
+## 3px単位の円環（伝票の皿スロット）。draw_arc の置き換え。
+func _pxring(center: Vector2, r_units: int, col: Color, thick := 1) -> void:
+	var cx: float = round(center.x / U) * U
+	var cy: float = round(center.y / U) * U
+	var r := maxi(r_units, 1)
+	var ri := maxi(r - thick, 0)
+	var rr := float(r * r) + 0.35
+	var rri := float(ri * ri) + 0.35
+	for dy in range(-r, r + 1):
+		var so := int(floor(sqrt(maxf(rr - float(dy * dy), 0.0))))
+		if absi(dy) > ri:
+			draw_rect(Rect2(cx - so * U, cy + dy * U, (so * 2 + 1) * U, U), col)
+			continue
+		var si := int(floor(sqrt(maxf(rri - float(dy * dy), 0.0))))
+		var lw := maxf(float(so - si) * U, U)
+		draw_rect(Rect2(cx - so * U, cy + dy * U, lw, U), col)
+		draw_rect(Rect2(cx + (si + 1) * U, cy + dy * U, lw, U), col)
+
+
+## 3x3矩形の連なりで斜線を引く。draw_line の1pxアンチエイリアス線は
+## 周りのドット絵と解像度が合わず、そこだけ別の絵に見えてしまう。
+func _pxdiag(a: Vector2, b: Vector2, col: Color, thick := 1) -> void:
+	var n := maxi(int(ceil(a.distance_to(b) / U)), 1)
+	var t := float(thick) * U
+	for i in n + 1:
+		var p := a.lerp(b, float(i) / float(n))
+		draw_rect(Rect2(round(p.x / U) * U, round(p.y / U) * U, t, t), col)
+
+
 func _ellipse(center: Vector2, radii: Vector2, col: Color) -> void:
 	var pts := PackedVector2Array()
 	for i in 20:
@@ -1473,8 +1659,8 @@ func _draw_ripples() -> void:
 		var e := 1.0 - pow(1.0 - k, 2.0)
 		var p: Vector2 = _ripples[i]["pos"]
 		var r := lerpf(10.0, 46.0, e)
-		draw_circle(p, r, Color(1, 1, 1, (1.0 - k) * 0.06))
-		draw_arc(p, r, 0, TAU, 40, Color(1, 1, 1, (1.0 - k) * 0.30), 2.0)
+		_pxcircle(p, maxi(int(round(r / U)), 1), Color(1, 1, 1, (1.0 - k) * 0.06))
+		_pxring(p, maxi(int(round(r / U)), 1), Color(1, 1, 1, (1.0 - k) * 0.30))
 		i += 1
 
 

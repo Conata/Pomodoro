@@ -19,10 +19,16 @@ const HP_COL := Color(0.42, 0.90, 0.52)
 const SP_COL := Color(0.40, 0.70, 1.0)
 const TEXT := Color(0.96, 0.95, 0.98)
 const TEXT_DIM := Color(0.70, 0.73, 0.80)
-const CORE := Color(0.95, 1.0, 1.0)              # ネオン管の芯（画面の最明部）
+const CORE := Color(0.72, 0.80, 0.88, 0.8)       # 罫のアクセント（純白は使わない）
 
 const CARD_H := 76.0
 const PORTRAIT := 40.0
+
+# 文字サイズは5段だけ（12 / 16 / 22 / 32 / 48）。dive_side_view と同じ段を使う。
+const FS_S := 12
+const FS_M := 16
+const FS_L := 22
+const FS_XL := 32
 
 # ── 表示データ（main.gd / KuroSim から set_data() で差し込む。既定はプレースホルダ）──
 var party: Array = [
@@ -284,14 +290,14 @@ func _draw() -> void:
 	draw_rect(Rect2(10, bar_h - 3, 14, 2), CORE)     # ネオン管の芯
 
 	# 左：階層（B1F）＋探索率。プレースホルダの「プレイヤー」は出さない。
-	_txt(font, Vector2(12, 24), "B%dF" % _floor_no, 20, TEXT)
-	_txt(font, Vector2(12, 44), "探索 %d%%" % int(clampf(player_exp, 0.0, 1.0) * 100.0), 13, TEXT_DIM)
+	_txt(font, Vector2(12, 24), "B%dF" % _floor_no, FS_L, TEXT)
+	_txt(font, Vector2(12, 44), "探索 %d%%" % int(clampf(player_exp, 0.0, 1.0) * 100.0), FS_S, TEXT_DIM)
 
 	# 中央：残り時間（%02d:%02d の等幅表示）
 	if _remain >= 0.0:
 		var tm := _mmss(_remain)
-		var tw := font.get_string_size(tm, HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x
-		_txt(font, Vector2((sz.x - tw) * 0.5, 38), tm, 30, CYAN)
+		var tw := font.get_string_size(tm, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_XL).x
+		_txt(font, Vector2((sz.x - tw) * 0.5, 40), tm, FS_XL, CYAN)
 
 	# 右：主要=倍速（塗り）／副次=技・編成（枠）／破壊=浮上・戻る（赤）
 	var bx := sz.x - 8.0
@@ -303,12 +309,12 @@ func _draw() -> void:
 			["≫%d" % speed_mult, "fast", CYAN, 2]]:
 		var lbl: String = it[0]
 		var col: Color = it[2]
-		var w := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x + 18.0
+		var w := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_M).x + 18.0
 		bx -= w + 6.0
 		var r := _plate(Rect2(bx, 8, w, 36), col, int(it[3]))
 		_hit(r, String(it[1]))
-		var lw := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
-		_txt(font, Vector2(r.position.x + (r.size.x - lw) * 0.5, r.position.y + 24), lbl, 15,
+		var lw := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_M).x
+		_txt(font, Vector2(r.position.x + (r.size.x - lw) * 0.5, r.position.y + 24), lbl, FS_M,
 				TEXT if int(it[3]) == 2 else col)
 
 	# ===== イベントバナー（黒帯・4秒でフェード） ================================
@@ -318,24 +324,24 @@ func _draw() -> void:
 			var ba := clampf(1.0 - (bage - 3.2) / 0.8, 0.0, 1.0) * clampf(bage / 0.18, 0.0, 1.0)
 			var bmsg := String(_banner["msg"])
 			var bcol: Color = _banner["col"]
-			var bw := minf(font.get_string_size(bmsg, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 36, sz.x - 24)
+			var bw := minf(font.get_string_size(bmsg, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_M).x + 36, sz.x - 24)
 			var br := _snap(Rect2((sz.x - bw) * 0.5, bar_h + 10, bw, 34))
 			draw_rect(br, Color(0.02, 0.02, 0.04, 0.88 * ba))
 			draw_rect(br, Color(bcol.r, bcol.g, bcol.b, 0.5 * ba), false, 1.0)
 			draw_string(font, Vector2(br.position.x + 18, br.position.y + 23), bmsg,
-					HORIZONTAL_ALIGNMENT_LEFT, int(bw - 32), 16, Color(bcol.r, bcol.g, bcol.b, ba))
+					HORIZONTAL_ALIGNMENT_LEFT, int(bw - 32), FS_M, Color(bcol.r, bcol.g, bcol.b, ba))
 		else:
 			_banner = {}
 
 	# ===== ボスバナー（交戦中のみ・赤の脈動） ===================================
 	if boss_name != "":
-		var bw2 := font.get_string_size(boss_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 74
+		var bw2 := font.get_string_size(boss_name, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_L).x + 74
 		var br2 := _snap(Rect2((sz.x - bw2) * 0.5, bar_h + 52, bw2, 38))
 		var bp := 0.5 + 0.5 * sin(_t * 4.0)
 		draw_rect(br2, Color(0.14, 0.02, 0.04, 0.92))
 		draw_rect(br2, Color(DANGER.r, DANGER.g, DANGER.b, 0.5 + 0.4 * bp), false, 2.0)
-		_txt(font, Vector2(br2.position.x + 12, br2.position.y + 25), "BOSS", 13, DANGER)
-		_txt(font, Vector2(br2.position.x + 58, br2.position.y + 26), boss_name, 18, TEXT)
+		_txt(font, Vector2(br2.position.x + 12, br2.position.y + 25), "BOSS", FS_S, DANGER)
+		_txt(font, Vector2(br2.position.x + 58, br2.position.y + 27), boss_name, FS_L, TEXT)
 
 	# ===== 下部：パーティカード（顔＋数値＋HP/SP） ==============================
 	var foot_h := (CARD_H + 24.0 + 58.0) if manual_skill else (CARD_H + 24.0)
@@ -353,10 +359,10 @@ func _draw() -> void:
 		if fade <= 0.02:
 			continue
 		var msg := String(e["msg"])
-		var tw2 := font.get_string_size(msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+		var tw2 := font.get_string_size(msg, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_M).x
 		draw_rect(_snap(Rect2(8, yy - 16, tw2 + 16, 21)), Color(0.02, 0.02, 0.05, 0.62 * fade))
 		var col2: Color = e["col"]
-		_txt(font, Vector2(16, yy), msg, 15, Color(col2.r, col2.g, col2.b, fade))
+		_txt(font, Vector2(16, yy), msg, FS_M, Color(col2.r, col2.g, col2.b, fade))
 
 	var cy := fy + 12.0
 	var cw := (sz.x - 16.0) / maxi(party.size(), 1)
@@ -382,9 +388,9 @@ func _draw() -> void:
 				Color(1, 1, 1, 0.18), false, 1.0)
 		# 名前と HP 数値（顔の右。バーは名前の下でカード全幅を使う＝数字が読める）
 		var ix := pr.end.x + 6.0
-		_txt(font, Vector2(ix, card.position.y + 20), String(d["name"]), 14,
+		_txt(font, Vector2(ix, card.position.y + 20), String(d["name"]), FS_M,
 				TEXT if not dead else Color(0.55, 0.55, 0.62))
-		_txt(font, Vector2(ix, card.position.y + 40), "%d/%d" % [int(hp), int(mhp)], 13, TEXT_DIM)
+		_txt(font, Vector2(ix, card.position.y + 40), "%d/%d" % [int(hp), int(mhp)], FS_S, TEXT_DIM)
 		var bar_x := card.position.x + 6.0
 		var bar_w := card.size.x - 12.0
 		_bar(Rect2(bar_x, card.position.y + 50, bar_w, 10), ratio, HP_COL)
@@ -398,8 +404,8 @@ func _draw() -> void:
 		var r3 := _snap(Rect2(12, cy + CARD_H + 8, sz.x - 24, 46))
 		var lbl2 := ("▶ %s" % skill_label) if ready else "スキル準備中…"
 		_plate(r3, CYAN if ready else LINE, 2 if ready else 0)
-		var lw2 := font.get_string_size(lbl2, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x
-		_txt(font, Vector2(r3.position.x + (r3.size.x - lw2) * 0.5, r3.position.y + 30), lbl2, 18,
+		var lw2 := font.get_string_size(lbl2, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_L).x
+		_txt(font, Vector2(r3.position.x + (r3.size.x - lw2) * 0.5, r3.position.y + 31), lbl2, FS_L,
 				TEXT if ready else TEXT_DIM)
 		_hit(r3, "cast")
 
