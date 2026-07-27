@@ -104,6 +104,26 @@ func _ready() -> void:
 	_save()                           # last_seen / 安息分を確定保存
 
 
+## 全画面シート（メニュー／夜営業／精算）が世界を覆っている間は 3D の描画を止める。
+## シミュレーションは止めない＝世界は生きたまま、見えていない絵を描くのをやめるだけ。
+## visible を切り替える箇所が散っているので、毎フレーム可視状態から従属的に決める
+## （どこかで戻し忘れても次のフレームで必ず復帰する）。
+var _world_paused := false
+
+func _sync_world_render() -> void:
+	var covered := (_menu_overlay != null and _menu_overlay.visible) \
+			or (_night_overlay != null and _night_overlay.visible) \
+			or (_result_overlay != null and _result_overlay.visible)
+	if covered == _world_paused:
+		return
+	_world_paused = covered
+	if _current == null:
+		return
+	for child in _current.get_children():
+		if child.has_method("set_render_paused"):
+			child.set_render_paused(covered)
+
+
 ## 現在の状態を保存（rng を state に同期してから書き出す）。
 func _save() -> void:
 	if sim == null:
@@ -260,6 +280,7 @@ func _notification(what: int) -> void:
 
 func _process(delta: float) -> void:
 	_update_bgm(delta)   # フェーズに応じた店⇄潜航クロスフェード（潜航外でも動かす）
+	_sync_world_render()  # 全画面シートで隠れている間は3Dの描画を止める
 	if not _in_dive or sim == null:
 		return
 	# 早送り：アンカーを余分に巻き戻して「より多くの時間が経った」ことにする
