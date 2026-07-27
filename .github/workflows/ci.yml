@@ -26,6 +26,17 @@ jobs:
         # 失敗時は test_sim.gd が exit 1 で返すのでジョブも落ちる
         run: godot --headless -s tests/test_sim.gd
 
+      - name: Run flow tests
+        # 単体テストは sim しか叩かないので、UI の描画中に落ちる類を素通しする。
+        # 実際「店番にドクター／ナースを選ぶと精算で落ちる」バグが 251 件の
+        # 単体テストを全部すり抜けていた。main.tscn を実際に動かして流れを通す。
+        # 3D の描画コンテキストが要るので xvfb 経由で回す。
+        run: |
+          command -v xvfb-run >/dev/null 2>&1 || (apt-get update && apt-get install -y xvfb)
+          xvfb-run -a -s "-screen 0 760x1320x24" godot \
+            --rendering-method gl_compatibility --rendering-driver opengl3 \
+            --audio-driver Dummy -s tests/test_flow.gd
+
   # feature ブランチの「見た目」を確認できるよう、Web ビルドを成果物として上げる。
   # （Godot 非搭載のこの開発環境では描画確認できないため。Pages 配信は main の deploy.yml）
   web-build:
