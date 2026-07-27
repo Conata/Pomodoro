@@ -634,3 +634,30 @@ func _test_sync_level() -> void:
 	check(crits > 0, "会心フラグの立った拍がある（%d回）" % crits)
 	check(crits < pops, "全部が会心にはならない")
 	check(crit_val > norm_val, "会心の拍は数字が大きい（%d > %d）" % [crit_val, norm_val])
+	# 夜営業の給仕：劇場での操作が精算に効く
+	var sim5 := _fresh(81)
+	sim5.state["stock"] = {"dry": 20, "meat": 20, "sea": 20}
+	var night := sim5.close_day()
+	var g0 := int(sim5.state["gold"])
+	var served0 := int(night["served"])
+	var gold0 := int(night["gold"])
+	# 何もしなかった場合＝増減なし（席を外した人を罰さない）
+	var r0 := sim5.settle_service(0, 0, 0)
+	check(int(r0["delta"]) == 0, "放置なら増減ゼロ")
+	check(int(sim5.state["gold"]) == g0, "放置で所持金は動かない")
+	# 早く捌いて客が増えた場合
+	var r1 := sim5.settle_service(12, 2, 0)
+	check(int(r1["extra_gold"]) == int(r1["per_plate"]) * 2, "追加の客は1皿ぶんずつ売上になる")
+	check(int(sim5.state["gold"]) == g0 + int(r1["delta"]), "所持金に反映される")
+	check(int(sim5.state["pending_night"]["served"]) == served0 + 2, "精算の皿数が増える")
+	check(int(sim5.state["pending_night"]["gold"]) > gold0, "精算の売上が増える")
+	# 待たせて帰られた場合
+	var sim6 := _fresh(82)
+	sim6.state["stock"] = {"dry": 20, "meat": 20, "sea": 20}
+	var night6 := sim6.close_day()
+	var served6 := int(night6["served"])
+	if served6 > 1:
+		var r2 := sim6.settle_service(0, 0, 1)
+		check(int(r2["lost_gold"]) > 0, "帰られた客のぶん売上を失う")
+		check(int(sim6.state["pending_night"]["served"]) == served6 - 1, "精算の皿数が減る")
+	check(sim6.settle_service(-5, -1, -1)["delta"] == 0, "負の値は0として扱う")

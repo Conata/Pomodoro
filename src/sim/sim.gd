@@ -1075,6 +1075,41 @@ func add_tips(amount: int) -> int:
 	return amount
 
 
+# ── 夜営業の給仕結果（劇場での操作が精算に効く）──────────────────────────────
+# close_day() が出す売上は「その夜に出せる上限」であって確定値ではない。
+# 席は限りがあるので、給仕が遅れれば待ち客が帰り、早ければ次の客が入る。
+# 放置しても自動給仕は回る（ポモドーロの相棒として、席を外した人を罰さない）。
+# タップは上積み＝チップと追加の客であって、押さないと減るのではない。
+
+## 劇場から給仕の実績を受け取り、精算へ反映する。
+##   tips        … タップ給仕で得たチップ
+##   extra       … 早く捌けたおかげで追加で入った客の数
+##   walked_out  … 我慢が切れて帰った客の数（＝取り逃した皿）
+## 戻り値は表示用の内訳。
+func settle_service(tips: int, extra: int, walked_out: int) -> Dictionary:
+	tips = maxi(tips, 0)
+	extra = maxi(extra, 0)
+	walked_out = maxi(walked_out, 0)
+	var night: Dictionary = state["pending_night"]
+	var per_plate := 0
+	if int(night.get("served", 0)) > 0:
+		per_plate = int(round(float(night.get("gold", 0)) / float(night["served"])))
+	var extra_gold := per_plate * extra
+	var lost_gold := per_plate * walked_out
+	var delta := tips + extra_gold - lost_gold
+	state["gold"] = maxi(int(state["gold"]) + delta, 0)
+	# 精算の三行にも出す（何が起きたか分からないまま数字だけ動くのを避ける）
+	if not night.is_empty():
+		night["served"] = maxi(int(night.get("served", 0)) + extra - walked_out, 0)
+		night["gold"] = maxi(int(night.get("gold", 0)) + extra_gold - lost_gold, 0)
+		night["tips"] = tips
+		night["extra"] = extra
+		night["walked_out"] = walked_out
+	return {"tips": tips, "extra": extra, "extra_gold": extra_gold,
+			"walked_out": walked_out, "lost_gold": lost_gold,
+			"per_plate": per_plate, "delta": delta}
+
+
 func close_day() -> Dictionary:
 	var keeper: String = state["morning"]["keeper"]
 	var menu: Array = state["morning"]["menu"]
