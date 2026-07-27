@@ -55,6 +55,15 @@ var _banter_t   := 0.0
 var _banter_q: Array = []
 var _banter_rng := RandomNumberGenerator.new()
 
+# ── 登場（画面遷移に乗る）─────────────────────────────────────────────
+# main.gd の暗幕は 0.32s で明ける。こちらはそれに合わせて、上から順に
+# 50ms ずつずれて所定の位置へ着く（暗幕が明けた時にはもう動き終わっている）。
+const ENTER_STEP := 0.05
+const ENTER_DUR := 0.34
+var _enter_i := 0
+var _xf_now := Vector2.ZERO
+var _nav: Dictionary = {}   # フッター選択インジケータの追従台帳（Kit.nav_slide）
+
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -166,6 +175,47 @@ func _advance_banter() -> void:
 	line = String(pick["text"])
 
 
+# ── モーションの下ごしらえ（原点の平行移動だけで動かす）──────────────────
+# 動かすのは見た目だけ。_hit() に積む当たり矩形は最終位置のまま置く
+# ＝登場アニメーションの最中にタップしても、指の下の物が必ず反応する。
+
+func _set_xf(v: Vector2) -> void:
+	_xf_now = v
+	Kit.set_xf(self, v)
+
+
+## 画面の要素を1つ「遅らせて」出す。上から順に呼ぶ＝ENTER_STEP ずつ連鎖する。
+func _stag() -> void:
+	var i := _enter_i
+	_enter_i += 1
+	if _t >= ENTER_DUR + ENTER_STEP * i:
+		_set_xf(Vector2.ZERO)
+		return
+	var k := Kit.stag(_t, i, ENTER_STEP, ENTER_DUR)
+	_set_xf(Vector2(0.0, (1.0 - k) * 30.0))
+
+
+## 押されている矩形なら、いま沈んでいる量（px）。離すと 0 を通り越して戻る。
+func _sink(r: Rect2) -> Vector2:
+	if _press.is_empty():
+		return Vector2.ZERO
+	var pr: Rect2 = _press["rect"]
+	if not pr.position.is_equal_approx(r.position) or not pr.size.is_equal_approx(r.size):
+		return Vector2.ZERO
+	var s := Kit.press_sink(_t - float(_press["t0"]))
+	return Vector2.ZERO if is_zero_approx(s) else Vector2(0.0, s)
+
+
+func _begin_sink(r: Rect2) -> void:
+	var s := _sink(r)
+	if s != Vector2.ZERO:
+		Kit.set_xf(self, _xf_now + s)
+
+
+func _end_sink() -> void:
+	Kit.set_xf(self, _xf_now)
+
+
 func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
 	Kit.panel(self, rect, bg, border, radius, bw)
 
@@ -176,19 +226,24 @@ func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORI
 
 
 func _icon(font: Font, c: Vector2, r: float, label: String, col: Color, id: String) -> void:
-	_panel(Rect2(c - Vector2(r, r), Vector2(r * 2, r * 2)), Color(0.05, 0.05, 0.09, 0.85), col, r, 1.5)
+	var rect := Rect2(c - Vector2(r, r), Vector2(r * 2, r * 2))
+	_begin_sink(rect)
+	_panel(rect, Color(0.05, 0.05, 0.09, 0.85), col, r, 1.5)
 	var w := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
 	_txt(font, c + Vector2(-w * 0.5, 6), label, 15, TEXT)
-	_hit(Rect2(c - Vector2(r, r), Vector2(r * 2, r * 2)), id)
+	_end_sink()
+	_hit(rect, id)
 
 
 func _draw() -> void:
 	var sz := size
 	var font := get_theme_default_font()
 	_hits.clear()
-	Kit.set_xf(self, Vector2.ZERO)   # 拡大描画が戻る先を自分の座標系に固定する
+	_enter_i = 0
+	_set_xf(Vector2.ZERO)   # 拡大描画が戻る先を自分の座標系に固定する
 
 	# ===== トップバー（薄い帯＋アイコン） =====
+	_stag()
 	var tb := Rect2(0, 0, sz.x, 60)
 	draw_rect(tb, Color(0.02, 0.02, 0.05, 0.55))
 	draw_rect(Rect2(0, 60, sz.x, 1.5), Color(PINK.r, PINK.g, PINK.b, 0.4))
@@ -199,6 +254,7 @@ func _draw() -> void:
 	_icon(font, Vector2(sz.x - 86, 30), 21, "設定", CYAN, "settings")
 	_icon(font, Vector2(sz.x - 138, 30), 21, "報", GOLD, "bell")
 
+	_stag()
 	# ===== 探索入口ポータル（右端・縦書き＋紫の渦） =====
 	var pc := Vector2(sz.x - 56, sz.y * 0.47)
 	_hit(Rect2(pc.x - 52, pc.y - 56, 104, 170), "depart")
@@ -215,18 +271,24 @@ func _draw() -> void:
 		_txt(font, Vector2(pc.x - 9, vy), ch, 17, PINK)
 		vy += 22.0
 
+	_stag()
 	# ===== ポモドーロ集中ボタン（主役CTA・VN窓の上） =====
 	var vh := 96.0
 	var vy0 := sz.y - STRIP_H - vh - 8
 	_prep_card(font, sz, vy0 - 70 - 10)   # 朝の仕込みカード（CTAの直上）
+	_stag()                               # CTA は仕込みカードより一拍あとに着く
 	var cta := Rect2(sz.x * 0.5 - 145, vy0 - 70, 290, 56)
 	_hit(cta, "pomodoro")
-	var pulse := 0.5 + 0.5 * sin(_t * 2.5)
+	# 待機中の生気はこの1箇所だけ。常時揺れる sin ではなく心拍（静か→短い二拍）
+	var pulse := Kit.heartbeat(_t)
+	_begin_sink(cta)
 	Kit.cta(self, cta, Color(PINK.r * 0.22, PINK.g * 0.16, PINK.b * 0.24, 0.96), PINK, pulse)
 	var ct := "▶  集中する（25分）"
 	var ctw := font.get_string_size(ct, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
 	_txt(font, Vector2(cta.position.x + (cta.size.x - ctw) * 0.5, cta.position.y + 36), ct, 19, TEXT)
+	_end_sink()
 
+	_stag()
 	# ===== VN セリフ窓（フィールド帯の上） =====
 	_panel(Rect2(16, vy0, sz.x - 32, vh), Color(0.04, 0.04, 0.08, 0.86), Color(PINK.r, PINK.g, PINK.b, 0.5), 12)
 	# 名前タグ
@@ -247,8 +309,10 @@ func _draw() -> void:
 	var fy := sz.y - STRIP_H
 	draw_rect(Rect2(0, fy, sz.x, 2), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.6))
 
+	_stag()
 	# ===== 最下部：各主要機能へのフッターナビ =====
 	_footer(font, sz)
+	_set_xf(Vector2.ZERO)
 	# ===== 触った結果のフィードバック（押下→波紋→数値の増減） =====
 	if not _press.is_empty():
 		var pk := 1.0 - (_t - float(_press["t0"])) / Kit.PRESS_LIFE
@@ -370,12 +434,15 @@ func _prep_card(font: Font, sz: Vector2, y_bottom: float) -> void:
 
 
 ## 仕込みカードの小チップを1つ描き、次のX座標を返す。
+## 押されている間はチップごと数px沈む（押し込み→戻りのオーバーシュートは Kit.press_sink）。
 func _chip(font: Font, pos: Vector2, label: String, col: Color, id: String) -> float:
 	var w := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 20
 	var cr := Rect2(pos.x, pos.y, w, 30)
 	_hit(cr, id)
+	_begin_sink(cr)
 	_panel(cr, Color(col.r * 0.16, col.g * 0.14, col.b * 0.18, 0.9), Color(col.r, col.g, col.b, 0.55), 8, 1.2)
 	_txt(font, Vector2(pos.x + 10, pos.y + 21), label, 14, col.lerp(TEXT, 0.35))
+	_end_sink()
 	return pos.x + w + 8
 
 
@@ -387,22 +454,34 @@ func _footer(font: Font, sz: Vector2) -> void:
 	draw_rect(Rect2(0, fy, sz.x, 1.5), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.55))
 	var n := NAV.size()
 	var cw := sz.x / float(n)
+	# 選択インジケータは瞬間移動させない。目標セルへ滑って、少し行き過ぎて座る
+	# （メニュー側のフッターと同じ台帳・同じ曲線を使う）。
+	var ai := 0
+	for i in n:
+		if String((NAV[i] as Dictionary)["id"]) == active_nav:
+			ai = i
+			break
+	var acol: Color = (NAV[ai] as Dictionary)["col"]
+	var slide: Dictionary = Kit.nav_slide(_nav, cw * ai, acol, _t)
+	var ix := float(slide["x"])
+	var icol: Color = slide["col"]
+	var stretch := (1.0 - Kit.out_cubic(float(slide["k"]))) * cw * 0.34
+	draw_rect(Rect2(ix, fy, cw, FOOTER_H), Color(icol.r, icol.g, icol.b, 0.10))
+	draw_rect(Rect2(ix - stretch * 0.5, fy, cw + stretch, 2.0), icol)
+	Kit.spot(self, Vector2(ix + cw * 0.5, fy + FOOTER_H * 0.55), cw * 0.72, icol, 0.22)
 	for i in n:
 		var e: Dictionary = NAV[i]
 		var x0 := cw * i
 		var id := String(e["id"])
 		_hit(Rect2(x0, fy, cw, FOOTER_H), id)
 		var col: Color = e["col"]
-		var active := id == active_nav
-		if active:
-			draw_rect(Rect2(x0, fy, cw, FOOTER_H), Color(col.r, col.g, col.b, 0.10))
-			draw_rect(Rect2(x0, fy, cw, 2.0), col)
-			Kit.spot(self, Vector2(x0 + cw * 0.5, fy + FOOTER_H * 0.55), cw * 0.72, col, 0.22)   # アクティブの上辺ハイライト
-		var gcol := col if active else Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.9)
+		# 文字色は「インジケータがどれだけ自分の上に来たか」で混ぜる＝色も一緒に滑る
+		var near := clampf(1.0 - absf(ix - x0) / cw, 0.0, 1.0)
+		var gcol := Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.9).lerp(col, Kit.out_cubic(near))
 		var cx := x0 + cw * 0.5
 		var glyph := String(e["icon"])
 		var gw := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x
-		_txt(font, Vector2(cx - gw * 0.5, fy + 28), glyph, 22, gcol)
+		_txt(font, Vector2(cx - gw * 0.5, fy + 28 - near * 2.0), glyph, 22, gcol)
 		var label := String(e["label"])
 		var lw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
 		_txt(font, Vector2(cx - lw * 0.5, fy + 48), label, 11, gcol)

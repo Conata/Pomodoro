@@ -89,14 +89,43 @@ var gold_gain := 0
 var difficulty := 0         # 難易度（章票の色とラベルに使う）
 
 var _t := 0.0
+# ── 二つの時計 ───────────────────────────────────────────────────────
+# _t  ＝ 実時間。背景・パララックス・吹き出しなど「世界の流れ」に使う。
+# _ct ＝ 戦闘時計。ヒットストップ中は進めない。敵・味方の芝居・戦闘FX・カメラは
+#        すべてこちらを見るので、当たった瞬間だけ「敵とエフェクトだけ」が止まる。
+#        下部UI（dive_overlay）は別ノードで自前の時計を持つので影響しない。
+var _ct := 0.0
+var _hitstop := 0.0               # 残りヒットストップ（実時間・秒）
+# 止める長さ。オクトパストラベラーII 準拠で「通常は数フレーム／会心は倍以上」。
+const HS_HIT := 0.045             # 通常の被打（60fpsで約3コマ）
+const HS_CRIT := 0.115            # 会心（約7コマ）
+const HS_HURT := 0.035            # 味方の被弾（2秒に1回なので短く）
+const HS_KILL := 0.075            # 撃破
+const HS_ELITE := 0.11            # エリート撃破
+const HS_BOSS := 0.16             # ボス撃破
+const KNOCK_DUR := 0.42           # のけぞり（当たった瞬間が最大→行き過ぎ→収束）
+const APPROACH_DUR := 0.55        # 敵が奥から定位置へ寄るまで
+const DEATH_LEAD := 0.16          # 撃破の予備動作（白飛び→潰れ）→ 破片までの間
 var _anims: Dictionary = {}       # girl_id -> ChibiAnim
 var _tex_cache: Dictionary = {}   # path -> Texture2D|null
 var _pix_cache: Dictionary = {}   # path -> ピクセル化済み Texture2D|null（タスクバーヒーロー密度）
-var _enemy_x: Array = []          # 敵スロットの現在x（右からスライドイン）
+var _enemy_x: Array = []          # 敵スロットの現在x（奥から近づく）
+var _enemy_t0: Array = []         # 敵スロットの出現時刻（接近の予備動作の基準・_ct）
+var _enemy_land: Array = []       # 着地（定位置到達）時刻。-9.9＝まだ着いていない
 var _mob_hp0: Array = []          # 敵スロットの初期HP（バー比率用）
 var _last_mob_count := 0
-var _shake := 0.0
 var _form_x := 0.0                # 隊列の横オフセット（非戦闘時は右へ寄る）
+
+# ── カメラ（punch）────────────────────────────────────────────────────
+# ランダムな毎フレームぶれは「振動」であって「打撃」ではない。方向を持った減衰振動に
+# する。25分見続ける画面なので短く（0.20秒）小さく（実効の最大変位は会心で約2.4px、
+# ボス撃破でも約5px）で頭打ち。punch の引数は 0〜1 でクランプする。
+const SHAKE_DUR := 0.20
+const SHAKE_PX := 14.0
+var _shake := 0.0                 # 強度 0〜1
+var _shake_t0 := -9.9             # _ct 基準
+var _shake_dir := Vector2(-0.94, 0.34)
+var _shake_flip := 1.0            # 連打でも同じ方向に偏らせない
 
 # ── 実体アンカーの戦闘FX（ダメージ数字・斬撃・被弾・スキルバースト）──
 var _party_pos: Array = []   # 直近フレームの味方足元（floaterの追従先）
@@ -108,7 +137,8 @@ var _party_hurt: Array = []  # 味方ごとの被弾時刻（頭上HPは被弾�
 var _bursts: Array = []      # スキルバースト {kind, t0}
 var _striker := -1           # 直近で「殴った」味方（踏み込み演出）
 var _strike_t := -9.9
-var _knock: Array = []       # 敵スロットのノックバック残量
+var _knock: Array = []       # 敵スロットののけぞり {t0, mag}｜null
+var _enemy_draw: Array = []  # 直近フレームの敵の描画情報（撃破の予備動作に使い回す）
 
 # ── 撃破（2.5秒に1体）と同期率レベルアップの演出 ────────────────────────
 # 出しすぎると画面が埋まるので、フロータは12個・破裂は6個で頭打ちにして古い順に捨てる。
@@ -140,14 +170,49 @@ func _ready() -> void:
 	set_process(true)
 
 
+# ── イージング。この画面の動きは必ずここを通す（等速の演出は一つも置かない）──
+## 速く出て静かに止まる。p を上げるほど「頭が速い」。
+static func _e_out(u: float, p := 3.0) -> float:
+	return 1.0 - pow(1.0 - clampf(u, 0.0, 1.0), p)
+
+
+## 立ち上がりも収めも滑らかに（光柱の伸縮・明滅はこれだけを使う）。
+static func _e_in_out(u: float) -> float:
+	var x := clampf(u, 0.0, 1.0)
+	return x * x * (3.0 - 2.0 * x)
+
+
+## 一度行き過ぎてから収まる（のけぞりの戻り・数字の飛び出し）。
+static func _e_back(u: float, over := 1.28) -> float:
+	var x := clampf(u, 0.0, 1.0) - 1.0
+	return 1.0 + (over + 1.0) * x * x * x + over * x * x
+
+
+## 減衰振動。u=0 で 1、途中で 0 を跨ぎ、わずかに行き過ぎてから収束する。
+static func _e_recoil(u: float) -> float:
+	if u <= 0.0:
+		return 1.0
+	return exp(-3.0 * u) * cos(5.6 * u)
+
+
 func _process(delta: float) -> void:
 	_t += delta
+	# ヒットストップ：実時間で数えて、戦闘時計だけを止める。
+	# delta のうち「止まっていた分」だけを差し引く（フレームが長い端末で
+	# 1フレーム丸ごと止めてしまわない＝止める長さが fps に依存しない）。
+	var cd := delta
+	if _hitstop > 0.0:
+		var used := minf(_hitstop, delta)
+		_hitstop -= used
+		cd = delta - used
+	_ct += cd
 	for id in _anims:
-		(_anims[id] as ChibiAnim).tick(delta)
-	if _shake > 0.004:
-		_shake = maxf(0.0, _shake - delta * 1.5)
-	# 非戦闘時は隊列を右へ寄せ、交戦時は左の定位置へ戻す（右半分を空にしない）
-	_form_x = lerpf(_form_x, 0.0 if in_combat else PARTY_ROAM_X, clampf(delta * 2.4, 0.0, 1.0))
+		(_anims[id] as ChibiAnim).tick(cd)
+	# 非戦闘時は隊列を右へ寄せ、交戦時は左の定位置へ戻す（右半分を空にしない）。
+	# 係数は指数減衰でフレームレートに依らせない（lerp の固定係数は fps 依存）。
+	var target_fx := 0.0 if in_combat else PARTY_ROAM_X
+	_form_x += (target_fx - _form_x) * (1.0 - exp(-delta * 3.0))
+	_update_enemies(cd)
 	# 吹き出し：表示時間が尽きたら掛け合いの次の行へ（0.25s の間を置く）
 	if not _bubble.is_empty() and _t - float(_bubble["t0"]) > float(_bubble["dur"]):
 		_bubble = {}
@@ -228,9 +293,76 @@ func _banter_event(cat: String, chance: float, interrupt := false) -> void:
 	_banter_wait = maxf(_banter_wait, 5.0)
 
 
+## 敵スロットの接近／定位置を毎フレーム進める（描画側は結果を読むだけ）。
+## 交戦の開始を唐突にしないため、敵は「奥の小さい影」から定位置へ ease-out で寄る。
+func _update_enemies(cd: float) -> void:
+	var n := mobs.size()
+	_enemy_x.resize(n)
+	_enemy_t0.resize(n)
+	_enemy_land.resize(n)
+	if n == 0 or size.x <= 0.0:
+		return
+	var egap := minf(ENEMY_GAP, (size.x * 0.34) / maxf(n - 1.0, 1.0))
+	for i in n:
+		var boss: bool = bool((mobs[i] as Dictionary).get("boss", false))
+		var slot_x := size.x * (ENEMY_X0 - 0.04) + i * egap + (26.0 if boss else 0.0)
+		var t0: float = float(_enemy_t0[i]) if _enemy_t0[i] != null else -9.9
+		var u := _approach(i)
+		if u < 1.0:
+			# 接近中：奥（画面右・やや上・小さい）から定位置へ。頭が速く尻が静かな ease-out。
+			var sx := size.x * 0.99
+			_enemy_x[i] = sx + (slot_x - sx) * _e_out(u, 2.6)
+		else:
+			# 定位置：隊列が組み替わったときだけ指数で追従（瞬間移動させない）
+			var cur: float = float(_enemy_x[i]) if _enemy_x[i] != null else slot_x
+			# 前の敵が倒れて枠が空いたときの詰め寄り。速すぎると死骸と重なって読めないので
+			# 0.3秒くらいかけて「次の一体が前へ出る」ように寄せる。
+			_enemy_x[i] = cur + (slot_x - cur) * (1.0 - exp(-cd * 5.0))
+			var landed: float = float(_enemy_land[i]) if _enemy_land[i] != null else -9.9
+			if landed < t0:
+				_enemy_land[i] = _ct        # 着地の瞬間（土煙と小さな punch）
+				punch(0.10)
+
+
+## 敵スロットの接近進行度 0〜1（1＝定位置に着いた）。
+func _approach(i: int) -> float:
+	if i >= _enemy_t0.size() or _enemy_t0[i] == null:
+		return 1.0
+	return clampf((_ct - float(_enemy_t0[i])) / APPROACH_DUR, 0.0, 1.0)
+
+
+## のけぞりの現在量（px・正＝味方から遠ざかる向き）。
+## 当たった瞬間が最大で、ease-out で戻り、わずかに行き過ぎてから収まる。
+func _knock_offset(i: int) -> float:
+	if i >= _knock.size() or _knock[i] == null:
+		return 0.0
+	var e: Dictionary = _knock[i]
+	var u := (_ct - float(e["t0"])) / KNOCK_DUR
+	if u < 0.0 or u >= 1.0:
+		return 0.0
+	return float(e["mag"]) * _e_recoil(u)
+
+
 ## 戦闘のカメラシェイク（main の punch 互換）。
+## 方向を持った減衰振動。既に強い揺れが走っているときは上書きしない（重ねて増幅させない）。
 func punch(mag := 0.3) -> void:
-	_shake = maxf(_shake, mag)
+	var m := clampf(mag, 0.0, 1.0)
+	if m * SHAKE_PX <= absf(_shake_amp()):
+		return
+	_shake = m
+	_shake_t0 = _ct
+	_shake_flip = -_shake_flip
+	_shake_dir = Vector2(-0.94 * _shake_flip, 0.34)
+
+
+## 現在のカメラ変位（px）。0.20秒で収まる短い減衰振動。
+func _shake_amp() -> float:
+	if _shake <= 0.0:
+		return 0.0
+	var u := (_ct - _shake_t0) / SHAKE_DUR
+	if u < 0.0 or u >= 1.0:
+		return 0.0
+	return _shake * SHAKE_PX * exp(-4.2 * u) * sin(u * TAU * 2.6)
 
 
 ## main.gd から毎フレーム：sim の実データを流し込む。
@@ -251,17 +383,23 @@ func set_view(d: Dictionary) -> void:
 		if not _anims.has(id):
 			_anims[id] = ChibiAnim.new(id)
 		var dead: bool = float(party[i]["hp"]) <= 0.0
-		var atk_pulse := in_combat and fposmod(_t + i * 0.53, 1.7) < 1.15
+		var atk_pulse := in_combat and fposmod(_ct + i * 0.53, 1.7) < 1.15
 		(_anims[id] as ChibiAnim).update_params(0.0 if in_combat else 1.0, atk_pulse, false, dead)
-	# 敵スロット：新しい群れが来たらスライドイン＆初期HPを記録
+	# 敵スロット：新しい群れが来たら「奥から近づく」の起点時刻を打つ。
+	# 一体ずつ 0.09 秒ずらす＝一斉にスライドインさせない（列が生き物に見える）。
+	_enemy_t0.resize(mobs.size())
+	_enemy_land.resize(mobs.size())
 	if mobs.size() > _last_mob_count:
 		for i in mobs.size():
-			if i >= _enemy_x.size():
-				_enemy_x.append(size.x + 60.0 + i * 40.0)
+			if i >= _mob_hp0.size():
 				_mob_hp0.append(float(mobs[i]["hp"]))
 			elif i >= _last_mob_count:
-				_enemy_x[i] = size.x + 60.0 + i * 40.0
 				_mob_hp0[i] = float(mobs[i]["hp"])
+			if i >= _last_mob_count:
+				_enemy_t0[i] = _ct + i * 0.09
+				_enemy_land[i] = -9.9
+				if i < _enemy_x.size():
+					_enemy_x[i] = size.x * 0.99
 	_last_mob_count = mobs.size()
 	for i in mini(mobs.size(), _mob_hp0.size()):
 		_mob_hp0[i] = maxf(_mob_hp0[i], float(mobs[i]["hp"]))
@@ -281,38 +419,46 @@ func add_events(events: Array) -> void:
 					# 会心は sim が拍ごとに判定してフラグで流してくる。推測しない。
 					# （以前は「技の直後」「火力が跳ねた」で当てにいっていたが外れる）
 					var crit := bool(e.get("crit", false))
+					# ① 全部止める。会心は倍以上長く止める＝「当たった感触」の芯。
+					_hitstop = maxf(_hitstop, HS_CRIT if crit else HS_HIT)
 					# 同じ場所に積まないよう横も縦もばらす（重なると数字が読めなくなる）
 					_floaters.append({"txt": ("%d!" % val) if crit else str(val),
 							"col": Color(1, 1, 1) if crit else Color(0.93, 0.95, 1.0),
-							"side": "enemy", "slot": slot, "t0": _t,
+							"side": "enemy", "slot": slot, "t0": _ct,
 							"jx": randf_range(-34.0, 34.0), "jy": randf_range(-20.0, 4.0),
 							"crit": crit})
-					_slashes.append({"slot": slot, "t0": _t})
+					# rt は実時間。白飛びだけは実時間で抜く＝ヒットストップが
+					# 「白い塊」を保持しない（止めて見せたいのは のけぞりの姿勢）。
+					_slashes.append({"slot": slot, "t0": _ct, "rt": _t})
 					if slot < _knock.size():
-						_knock[slot] = 10.0
+						# ② のけぞり。会心は倍ちかく押し込む
+						_knock[slot] = {"t0": _ct, "mag": 22.0 if crit else 11.0}
+					if crit:
+						punch(0.26)
 					_striker = _next_striker()
-					_strike_t = _t
+					_strike_t = _ct
 				else:
 					# 被ダメ：盾役（先頭の生存者）の頭上に赤数字＋赤フラッシュ
+					_hitstop = maxf(_hitstop, HS_HURT)
 					_floaters.append({"txt": "-%d" % val, "col": Color(1.0, 0.42, 0.45), "side": "party",
-							"slot": _tank_index(), "t0": _t, "jx": randf_range(-10.0, 10.0),
+							"slot": _tank_index(), "t0": _ct, "jx": randf_range(-10.0, 10.0),
 							"crit": false})
-					_hurt_t = _t
+					_hurt_t = _ct
 					var ti := _tank_index()
 					if ti >= 0 and ti < _party_hurt.size():
-						_party_hurt[ti] = _t
+						_party_hurt[ti] = _ct
 				while _floaters.size() > FLOAT_MAX:
 					_floaters.pop_front()
 			"kill":
 				# 2.5秒に1回。敵が弾けて、その撃破で入った金（sim の実値）が飛ぶ。
 				_on_kill(e)
 			"levelup":
-				_lv_t = _t
+				_lv_t = _ct
 				_lv_res = String(e.get("res_name", "")) != ""
 				punch(0.5 if _lv_res else 0.3)
 			"fx":
-				_fx_t = _t
-				_bursts.append({"kind": String(e.get("fx", "")), "t0": _t})
+				_fx_t = _ct
+				_bursts.append({"kind": String(e.get("fx", "")), "t0": _ct})
 				while _bursts.size() > 4:
 					_bursts.pop_front()
 			"boss":
@@ -336,24 +482,31 @@ func _on_kill(e: Dictionary) -> void:
 	var p := Vector2(size.x * ENEMY_X0, size.y * GROUND_Y)
 	if not _enemy_pos.is_empty() and _enemy_pos[0] != null:
 		p = _enemy_pos[0]
-	_pops.append({"p": p, "t0": _t, "elite": elite, "boss": boss})
+	# 撃破の予備動作：sim は撃破した瞬間に mobs から消すので、直近フレームの絵を
+	# ここで押さえておき「白く飛ぶ→潰れる→破片」の順に見せる（消えただけにしない）。
+	var death: Dictionary = {}
+	if not _enemy_draw.is_empty() and _enemy_draw[0] != null:
+		death = (_enemy_draw[0] as Dictionary).duplicate()
+	_hitstop = maxf(_hitstop, HS_BOSS if boss else (HS_ELITE if elite else HS_KILL))
+	# 破片は予備動作が終わってから出す（t0 を DEATH_LEAD だけ後ろへ置く）
+	_pops.append({"p": p, "t0": _ct + DEATH_LEAD, "t_die": _ct, "rt_die": _t,
+			"death": death, "elite": elite, "boss": boss})
 	while _pops.size() > POP_MAX:
 		_pops.pop_front()
 	var g := int(e.get("gold", 0))
 	if g > 0:
 		_floaters.append({"txt": "+%dG" % g, "col": GOLD, "side": "fixed", "plate": true,
 				"pos": p + Vector2(randf_range(-10.0, 18.0), -MOB_H * 0.95),
-				"t0": _t, "jx": 0.0, "jy": 0.0, "crit": false})
+				"t0": _ct + DEATH_LEAD, "jx": 0.0, "jy": 0.0, "crit": false})
 	var ing := String(e.get("ing", ""))
 	if ing != "":
 		_floaters.append({"txt": "%s+%d" % [String(KuroData.ING_NAMES.get(ing, ing)),
 				int(e.get("ing_n", 1))], "col": CYAN, "side": "fixed", "plate": true,
 				"pos": p + Vector2(randf_range(-24.0, 6.0), -MOB_H * 1.20),
-				"t0": _t + 0.14, "jx": 0.0, "jy": 0.0, "crit": false})
+				"t0": _ct + DEATH_LEAD + 0.14, "jx": 0.0, "jy": 0.0, "crit": false})
 	while _floaters.size() > FLOAT_MAX:
 		_floaters.pop_front()
-	if boss or elite:
-		punch(0.45 if boss else 0.22)
+	punch(0.55 if boss else (0.30 if elite else 0.20))
 
 
 ## 次に「殴った」ことにする味方（生存者を巡回）。
@@ -643,7 +796,7 @@ func _mob_frame(sprite_name: String, f: int, pix_h: int) -> Texture2D:
 
 
 func _mob_key(sprite_name: String, fps := 6.0) -> String:
-	return "%s:%d" % [sprite_name, int(_t * fps) % MOB_FRAMES]
+	return "%s:%d" % [sprite_name, int(_ct * fps) % MOB_FRAMES]
 
 
 ## 足元(feet)基準で「テクスチャの整数倍」に描く。倍率は必ず整数（mult）で、
@@ -651,9 +804,11 @@ func _mob_key(sprite_name: String, fps := 6.0) -> String:
 ## outline が不透明なら全周の輪郭（被弾フレームの赤だけに使う）。
 ## rim が真なら上半分に月色のリムライト・下半分に影を置く（敵の立体感）。
 ## 戻り値は「絵が実際にある」矩形＝頭上UIの吸着先。
+## lean は「上体だけを横へずらす量」（px・テクセル単位＝PIX_MULT の倍数で渡す）。
+## 歩きの上体と得物の揺れをスプライトを増やさずに作るための最小装置。
 func _draw_actor(tex: Texture2D, feet: Vector2, mult: int, pads: Vector2,
 		tint := Color(1, 1, 1), outline := Color(0, 0, 0, 0), sil: Texture2D = null,
-		rim := false) -> Rect2:
+		rim := false, lean := 0.0) -> Rect2:
 	if tex == null:
 		return Rect2(feet, Vector2.ZERO)
 	var ts := tex.get_size()
@@ -668,10 +823,24 @@ func _draw_actor(tex: Texture2D, feet: Vector2, mult: int, pads: Vector2,
 	if outline.a > 0.0:
 		var o := float(m)
 		for ov: Vector2 in [Vector2(o, 0), Vector2(-o, 0), Vector2(0, o), Vector2(0, -o)]:
-			draw_texture_rect(ot, Rect2(r.position + ov, r.size), false, outline)
-	draw_texture_rect(tex, r, false, tint)
+			_blit(ot, Rect2(r.position + ov, r.size), outline, lean)
+	_blit(tex, r, tint, lean)
 	return Rect2(r.position.x, r.position.y + full_h * pads.x, r.size.x,
 			full_h * maxf(1.0 - pads.x - pads.y, 0.05))
+
+
+## スプライトを1枚で貼る。lean があるときだけ肩の高さで割って上半身をずらす。
+func _blit(t: Texture2D, r: Rect2, col: Color, lean := 0.0) -> void:
+	if absf(lean) < 0.5:
+		draw_texture_rect(t, r, false, col)
+		return
+	var ts := t.get_size()
+	var cut := floorf(ts.y * 0.42)          # 肩のあたり
+	var sh := roundf(r.size.y * (cut / maxf(ts.y, 1.0)))
+	draw_texture_rect_region(t, Rect2(r.position + Vector2(roundf(lean), 0),
+			Vector2(r.size.x, sh)), Rect2(0, 0, ts.x, cut), col)
+	draw_texture_rect_region(t, Rect2(r.position + Vector2(0, sh),
+			Vector2(r.size.x, r.size.y - sh)), Rect2(0, cut, ts.x, ts.y - cut), col)
 
 
 ## 輪郭を上下で割る：上半分は月色のリム（光は右上の月から来る）、下半分は影。
@@ -698,9 +867,10 @@ func _draw() -> void:
 	var sz := size
 	var gy := snappedf(sz.y * GROUND_Y, 2.0)
 	var font := get_theme_default_font()
-	# シェイク（以降の全描画に効く）
-	if _shake > 0.004:
-		draw_set_transform(Vector2(randf_range(-1, 1), randf_range(-1, 1)) * _shake * 14.0, 0.0, Vector2.ONE)
+	# カメラ（以降の全描画に効く）。毎フレームの乱数ぶれではなく、方向を持った減衰振動。
+	var cam := _shake_amp()
+	if absf(cam) > 0.05:
+		draw_set_transform(_shake_dir * cam, 0.0, Vector2.ONE)
 
 	_draw_sky(sz, gy)
 	_draw_canopy(sz)          # 上端から垂れる構造体＝「下へ潜っている」構図を作る
@@ -716,54 +886,78 @@ func _draw() -> void:
 	_draw_portal(Vector2(58, gy), font)
 	_draw_goal(sz, gy)
 
-	# ===== 敵（右からスライドイン・左向き・被弾で白フラッシュ＋ノックバック）=====
+	# ===== 敵（奥から近づく・左向き・被弾で白フラッシュ＋のけぞり）=====
 	# 味方より先に描く＝敵が奥、味方が手前。敵は味方の約1.4倍で構図を支配する。
 	_enemy_pos.resize(mobs.size())
 	_enemy_top.resize(mobs.size())
+	_enemy_draw.resize(mobs.size())
 	_knock.resize(maxi(mobs.size(), _knock.size()))
 	if in_combat:
-		# 敵の列は右端からはみ出さないよう、数に応じて間隔を詰める
-		var egap := minf(ENEMY_GAP, (sz.x * 0.34) / maxf(mobs.size() - 1.0, 1.0))
 		for i in mobs.size():
 			var m: Dictionary = mobs[i]
 			var boss: bool = bool(m.get("boss", false))
-			var slot_x := sz.x * (ENEMY_X0 - 0.04) + i * egap + (26.0 if boss else 0.0)
-			if i < _enemy_x.size():
-				_enemy_x[i] = lerpf(float(_enemy_x[i]), slot_x, 0.18)
-			var ex := float(_enemy_x[i]) if i < _enemy_x.size() else slot_x
-			var arriving := absf(ex - slot_x) > 8.0
-			var lunge := 0.0 if arriving else maxf(0.0, sin(_t * 4.2 + i * 1.7)) * 9.0
-			var kn := float(_knock[i]) if _knock[i] != null else 0.0
-			if kn > 0.05:
-				_knock[i] = kn * 0.82   # ノックバックの減衰
-			var feet := Vector2(ex - lunge + kn, gy + (0.0 if boss else (i % 2) * 8.0))
+			var ex := float(_enemy_x[i]) if (i < _enemy_x.size() and _enemy_x[i] != null) \
+					else sz.x * (ENEMY_X0 - 0.04)
+			# 接近の予備動作：奥（小さい・高い・暗い）から手前へ。到達してから初めて構える。
+			var app := _approach(i)
+			var far := 1.0 - app
+			var lunge := 0.0 if far > 0.02 else maxf(0.0, sin(_ct * 4.2 + i * 1.7)) * 9.0
+			var feet := Vector2(ex - lunge + _knock_offset(i),
+					gy + (0.0 if boss else (i % 2) * 8.0) - far * 26.0)
 			_enemy_pos[i] = feet
-			var ph := BOSS_PIX_H if boss else MOB_PIX_H
+			# 遠いほど小さく貼る。倍率は PIX_MULT 固定のまま「ピクセル高さ」を段で落とす
+			# ＝非整数縮小を持ち込まずに遠近を出す（_draw_incoming と同じ作法）。
+			var ph_full := BOSS_PIX_H if boss else MOB_PIX_H
+			var ph := ph_full
+			if far > 0.02:
+				var steps := [int(ph_full * 0.46), int(ph_full * 0.66),
+						int(ph_full * 0.84), ph_full]
+				ph = int(steps[clampi(int(app * 4.0), 0, 3)])
 			var sprite_name := String(m.get("sprite", "mob_drone"))
-			var fi := int(_mob_key(sprite_name, 9.0 if arriving else 5.0).get_slice(":", 1))
+			var fi := int(_mob_key(sprite_name, 9.0 if far > 0.02 else 5.0).get_slice(":", 1))
 			var key := "%s:%d:%d" % [sprite_name, fi, ph]
 			var tex := _mob_frame(sprite_name, fi, ph)
 			var pads: Vector2 = _pad_cache.get(key, Vector2.ZERO)
 			var sil := _white_tex(key, tex)
 			var dw := _actor_w(tex, PIX_MULT)
-			var dh := (BOSS_H if boss else MOB_H)
+			var dh := (BOSS_H if boss else MOB_H) * (0.4 + 0.6 * app)
 			# 敵を明るくするのではなく、敵の後ろを暗くする（局所減光）
 			_backdrop_dim(Vector2(feet.x, feet.y - dh * 0.5), dw * 0.8, dh * 0.8)
 			# 被弾フレーム（0.1秒）だけ赤の全周キーライン。それ以外は上リム／下影。
+			# 白飛びはさらに短く（0.07秒）して ease で抜く＝ヒットストップで
+			# 保持されても「白い幽霊」が残らない。
 			var hit := false
+			var flash := 0.0
 			for sl in _slashes:
-				if int(sl["slot"]) == i and _t - float(sl["t0"]) < 0.10:
+				if int(sl["slot"]) != i:
+					continue
+				var ha := _t - float(sl.get("rt", sl["t0"]))
+				if ha < 0.12:
 					hit = true
+					flash = maxf(flash, 1.0 - _e_in_out(clampf(ha / 0.07, 0.0, 1.0)))
 					break
-			var r := _draw_actor(tex, feet, PIX_MULT, pads, Color(1, 1, 1),
+			# 奥にいる間は闇に沈めておき、着いた瞬間に色が戻る（＝到着が事件になる）
+			var tint := Color(1, 1, 1).lerp(Color(0.30, 0.17, 0.34), far * 0.85)
+			var r := _draw_actor(tex, feet, PIX_MULT, pads, tint,
 					HIT_LINE if hit else Color(0, 0, 0, 0), sil, true)
 			_contact_shadow(feet, dw * 0.62)
-			if hit and sil != null:
-				_draw_actor(sil, feet, PIX_MULT, pads, Color(1, 1, 1, 0.85))
+			_enemy_draw[i] = {"tex": tex, "sil": sil, "pads": pads, "feet": feet,
+					"mult": PIX_MULT, "boss": boss}
+			if flash > 0.01 and sil != null:
+				_draw_actor(sil, feet, PIX_MULT, pads, Color(1, 1, 1, 0.62 * flash))
+			_enemy_top[i] = r.position.y
+			# 着地の土煙（定位置に「着いた」ことを床で示す。0.34秒だけ）
+			var lt := float(_enemy_land[i]) if (i < _enemy_land.size() and _enemy_land[i] != null) else -9.9
+			var lu := (_ct - lt) / 0.34
+			if lu >= 0.0 and lu < 1.0:
+				var le := _e_out(lu, 2.2)
+				_ellipse(feet, Vector2(dw * (0.34 + le * 0.62), 9.0 * (0.5 + le * 0.9)),
+						Color(0.72, 0.62, 0.86, 0.26 * (1.0 - le)))
+			if far > 0.35:
+				continue          # 奥に居る間は弱点もHPバーも出さない（構えるのは寄ってから）
 			# 弱点コア：画面最明部を「プレイヤーが見るべき場所」に置く
 			_weak_point(Vector2(feet.x, (r.position.y + feet.y) * 0.5), boss)
 			var hp0: float = float(_mob_hp0[i]) if i < _mob_hp0.size() else float(m["hp"])
-			_enemy_top[i] = r.position.y
 			_draw_enemy_hp(font, Vector2(feet.x, r.position.y - 10.0), 62.0 if boss else 46.0,
 					float(m["hp"]) / maxf(hp0, 1.0), int(m["hp"]), boss)
 	else:
@@ -772,20 +966,42 @@ func _draw() -> void:
 	# ===== 隊列（左→右へ行進。戦闘中は停止・殴り手が踏み込む）=====
 	_party_pos.resize(party.size())
 	_party_hurt.resize(party.size())
-	var strike_k := clampf(1.0 - (_t - _strike_t) / 0.30, 0.0, 1.0)   # 踏み込みの残量
-	var hurt_k := clampf(1.0 - (_t - _hurt_t) / 0.22, 0.0, 1.0)       # 被弾フラッシュの残量
+	var strike_k := clampf(1.0 - (_ct - _strike_t) / 0.30, 0.0, 1.0)   # 踏み込みの残量
+	var hurt_k := clampf(1.0 - (_ct - _hurt_t) / 0.22, 0.0, 1.0)       # 被弾フラッシュの残量
+	# 待機の生気：5.6秒に一人ずつ、順番に小さく跳ねる（全員が等速に流れる時間を作らない）
+	var beat_i := int(_ct / 5.6)
+	var beat_u := fposmod(_ct / 5.6, 1.0) / 0.075
 	for i in party.size():
 		var p: Dictionary = party[i]
 		var id := String(p["id"])
-		var bob := 0.0 if in_combat else absf(sin(_t * 7.0 + i * 1.1)) * 3.0
-		var lunge := (maxf(0.0, sin(_t * 3.8 + i * 0.53)) * 6.0) if in_combat else 0.0
+		# 一人ずつ歩調・歩幅・呼吸をずらす。位相は黄金角、テンポは ±9%。
+		# 同じ周期で4人が上下すると「行進」に見え、生き物に見えなくなる。
+		var gph := float(i) * 2.399963
+		var grate := 1.0 + (fposmod(float(i) * 0.618034, 1.0) - 0.5) * 0.18
+		var step := _ct * 6.6 * grate + gph
+		var bob := 0.0
+		var stride := 0.0
+		var lean := 0.0
+		if in_combat:
+			bob = absf(sin(_ct * 3.4 * grate + gph)) * 1.6      # 構え中の呼吸
+			lean = 2.0 * signf(sin(_ct * 1.9 * grate + gph))     # 得物の重心移動
+		else:
+			bob = absf(sin(step)) * (2.6 + 1.1 * fposmod(float(i) * 0.37, 1.0))
+			stride = sin(step + PI * 0.5) * 2.4                  # 歩幅（前後の詰め）
+			lean = 2.0 * signf(sin(step * 0.5))                  # 上体と得物の揺れ（1テクセル）
+			if i == beat_i % maxi(party.size(), 1) and beat_u < 1.0:
+				bob += sin(_e_in_out(beat_u) * PI) * 5.0         # 順番に来る小さな跳ね
+		# 隊列の呼吸：間隔そのものがゆっくり伸び縮みする（等間隔で固まらせない）
+		var breath := sin(_ct * 0.46 + float(i) * 1.73) * 3.6
+		var lunge := (maxf(0.0, sin(_ct * 3.8 + i * 0.53)) * 6.0) if in_combat else 0.0
 		if i == _striker and strike_k > 0.0:
 			lunge += sin(strike_k * PI) * 34.0   # 殴り手の鋭い踏み込み（行って戻る）
 		var knock_back := (sin(hurt_k * PI) * 10.0) if (i == _tank_index() and hurt_k > 0.0) else 0.0
 		# 後列ほど奥（上）／前列ほど手前（下）＝隊列に奥行きを作る。
 		# 身長は変えない（非整数倍になるため）。奥行きは y のオフセットだけで出す。
 		var depth := float(i) / maxf(party.size() - 1.0, 1.0)
-		var feet := Vector2(PARTY_X0 + _form_x + i * PARTY_GAP + lunge - knock_back,
+		var feet := Vector2(PARTY_X0 + _form_x + i * PARTY_GAP + lunge - knock_back
+					+ stride + breath,
 				gy - bob + 10.0 * depth)
 		_party_pos[i] = feet
 		var dead: bool = float(p["hp"]) <= 0.0
@@ -803,11 +1019,12 @@ func _draw() -> void:
 		elif i == _tank_index() and hurt_k > 0.0:
 			tint = Color(1.0, 1.0 - hurt_k * 0.62, 1.0 - hurt_k * 0.62)   # 被弾の赤フラッシュ
 		var dw := _actor_w(tex, PIX_MULT)
-		var r := _draw_actor(tex, feet, PIX_MULT, pads, tint, ALLY_LINE, _white_tex(path, tex))
+		var r := _draw_actor(tex, feet, PIX_MULT, pads, tint, ALLY_LINE, _white_tex(path, tex),
+				false, 0.0 if dead else lean)
 		_contact_shadow(feet, dw * 0.52)
 		# 頭上HPは被弾後0.8秒だけ（常設は下部カードに集約）
 		var ht := float(_party_hurt[i]) if _party_hurt[i] != null else -9.9
-		var age := _t - ht
+		var age := _ct - ht
 		if not dead and age < 0.8:
 			_draw_head_ui(Vector2(feet.x, r.position.y - 8.0), 40.0,
 					float(p["hp"]) / maxf(float(p["mhp"]), 1.0), HP_COL,
@@ -826,7 +1043,7 @@ func _draw() -> void:
 	_draw_bubble(sz, gy, font)
 	_draw_vignette(sz)
 
-	if _shake > 0.004:
+	if absf(cam) > 0.05:
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
@@ -889,7 +1106,7 @@ func _draw_combat_fx(sz: Vector2, gy: float, font: Font) -> void:
 	# 斬撃（対象の胴で白シアンのX＋小リング）
 	var i := 0
 	while i < _slashes.size():
-		var k := (_t - float(_slashes[i]["t0"])) / 0.20
+		var k := (_ct - float(_slashes[i]["t0"])) / 0.20
 		if k >= 1.0:
 			_slashes.remove_at(i)
 			continue
@@ -898,21 +1115,25 @@ func _draw_combat_fx(sz: Vector2, gy: float, font: Font) -> void:
 		var c := base + Vector2(0, -MOB_H * 0.55)
 		if slot < _enemy_top.size() and _enemy_top[slot] != null:
 			c = Vector2(base.x, (float(_enemy_top[slot]) + base.y) * 0.5)   # 頭と足元の中間＝胴
-		var a := 1.0 - k
-		var ln := 26.0 + 14.0 * k
+		# 斬撃は「伸びきってから消える」。伸びは ease-out、消えは後半だけ。
+		var ke := _e_out(k, 2.4)
+		var a := 1.0 - _e_in_out(clampf((k - 0.35) / 0.65, 0.0, 1.0))
+		var ln := 22.0 + 22.0 * ke
 		draw_line(c + Vector2(-ln, -ln * 0.6), c + Vector2(ln, ln * 0.6), Color(1, 1, 1, a), 3.0)
 		draw_line(c + Vector2(-ln * 0.8, ln * 0.7), c + Vector2(ln * 0.8, -ln * 0.7), Color(CYAN.r, CYAN.g, CYAN.b, a * 0.9), 2.0)
-		draw_arc(c, 14.0 + 26.0 * k, 0, TAU, 20, Color(1, 1, 1, a * 0.5), 2.0)
+		draw_arc(c, 12.0 + 32.0 * ke, 0, TAU, 20, Color(1, 1, 1, a * 0.5), 2.0)
 		i += 1
 	# スキルバースト（爆発=橙リング＋破片／雷=ジグザグ落雷／回復・歌=味方から立ち上る粒）
 	i = 0
 	while i < _bursts.size():
-		var k := (_t - float(_bursts[i]["t0"])) / 0.45
-		if k >= 1.0:
+		var kk := (_ct - float(_bursts[i]["t0"])) / 0.45
+		if kk >= 1.0:
 			_bursts.remove_at(i)
 			continue
 		var kind := String(_bursts[i]["kind"])
-		var a := 1.0 - k
+		# 広がりは ease-out、消えは後半に寄せる（等速に膨らんで等速に消えない）
+		var k := _e_out(kk, 2.2)
+		var a := 1.0 - _e_in_out(clampf((kk - 0.25) / 0.75, 0.0, 1.0))
 		# 実体アンカー：敵/味方の実座標に付ける（ハードコード座標は使わない）
 		var ec := Vector2(sz.x * ENEMY_X0 + ENEMY_GAP, gy - MOB_H * 0.55)
 		if not _enemy_pos.is_empty() and _enemy_pos[0] != null:
@@ -936,7 +1157,7 @@ func _draw_combat_fx(sz: Vector2, gy: float, font: Font) -> void:
 				var pts := PackedVector2Array()
 				for j in 6:
 					var tt := j / 5.0
-					pts.append(top.lerp(ec, tt) + Vector2(sin(j * 91.7 + _t * 40.0) * 10.0 * (1.0 - tt), 0))
+					pts.append(top.lerp(ec, tt) + Vector2(sin(j * 91.7 + _ct * 40.0) * 10.0 * (1.0 - tt), 0))
 				for j in 5:
 					draw_line(pts[j], pts[j + 1], Color(0.85, 0.95, 1.0, a), 3.0)
 				Kit.spot(self, ec, 60.0, Color(0.7, 0.9, 1.0), a * 0.5)
@@ -948,11 +1169,12 @@ func _draw_combat_fx(sz: Vector2, gy: float, font: Font) -> void:
 					draw_circle(pc + Vector2(jx, jy), 2.6, Color(col.r, col.g, col.b, a * 0.9))
 				Kit.spot(self, pc, 70.0, col, a * 0.3)
 		i += 1
-	# ダメージ数字（対象の頭上に追従・上昇フェード）
+	# ダメージ数字。等速で上へ流さない：出た瞬間に大きく跳ね、いったん落ちて戻り、
+	# 縮みながら上へ抜けて最後だけ消える（＝「当たった」の時間差の4本目）。
 	i = 0
 	while i < _floaters.size():
 		var fl: Dictionary = _floaters[i]
-		var k := (_t - float(fl["t0"])) / 0.9
+		var k := (_ct - float(fl["t0"])) / 0.9
 		if k >= 1.0:
 			_floaters.remove_at(i)
 			continue
@@ -974,18 +1196,29 @@ func _draw_combat_fx(sz: Vector2, gy: float, font: Font) -> void:
 			if slot < _party_pos.size() and _party_pos[slot] != null:
 				base = _party_pos[slot]
 			base += Vector2(0, -GIRL_H - 30.0)
-		var e := 1.0 - pow(1.0 - k, 2.0)
-		var pos := base + Vector2(float(fl["jx"]),
-				float(fl.get("jy", 0.0)) - e * (54.0 if side == "fixed" else 34.0))
-		var col: Color = fl["col"]
-		var a := 1.0 - k * k
-		# 出た瞬間だけ大きく（ポップ感）。会心はもう1段上げて、桁が違うことを目で分からせる。
 		var crit := bool(fl.get("crit", false))
-		var fsize := FS_M
-		if crit:
-			fsize = FS_XL if k < 0.30 else FS_L
-		elif k < 0.18:
-			fsize = FS_L
+		var fixed := side == "fixed"
+		# 跳ね → 落ち戻り → ゆっくり上へ。3本の別々のイージングの重ね合わせ。
+		var hop := _e_out(k / (0.13 if crit else 0.16), 2.6)                  # 一気に上がる
+		var settle := sin(_e_in_out(clampf((k - 0.15) / 0.26, 0.0, 1.0)) * PI) # 一度落ちて戻る
+		var drift := _e_out(clampf((k - 0.30) / 0.70, 0.0, 1.0), 1.7)         # 後半のゆるい上昇
+		var rise := (44.0 if crit else 30.0) * hop - (14.0 if crit else 9.0) * settle \
+				- (30.0 if crit else 24.0) * drift
+		if fixed:
+			rise = 56.0 * _e_out(k, 2.2) - 8.0 * settle   # 報酬は跳ねずに静かに立ち上がる
+		# 横も少しだけ散る（同時に3つ出ても数字が重ならない）
+		var spread := 0.35 + 0.65 * _e_out(k, 2.0)
+		var pos := base + Vector2(float(fl["jx"]) * (1.0 if fixed else spread),
+				float(fl.get("jy", 0.0)) - rise)
+		var col: Color = fl["col"]
+		# 最後まではっきり読ませて、終わりぎわだけ抜く（等速フェードにしない）
+		var a := _e_in_out(clampf((1.0 - k) / 0.28, 0.0, 1.0))
+		# 出た瞬間だけ大きく→縮む。段は 12/16/22/32/48 の5段しかないので、
+		# 連続量を _fs で段へ丸める＝ポップが「コマ落ち」として読める。
+		var base_fs := 26.0 if crit else 18.0
+		var scale := 1.0 + 0.62 * (1.0 - _e_out(k / 0.20, 2.0)) \
+				- 0.22 * _e_out(clampf((k - 0.45) / 0.55, 0.0, 1.0), 1.5)
+		var fsize := _fs(base_fs * scale) if not fixed else FS_M
 		var txt := String(fl["txt"])
 		if crit:
 			# 会心は色相を増やさず「白い衝撃線」で差を作る（虹色にしない）
@@ -1006,17 +1239,24 @@ func _draw_pops() -> void:
 	var i := 0
 	while i < _pops.size():
 		var p: Dictionary = _pops[i]
-		var k := (_t - float(p["t0"])) / 0.55
-		if k >= 1.0:
+		var kk := (_ct - float(p["t0"])) / 0.55
+		if kk >= 1.0:
 			_pops.remove_at(i)
 			continue
 		var c: Vector2 = p["p"]
 		var big := bool(p["boss"])
 		var mid := bool(p["elite"])
 		var scale := 1.9 if big else (1.35 if mid else 1.0)
-		var a := 1.0 - k
 		var h := (BOSS_H if big else MOB_H) * 0.5
 		var org := c + Vector2(0, -h)
+		if kk < 0.0:
+			# ── 予備動作。破片より前に「敵が壊れる」ところを見せる ──
+			_draw_death(p, _ct - float(p.get("t_die", 0.0)), _t - float(p.get("rt_die", 0.0)))
+			i += 1
+			continue
+		# 破裂は頭が速く尻が長い。等速に広がるリングは花火に見えず「図形」に見える。
+		var k := _e_out(kk, 2.3)
+		var a := 1.0 - _e_in_out(clampf((kk - 0.25) / 0.75, 0.0, 1.0))
 		# 弾けたリング（角丸を使わない作法どおり8角形の輪郭）＋外へ飛ぶ破片
 		var rr := (16.0 + 78.0 * k) * scale
 		_octagon_ring(org, rr, Color(1.0, 0.95, 0.88, a * 0.9), 3.0)
@@ -1024,17 +1264,48 @@ func _draw_pops() -> void:
 		for j in 10:
 			var ang := TAU * j / 10.0 + float(int(c.x)) * 0.7
 			var d := (12.0 + 86.0 * k) * scale
-			var q := org + Vector2(cos(ang) * d, sin(ang) * d * 0.72 + k * k * 34.0)
+			# 破片だけは落ちる（重力＝二次曲線）。飛び散って落ちるまでが一続き。
+			var q := org + Vector2(cos(ang) * d, sin(ang) * d * 0.72 + kk * kk * 46.0)
 			_octagon(q, (5.0 - 3.4 * k) * scale, Color(1.0, 0.94, 0.88, a))
-		# 一瞬の縦の閃光（「居なくなった」ではなく「弾けた」に見せる）
-		if k < 0.30:
-			var fa := (1.0 - k / 0.30)
-			draw_rect(Rect2(org.x - 3.0 * scale, org.y - h * 0.9, 6.0 * scale, h * 1.8),
-					Color(1, 1, 1, 0.55 * fa))
 		# 足元に潰れた影（破片が床へ落ちたことを示す）
 		_ellipse(Vector2(c.x, c.y), Vector2(56.0 * scale * (0.4 + k), 11.0 * (1.0 - k * 0.6)),
 				Color(1.0, 0.86, 0.7, 0.20 * a))
 		i += 1
+
+
+## 撃破の予備動作（DEATH_LEAD 秒）。オクトパストラベラーIIの撃破は
+## 「一瞬白く飛ぶ → 潰れる → 破片」の順で、消える前に必ず壊れる工程が挟まる。
+## sim は撃破の瞬間に mobs から消すので、直前フレームの絵をここで演じ直す。
+## age＝戦闘時計での経過（ヒットストップ中は進まない＝姿勢が保持される）、
+## rt＝実時間での経過。白飛びだけは rt で抜く：止めて見せたいのは「壊れかけの姿」で、
+## 白い塊をヒットストップの長さぶん居座らせると幽霊にしか見えない。
+func _draw_death(p: Dictionary, age: float, rt: float) -> void:
+	var d: Dictionary = p.get("death", {})
+	if d.is_empty() or d.get("tex") == null:
+		return
+	var tex: Texture2D = d["tex"]
+	var sil: Texture2D = d.get("sil")
+	var pads: Vector2 = d.get("pads", Vector2.ZERO)
+	var feet: Vector2 = d.get("feet", p["p"])
+	var m: int = int(d.get("mult", PIX_MULT))
+	var ts := tex.get_size()
+	var full_h := ts.y * m
+	var w := ts.x * m
+	# ② 潰れる。縦に沈んで横へ逃げる（消えるのではなく壊れる）。
+	# 前半 0.06 秒は潰さずに保持＝「止まった瞬間」を見せてから壊す。
+	var u := _e_out(clampf((age - 0.06) / (DEATH_LEAD - 0.06), 0.0, 1.0), 2.0)
+	var hh := full_h * (1.0 - u * 0.86)
+	var ww := w * (1.0 + u * 0.52)
+	var r := Rect2(roundf(feet.x - ww * 0.5), roundf(feet.y - hh + full_h * pads.y * (1.0 - u)),
+			ww, hh)
+	var col := Color(1, 1, 1).lerp(Color(1.0, 0.84, 0.58), u)
+	draw_texture_rect(tex, r, false, Color(col.r, col.g, col.b, 1.0 - u * 0.25))
+	# ① 白飛び（実時間 0.07 秒）。輪郭ごと真っ白に飛ばして「決まった」ことを刻む。
+	var fa := 1.0 - _e_in_out(clampf(rt / 0.07, 0.0, 1.0))
+	if fa > 0.01 and sil != null:
+		for ov: Vector2 in [Vector2(m, 0), Vector2(-m, 0), Vector2(0, m), Vector2(0, -m)]:
+			draw_texture_rect(sil, Rect2(r.position + ov, r.size), false, Color(1, 1, 1, fa))
+		draw_texture_rect(sil, r, false, Color(1, 1, 1, fa))
 
 
 ## 8角形の輪郭（塗りつぶさないリング）。draw_arc の丸みを持ち込まないための版。
@@ -1052,12 +1323,14 @@ func _octagon_ring(c: Vector2, r: float, col: Color, w: float) -> void:
 ## 共鳴の回（Lv3/6/9/12）は太く長く、2倍の時間残る＝25分で4回だけの山。
 func _draw_lv_pillars(sz: Vector2, gy: float) -> void:
 	var dur := 2.0 if _lv_res else 1.3
-	var age := _t - _lv_t
+	var age := _ct - _lv_t
 	if age < 0.0 or age > dur:
 		return
 	var k := age / dur
-	var a := clampf(age / 0.10, 0.0, 1.0) * clampf(1.0 - pow(k, 2.0), 0.0, 1.0)
-	var hgt := (520.0 if _lv_res else 340.0) * (0.35 + 0.65 * clampf(age / 0.28, 0.0, 1.0))
+	# 立ち上がりも消えも ease-in-out。等速に伸びて等速に消える光は「板」に見える。
+	var a := _e_in_out(clampf(age / 0.16, 0.0, 1.0)) * _e_in_out(clampf((dur - age) / 0.55, 0.0, 1.0))
+	# 高さは少しだけ行き過ぎてから収まる（伸びきる瞬間に力がある）
+	var hgt := (520.0 if _lv_res else 340.0) * (0.16 + 0.84 * _e_back(clampf(age / 0.38, 0.0, 1.0), 0.9))
 	var wid := 30.0 if _lv_res else 20.0
 	var col := CYAN
 	for i in _party_pos.size():
@@ -1081,8 +1354,8 @@ func _draw_lv_pillars(sz: Vector2, gy: float) -> void:
 			var jy := -fposmod(age * 240.0 + j * 47.0, hgt)
 			_octagon(Vector2(f.x + sin(j * 21.7 + age * 4.0) * wid * 0.8, f.y + jy), 2.4,
 					Color(0.85, 1.0, 1.0, a * 0.8))
-	# 地面全体を走る横一線（全員に同時に起きたことを示す）
-	var lw := clampf(age / 0.22, 0.0, 1.0) * sz.x
+	# 地面全体を走る横一線（全員に同時に起きたことを示す）。走りは ease-out。
+	var lw := _e_out(clampf(age / 0.30, 0.0, 1.0), 2.6) * sz.x
 	draw_rect(Rect2((sz.x - lw) * 0.5, gy - 2.0, lw, 3.0), Color(col.r, col.g, col.b, 0.7 * a))
 
 
@@ -1611,7 +1884,7 @@ func _backdrop_dim(center: Vector2, w: float, h: float) -> void:
 
 ## 次に動ける味方の頭上の ready 光。敵の弱点とならぶ画面最明部。
 func _ready_light(c: Vector2) -> void:
-	var p := 0.5 + 0.5 * sin(_t * 2.6)
+	var p := 0.5 + 0.5 * sin(_ct * 2.6)
 	_glow(c, 22.0 + 4.0 * p, CYAN, 0.11)
 	_octagon(c, 4.0 + 0.8 * p, Color(0.62, 0.96, 1.0, 0.85))
 	_octagon(c, 1.8, NEON_CORE)
@@ -1619,7 +1892,7 @@ func _ready_light(c: Vector2) -> void:
 
 ## 敵の弱点コア。画面の最明部はここ（＝プレイヤーが次に見るべき場所）。
 func _weak_point(c: Vector2, boss: bool) -> void:
-	var p := 0.5 + 0.5 * sin(_t * (3.4 if boss else 2.4))
+	var p := 0.5 + 0.5 * sin(_ct * (3.4 if boss else 2.4))
 	var r := (6.0 if boss else 4.2) * (1.0 + 0.16 * p)
 	_glow(c, r * 6.0, Color(1.0, 0.52, 0.26), 0.10 + 0.06 * p)   # 橙＝敵/危険に予約した色相
 	_octagon(c, r * 1.9, Color(1.0, 0.42, 0.20, 0.55 + 0.25 * p))

@@ -16,6 +16,52 @@ static var _pix_cache: Dictionary = {}          # "path:h" -> Texture2D|null
 static var _cut_cache: Dictionary = {}          # path -> Texture2D|null（背景を抜いたアイコン）
 
 
+# ── イージング（唯一の真実。UI から線形補間を消すための最小セット）─────────
+# 原則：出るものは ease-out（速く出て、静かに着地）／消えるものは ease-in で短く。
+# 「戻り」だけ out_back で行き過ぎる＝物として重さが出る。
+# sin() の往復はここには置かない（等速に見える）。生気は heartbeat() を使う。
+
+static func out_cubic(k: float) -> float:
+	var f := 1.0 - clampf(k, 0.0, 1.0)
+	return 1.0 - f * f * f
+
+
+static func out_quart(k: float) -> float:
+	var f := 1.0 - clampf(k, 0.0, 1.0)
+	return 1.0 - f * f * f * f
+
+
+static func out_quint(k: float) -> float:
+	var f := 1.0 - clampf(k, 0.0, 1.0)
+	return 1.0 - f * f * f * f * f
+
+
+static func in_cubic(k: float) -> float:
+	var f := clampf(k, 0.0, 1.0)
+	return f * f * f
+
+
+## 行き過ぎて戻る（1.0 を最大 +10% ほど超えてから収束）。押下の戻り・板の着地に使う。
+static func out_back(k: float, s := 1.9) -> float:
+	var f := clampf(k, 0.0, 1.0) - 1.0
+	return f * f * ((s + 1.0) * f + s) + 1.0
+
+
+## i 番目の要素が step 秒ずつ遅れて立ち上がる 0..1（ease-out）。
+## 「同時に出さない」を1関数に閉じ込める。呼び出し側は index を渡すだけでよい。
+static func stag(age: float, i: int, step := 0.05, dur := 0.30) -> float:
+	return out_quart((age - float(i) * step) / maxf(dur, 0.001))
+
+
+## 心拍。ほとんど静止していて、周期ごとに短い二拍だけ打つ。
+## 常時揺れる sin() と違い「1箇所だけ生きている」ことを伝えられる。
+static func heartbeat(t: float, period := 2.4) -> float:
+	var u := fposmod(t, period) / period
+	var a := exp(-pow((u - 0.03) / 0.048, 2.0))
+	var b := exp(-pow((u - 0.16) / 0.058, 2.0)) * 0.6
+	return clampf(a + b, 0.0, 1.0)
+
+
 ## 高解像度の立ち絵/アニメフレームをドット絵化（縮小＋α2値化。拡大はニアレスト前提）。
 ## 横スクロール潜航と夜営業シアターでピクセル密度を統一するための共通ヘルパー。
 static func pix_tex(path: String, pix_h: int) -> Texture2D:
@@ -326,6 +372,34 @@ static func spot(ci: CanvasItem, center: Vector2, radius: float, accent: Color, 
 			false, Color(accent.r, accent.g, accent.b, alpha))
 
 
+# ── フッターの選択インジケータ（瞬間移動させない）───────────────────────
+const NAV_DUR := 0.28
+
+## 選択セルを追いかける台帳。store はオーバーレイが持つ Dictionary。
+## 目標が変わったら「いま居る場所」から数え直し、out_back で少し行き過ぎて座る。
+## 返り値 {"x": 追従中の左端, "col": 混色中の識別色, "k": 0..1（1=着地済み）}。
+static func nav_slide(store: Dictionary, x: float, col: Color, now: float) -> Dictionary:
+	if not store.has("gx"):
+		store["gx"] = x
+		store["ax"] = x
+		store["gc"] = col
+		store["ac"] = col
+		store["t0"] = now - 9.0
+	var k := clampf((now - float(store["t0"])) / NAV_DUR, 0.0, 1.0)
+	var cur_x := lerpf(float(store["ax"]), float(store["gx"]), out_back(k, 1.5))
+	var cur_c: Color = (store["ac"] as Color).lerp(store["gc"], out_cubic(k))
+	if absf(x - float(store["gx"])) > 0.5:
+		store["ax"] = cur_x                  # 途中でも「いま居る場所」から引き継ぐ
+		store["ac"] = cur_c
+		store["gx"] = x
+		store["gc"] = col
+		store["t0"] = now
+		k = 0.0
+		cur_x = float(store["ax"])
+		cur_c = store["ac"]
+	return {"x": cur_x, "col": cur_c, "k": k}
+
+
 # ── リップル（タップの波紋・押下フィードバック）──────────────────────────
 
 const RIPPLE_LIFE := 0.45
@@ -362,8 +436,11 @@ const NUM_SNAP := 0.5      # これ以下の差は吸着（端数を残さない
 const POP_LIFE := 0.30     # 拡大の寿命（秒）
 const FLOAT_LIFE := 1.05   # 差分フロートの寿命（秒）
 const FLY_LIFE := 0.55     # 飛ぶ数値（支払い/収穫）の寿命（秒）
-const PRESS_LIFE := 0.22   # 押下フラッシュの寿命（秒）
+const PRESS_LIFE := 0.34   # 押下（沈み→戻りのオーバーシュート）の寿命（秒）
+const PRESS_DOWN := 0.07   # そのうち「沈む」のにかける時間（残りが戻り）
 const BURST_LIFE := 0.85   # 解放バーストの寿命（秒）
+const NUM_MIN := 0.26      # カウントアップの最短（小さな増減）
+const NUM_MAX := 0.62      # カウントアップの最長（大きな増減）
 
 ## 現在のキャンバス平行移動。set_xf() で設定すると num_draw が復元できる
 ## （拡大描画のために transform を一時的に奪うので、元へ戻す先を覚えておく）。
@@ -375,29 +452,52 @@ static func set_xf(ci: CanvasItem, ofs: Vector2) -> void:
 	ci.draw_set_transform(ofs, 0.0, Vector2.ONE)
 
 
+## 桁数（負号は数えない）。桁が繰り上がる瞬間を捕まえるために使う。
+static func _digits(v: float) -> int:
+	return String.num_int64(absi(int(round(v)))).length()
+
+
 ## 値を追いかける台帳。store はオーバーレイが持つ Dictionary。
 ## 返り値 {"v": 表示値（カウントアップ中）, "pop": 0..1 拡大量, "d": 変化した瞬間の差分}。
 ## 初回は目標値へ吸着（開いた瞬間に0から数え上げない）。
+##
+## カウントは指数減衰（v += (g-v)*dt*k）をやめ、開始値→目標値を out_quint で結ぶ。
+## 減衰は「いつまでも着かない尾」を引くうえフレームレートに依存する＝毎回違う速さになる。
+## 明示的な曲線なら、どの端末でも同じ長さで、最後の1桁がきちんと止まって見える。
+## 距離が大きいほど少しだけ長く数える（大金は数え応えがある）。
 static func num(store: Dictionary, key: String, target: float, now: float) -> Dictionary:
 	if not store.has(key):
-		store[key] = {"v": target, "g": target, "pop": 0.0, "t": now}
-		return {"v": target, "pop": 0.0, "d": 0.0}
+		store[key] = {"v": target, "a": target, "g": target, "pop": 0.0, "t0": now - 9.0,
+				"dur": NUM_MIN, "dig": _digits(target), "carry": now - 9.0}
+		return {"v": target, "pop": 0.0, "d": 0.0, "carry": 0.0}
 	var e: Dictionary = store[key]
-	var dt := clampf(now - float(e["t"]), 0.0, 0.1)
-	e["t"] = now
 	var d := 0.0
 	if absf(target - float(e["g"])) > 0.0001:
 		d = target - float(e["g"])
+		e["a"] = float(e["v"])          # いま見えている値から数え直す（飛ばさない）
 		e["g"] = target
+		e["t0"] = now
+		# 桁が増えるほど長く。ただし上限で頭打ち（待たされてはいけない）
+		e["dur"] = clampf(NUM_MIN + log(1.0 + absf(d)) * 0.055, NUM_MIN, NUM_MAX)
 		e["pop"] = 1.0
-	var v := float(e["v"])
 	var g := float(e["g"])
-	v += (g - v) * clampf(dt * 9.0, 0.0, 1.0)
-	if absf(g - v) < NUM_SNAP:
-		v = g
+	var k := (now - float(e["t0"])) / maxf(float(e["dur"]), 0.001)
+	var v := g
+	if k < 1.0:
+		v = lerpf(float(e["a"]), g, out_quint(k))
+		if absf(g - v) < NUM_SNAP:
+			v = g
 	e["v"] = v
-	e["pop"] = maxf(float(e["pop"]) - dt / POP_LIFE, 0.0)
-	return {"v": v, "pop": float(e["pop"]), "d": d}
+	# 桁が繰り上がった瞬間だけ、もう一度だけ弾ませる（99→100 が事件になる）
+	var dg := _digits(v)
+	if dg != int(e["dig"]):
+		e["dig"] = dg
+		e["carry"] = now
+	var carry := clampf(1.0 - (now - float(e["carry"])) / 0.34, 0.0, 1.0)
+	# pop は経過時間から引く（フレーム数に依らず必ず POP_LIFE で消える）
+	var pop := clampf(1.0 - (now - float(e["t0"])) / POP_LIFE, 0.0, 1.0) * float(e["pop"])
+	pop = maxf(pop, carry * 0.7)
+	return {"v": v, "pop": out_cubic(pop), "d": d, "carry": carry}
 
 
 ## 数値を「一瞬だけ拡大して」描く。size は DS の段（16/24/32/48）から選ぶこと。
@@ -484,16 +584,52 @@ static func flies(ci: CanvasItem, font: Font, list: Array, now: float) -> void:
 		i += 1
 
 
-## 押下フラッシュ。押せる場所は押した瞬間に必ず応える（3状態目）。
+## 押下の沈み込み量（px）。押した直後は素早く沈み、離すと 0 を通り越して浮いてから座る。
+## 押せる要素を描く側がこの分だけ矩形を下げる＝「板が沈んだ」ように見える。
+## age は押してからの経過秒。
+static func press_sink(age: float, depth := 3.0) -> float:
+	if age <= 0.0 or age >= PRESS_LIFE:
+		return 0.0
+	if age < PRESS_DOWN:
+		return depth * out_cubic(age / PRESS_DOWN)
+	# 戻り：out_back が 1.0 を超える＝沈み位置より上へ浮いてから収まる
+	return depth * (1.0 - out_back((age - PRESS_DOWN) / (PRESS_LIFE - PRESS_DOWN), 2.2))
+
+
+## 押下フィードバック。押せる場所は押した瞬間に必ず応える（3状態目）。
+## 「点いて消える」だけにしないため、2相にする：
+##   相1（沈む）  枠が内側へ締まり、上端に影が差す＝指の下へ入り込む
+##   相2（戻る）  枠が外へ抜けて 1 度行き過ぎ、光の輪だけ残して消える
+## k は残り寿命 1→0（呼び出し側の既存式そのまま）。
 static func press(ci: CanvasItem, rect: Rect2, col: Color, k: float) -> void:
 	if k <= 0.0:
 		return
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(1, 1, 1, 0.18 * k)
-	sb.set_corner_radius_all(8)
-	sb.border_color = Color(col.r, col.g, col.b, 0.95 * k)
-	sb.set_border_width_all(2)
-	ci.draw_style_box(sb, rect.grow(3.0 * k))
+	var age := (1.0 - clampf(k, 0.0, 1.0)) * PRESS_LIFE
+	var sink := press_sink(age)
+	var r := Rect2(rect.position + Vector2(0.0, sink), rect.size)
+	if age < PRESS_DOWN:
+		# 沈む：枠を内へ締めて、上端に落ち影（へこんだ面）
+		var t := out_cubic(age / PRESS_DOWN)
+		var inset := 2.4 * t
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0, 0, 0, 0.20 * t)
+		sb.set_corner_radius_all(8)
+		sb.border_color = Color(col.r, col.g, col.b, 0.55 + 0.45 * t)
+		sb.set_border_width_all(2)
+		ci.draw_style_box(sb, r.grow(-inset))
+		ci.draw_line(r.position + Vector2(6.0, 1.0), Vector2(r.end.x - 6.0, r.position.y + 1.0),
+				Color(0, 0, 0, 0.42 * t), 3.0)
+		return
+	# 戻る：out_back で外へ行き過ぎてから収束。白の面は素早く抜き、輪だけ残す
+	var u := clampf((age - PRESS_DOWN) / (PRESS_LIFE - PRESS_DOWN), 0.0, 1.0)
+	var grow := -2.4 + 8.2 * out_back(u, 2.2)
+	var a := 1.0 - out_cubic(u)
+	var sb2 := StyleBoxFlat.new()
+	sb2.bg_color = Color(1, 1, 1, 0.16 * a * a)
+	sb2.set_corner_radius_all(8)
+	sb2.border_color = Color(col.r, col.g, col.b, 0.95 * a)
+	sb2.set_border_width_all(2)
+	ci.draw_style_box(sb2, r.grow(grow))
 
 
 ## 解放の瞬間。光の輪が拡がり、放射が飛ぶ（改装ノード・購入の着弾）。

@@ -100,7 +100,7 @@ var _mats := 0
 var _boxes := 0
 
 # ── 「数字が動いた」を絶対に見逃させないための状態 ───────────────────────
-var _gold_shown := 0.0        # 金だけは lerpf でカウントアップ（一気に飛ばさない）
+var _gold_shown := 0.0        # 金だけは指数で追従カウントアップ（一気に飛ばさない）
 var _pop: Dictionary = {"kills": -9.9, "gold": -9.9, "mats": -9.9, "boxes": -9.9}
 var _chip: Dictionary = {}    # チップ中心座標（箱アイコンの飛び先）
 var _xp_tick := -9.9          # XPバーが伸びた時刻（バー頭の閃き）
@@ -111,6 +111,18 @@ var _floor_fx := -9.9         # 階層バナー
 var _floor_label := ""
 var _box_fly: Array = []      # 拾った箱が数字チップへ飛ぶ [{t0}]
 var _seen_floor := false
+
+
+# ── イージング（UI も等速で動かさない。ステージ側と同じ3本だけを使う）──
+## 速く出て静かに止まる。
+static func _e_out(u: float, p := 3.0) -> float:
+	return 1.0 - pow(1.0 - clampf(u, 0.0, 1.0), p)
+
+
+## 立ち上がりも収めも滑らかに。
+static func _e_in_out(u: float) -> float:
+	var x := clampf(u, 0.0, 1.0)
+	return x * x * (3.0 - 2.0 * x)
 
 
 func _ready() -> void:
@@ -201,7 +213,7 @@ func _poll_sim(delta: float) -> void:
 		_boxes = bx
 		_pop["boxes"] = _t
 	# 金だけはカウントアップ（数字が回っているのが見える）
-	_gold_shown = lerpf(_gold_shown, float(_gold), clampf(delta * 5.5, 0.0, 1.0))
+	_gold_shown += (float(_gold) - _gold_shown) * (1.0 - exp(-delta * 5.5))
 	if absf(_gold_shown - float(_gold)) < 0.6:
 		_gold_shown = float(_gold)
 
@@ -545,9 +557,11 @@ func _draw() -> void:
 	for rp in _ripples:
 		var k := (_t - float(rp["t0"])) / 0.45
 		var pp: Vector2 = rp["p"]
-		var rr := 10.0 + k * 34.0
+		# 広がりは ease-out、消えは後半に寄せる（指で押した瞬間がいちばん速い）
+		var rr := 10.0 + _e_out(k, 2.6) * 34.0
 		draw_rect(_snap(Rect2(pp.x - rr, pp.y - rr, rr * 2.0, rr * 2.0)),
-				Color(CYAN.r, CYAN.g, CYAN.b, 0.35 * (1.0 - k)), false, 2.0)
+				Color(CYAN.r, CYAN.g, CYAN.b,
+						0.35 * (1.0 - _e_in_out(clampf((k - 0.2) / 0.8, 0.0, 1.0)))), false, 2.0)
 
 
 func _hit(rect: Rect2, id: String) -> void:
@@ -612,7 +626,7 @@ func _draw_sync_band(sz: Vector2, font: Font) -> void:
 		draw_rect(Rect2(br.position, Vector2(fw, br.size.y)), CYAN)
 		draw_rect(Rect2(br.position, Vector2(fw, 1.0)), Color(0.85, 1.0, 1.0, 0.9))
 		# 伸びた瞬間だけバーの頭が白く閃く（＝1体倒したことの受領証）
-		var tick := clampf(1.0 - (_t - _xp_tick) / 0.22, 0.0, 1.0)
+		var tick := 1.0 - _e_out(clampf((_t - _xp_tick) / 0.22, 0.0, 1.0), 1.8)
 		if tick > 0.0:
 			draw_rect(Rect2(br.position.x + fw - 4.0, br.position.y - 2.0, 6.0, br.size.y + 4.0),
 					Color(1, 1, 1, 0.85 * tick))
@@ -674,8 +688,8 @@ func _draw_floor_banner(sz: Vector2, font: Font) -> void:
 	var age := _t - _floor_fx
 	if age < 0.0 or age > 2.6:
 		return
-	var open := clampf(age / 0.30, 0.0, 1.0)
-	var fade := clampf((2.6 - age) / 0.5, 0.0, 1.0)
+	var open := _e_out(age / 0.30, 2.6)
+	var fade := _e_in_out(clampf((2.6 - age) / 0.5, 0.0, 1.0))
 	var h := 96.0
 	var y := sz.y * 0.28
 	var w := sz.x * open
@@ -709,7 +723,7 @@ func _draw_levelup(sz: Vector2, font: Font) -> void:
 		return
 	# ① 画面全体の一瞬のフラッシュ
 	if age < 0.26:
-		var f := 1.0 - age / 0.26
+		var f := 1.0 - _e_out(age / 0.26, 1.6)
 		draw_rect(Rect2(Vector2.ZERO, sz), Color(0.72, 0.95, 1.0, (0.60 if has_res else 0.42) * f))
 	# ② 広がる矩形リング（角丸もグローも使わない・この画面の作法どおり）
 	var cx := sz.x * 0.5
@@ -718,15 +732,17 @@ func _draw_levelup(sz: Vector2, font: Font) -> void:
 		var rk := clampf((age - j * 0.12) / 0.65, 0.0, 1.0)
 		if rk <= 0.0 or rk >= 1.0:
 			continue
-		var rw := 60.0 + rk * sz.x * 0.72
+		var re := _e_out(rk, 2.4)
+		var rw := 60.0 + re * sz.x * 0.72
 		var rh := rw * 0.42
 		draw_rect(_snap(Rect2(cx - rw * 0.5, cy - rh * 0.5, rw, rh)),
-				Color(CYAN.r, CYAN.g, CYAN.b, 0.55 * (1.0 - rk)), false, 3.0)
+				Color(CYAN.r, CYAN.g, CYAN.b,
+						0.55 * (1.0 - _e_in_out(clampf((rk - 0.15) / 0.85, 0.0, 1.0)))), false, 3.0)
 	# ③ せり上がる大文字
 	var txt := "同期率 Lv.%d" % int(_lv_fx.get("lv", 0))
 	var rise := 1.0 - pow(1.0 - clampf(age / 0.45, 0.0, 1.0), 3.0)
 	var ty := cy + 46.0 - rise * 64.0
-	var ta := clampf((dur - age) / 0.55, 0.0, 1.0) * clampf(age / 0.08, 0.0, 1.0)
+	var ta := _e_in_out(clampf((dur - age) / 0.55, 0.0, 1.0)) * _e_in_out(clampf(age / 0.08, 0.0, 1.0))
 	var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_H).x
 	draw_rect(_snap(Rect2(cx - tw * 0.5 - 22, ty - 46, tw + 44, 58)),
 			Color(0.02, 0.03, 0.06, 0.72 * ta))
@@ -745,7 +761,7 @@ func _draw_levelup(sz: Vector2, font: Font) -> void:
 	if ck <= 0.0:
 		return
 	var ce := 1.0 - pow(1.0 - ck, 3.0)
-	var ca := clampf((dur - age) / 0.6, 0.0, 1.0)
+	var ca := _e_in_out(clampf((dur - age) / 0.6, 0.0, 1.0))
 	var full := Vector2(470.0, 168.0)
 	var cs := full * (0.62 + 0.38 * ce)
 	var top := cy + 96.0

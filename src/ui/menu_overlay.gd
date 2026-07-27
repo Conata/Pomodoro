@@ -76,11 +76,62 @@ var _burst: Dictionary = {}    # 解放バースト（改装ノードid -> 時�
 var _own_renov: Dictionary = {}   # 改装の所持状態キャッシュ（解放の瞬間を捕まえる）
 var _stat_cache: Dictionary = {}  # 各員の攻/HP（装備の付け替え量を出すため）
 
+# ── シートの開閉（visible の即時切替を、モーションのある開閉に置き換える）──
+# main.gd は `_menu_overlay.visible = true/false` で畳む。そこへ手を入れずに動きを付ける
+# ため、可視性の通知を捕まえて自分で開閉を演じる：
+#   開く   奥から迫り上がる。ヘッダ→中身→フッターの順に 45ms ずつずれる（ease-out）
+#   閉じる 逆再生しない。全部まとめて一息で落とす（開く時間の半分）
+# 閉じ始めた瞬間に入力は下へ通す＝演出でユーザーを待たせない。
+const OPEN_DUR := 0.30
+const CLOSE_DUR := 0.15
+const ENTER_STEP := 0.05   # パネル内スタガーの1段（50ms）
+const ENTER_DUR := 0.32    # 1要素が立ち上がる時間
+const ENTER_ROWS := 6      # ワイプが想定する段数
+
+var _sheet := "closed"     # closed / opening / open / closing
+var _sheet_t := 9.0
+var _vis_guard := false    # visible を自分で書き換える間の再入防止
+var _xf_now := Vector2.ZERO   # いまの描画原点（押下の沈み込みが基準にする）
+var _c_ofs := Vector2.ZERO    # 中身レイヤのオフセット（シート開閉ぶん）
+var _enter_i := 0             # 描画中に消費するスタガー番号
+var _nav: Dictionary = {}     # フッター選択インジケータの追従台帳（Kit.nav_slide）
+var _selbar: Dictionary = {}  # メンバー6人チップの選択帯の追従台帳（同上）
+var _toast_age := 9.0         # トースト表示開始からの経過秒（出入りのモーション用）
+
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	set_process(true)
+
+
+## main.gd の visible 切替を「開閉モーション」に翻訳する。
+## 畳まれた（visible=false）ら一度だけ差し戻し、閉じるモーションを演じてから本当に消す。
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_VISIBILITY_CHANGED or _vis_guard or not is_inside_tree():
+		return
+	if visible:
+		_sheet = "opening"
+		_sheet_t = 0.0
+		_toast_age = 9.0
+		mouse_filter = Control.MOUSE_FILTER_STOP
+		set_process(true)
+	elif _sheet != "closed":
+		_sheet = "closing"
+		_sheet_t = 0.0
+		_vis_guard = true
+		visible = true
+		_vis_guard = false
+		mouse_filter = Control.MOUSE_FILTER_IGNORE   # 閉じ始めたら操作は下の世界へ
+
+
+func _finish_close() -> void:
+	_sheet = "closed"
+	modulate.a = 1.0
+	_vis_guard = true
+	visible = false
+	_vis_guard = false
+	mouse_filter = Control.MOUSE_FILTER_STOP
 
 
 func bind(sim_ref) -> void:
@@ -89,6 +140,12 @@ func bind(sim_ref) -> void:
 
 
 func set_panel(id: String) -> void:
+	if _sheet == "closing":
+		# 閉じ始めた直後に開き直された。visible は既に true なので可視性の通知は来ない
+		# ＝ここで拾わないと、開いたそばから畳まれる。
+		_sheet = "opening"
+		_sheet_t = 0.0
+		mouse_filter = Control.MOUSE_FILTER_STOP
 	if panel != id:
 		_panel_t = 0.0
 	panel = id
@@ -98,6 +155,7 @@ func set_panel(id: String) -> void:
 func set_toast(s: String) -> void:
 	_toast = s
 	_toast_t = 2.6
+	_toast_age = 0.0
 	queue_redraw()
 
 
@@ -106,8 +164,22 @@ func _process(delta: float) -> void:
 		return   # 常駐シート：閉じている間は再描画を止める
 	_t += delta
 	_panel_t += delta
+	_sheet_t += delta
+	_toast_age += delta
 	if _toast_t > 0.0:
 		_toast_t -= delta
+	# シートの淡入淡出（部位ごとのずれは _draw 側の平行移動が受け持つ）
+	match _sheet:
+		"opening":
+			modulate.a = Kit.out_quart(_sheet_t / 0.15)
+			if _sheet_t >= OPEN_DUR:
+				_sheet = "open"
+				modulate.a = 1.0
+		"closing":
+			modulate.a = 1.0 - Kit.in_cubic(_sheet_t / CLOSE_DUR)
+			if _sheet_t >= CLOSE_DUR:
+				_finish_close()
+				return
 	queue_redraw()
 
 
@@ -260,6 +332,50 @@ func _watch_gold() -> void:
 	_fx["gold_seen"] = g
 
 
+# ── モーションの下ごしらえ（原点の平行移動だけで動かす）──────────────────
+# 原則：動かすのは「見た目」だけで、_hit() に積む当たり矩形は最終位置のまま。
+# ＝アニメーション中にタップしても、指の下にある物が必ず反応する（待たせない）。
+
+## 描画原点を置き直す（Kit.num_draw の復帰先も同時に更新される）。
+func _set_xf(v: Vector2) -> void:
+	_xf_now = v
+	Kit.set_xf(self, v)
+
+
+## 中身の要素を1つ「遅らせて」出す。各パネルがセクションの先頭で呼ぶ。
+## 呼ぶたびに番号が進む＝上から順に ENTER_STEP ずつ連鎖する（同時に出さない）。
+func _stag() -> void:
+	var i := _enter_i
+	_enter_i += 1
+	if _panel_t >= ENTER_DUR + ENTER_STEP * i:
+		_set_xf(_c_ofs)
+		return
+	var k := Kit.stag(_panel_t, i, ENTER_STEP, ENTER_DUR)
+	_set_xf(_c_ofs + Vector2(0.0, (1.0 - k) * 34.0))
+
+
+## 押されている矩形なら、いま沈んでいる量（px）。押した直後に沈み、離すと行き過ぎて戻る。
+func _sink(r: Rect2) -> Vector2:
+	if _press.is_empty():
+		return Vector2.ZERO
+	var pr: Rect2 = _press["rect"]
+	if not pr.position.is_equal_approx(r.position) or not pr.size.is_equal_approx(r.size):
+		return Vector2.ZERO
+	var s := Kit.press_sink(_t - float(_press["t0"]))
+	return Vector2.ZERO if is_zero_approx(s) else Vector2(0.0, s)
+
+
+## 押下の沈み込みを、この矩形に属する描画すべてに掛ける。必ず _end_sink() で戻す。
+func _begin_sink(r: Rect2) -> void:
+	var s := _sink(r)
+	if s != Vector2.ZERO:
+		Kit.set_xf(self, _xf_now + s)
+
+
+func _end_sink() -> void:
+	Kit.set_xf(self, _xf_now)
+
+
 func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
 	Kit.panel(self, rect, bg, border, radius, bw)
 
@@ -304,21 +420,26 @@ func _draw_icon(path: String, rect: Rect2, modulate := Color(1, 1, 1, 1), plated
 
 
 ## 小さな操作チップ（識別色の輪郭＋本文）。斜めの板で統一する。
+## 押されている間は板ごと数px沈む（_begin_sink）＝面が指の下へ入り込む。
 func _chip(font: Font, r: Rect2, label: String, col: Color, id: String) -> void:
+	_begin_sink(r)
 	Kit.slab(self, r, Color(col.r * 0.22, col.g * 0.18, col.b * 0.26, 0.95), 8.0)
 	Kit.slab_edge(self, r, Color(col.r, col.g, col.b, 0.85), 8.0, 1.5)
 	_txt(font, Vector2(r.position.x + (r.size.x - _tw(font, label, DS.T_BODY)) * 0.5 + 4.0,
 			r.position.y + r.size.y * 0.5 + 6.0), label, DS.T_BODY, DS.TEXT)
+	_end_sink()
 	_hit(r, id)
 
 
 ## ラベル付きボタン。enabled=false は灰色＆非ヒット。
 func _btn(font: Font, rect: Rect2, label: String, col: Color, id: String, enabled := true, size := 16) -> void:
 	var c := col if enabled else Color(0.4, 0.4, 0.45)
+	_begin_sink(rect)
 	_panel(rect, Color(c.r * 0.18, c.g * 0.16, c.b * 0.2, 0.92), Color(c.r, c.g, c.b, 0.8 if enabled else 0.4), 9, 1.5)
 	var w := _tw(font, label, size)
 	_txt(font, Vector2(rect.position.x + (rect.size.x - w) * 0.5, rect.position.y + rect.size.y * 0.5 + size * 0.38),
 			label, size, TEXT if enabled else TEXT_DIM)
+	_end_sink()
 	if enabled:
 		_hit(rect, id)
 
@@ -331,23 +452,46 @@ func _draw() -> void:
 	var sz := size
 	var font := get_theme_default_font()
 	_hits.clear()
-	Kit.set_xf(self, Vector2.ZERO)   # 拡大描画が戻る先を自分の座標系に固定する
+	_set_xf(Vector2.ZERO)   # 拡大描画が戻る先を自分の座標系に固定する
 	var accent: Color = PANEL_ACCENT.get(panel, PURPLE)
+
+	# ── シートの開閉：部位ごとに 45ms ずつずらす（同時に出さない）─────────
+	# 開く＝ヘッダが上から降り、中身が下から迫り上がり、フッターが最後に着く。
+	# 閉じる＝逆再生ではなく、全部まとめて短く落とす（開く時間の半分）。
+	var hk := 1.0
+	var ck := 1.0
+	var fk := 1.0
+	var closing := _sheet == "closing"
+	if _sheet == "opening":
+		hk = Kit.stag(_sheet_t, 0, 0.045, 0.26)
+		ck = Kit.stag(_sheet_t, 1, 0.045, 0.28)
+		fk = Kit.stag(_sheet_t, 2, 0.045, 0.24)
+	elif closing:
+		var d := Kit.in_cubic(_sheet_t / CLOSE_DUR)
+		hk = 1.0 - d
+		ck = 1.0 - d
+		fk = 1.0 - d
+	var h_ofs := Vector2(0.0, -(1.0 - hk) * (HEADER_H + 10.0))
+	_c_ofs = Vector2(0.0, (1.0 - ck) * (46.0 if closing else 84.0))
+	var f_ofs := Vector2(0.0, (1.0 - fk) * (FOOTER_H + 8.0))
+
+	# パネルを切り替えると背景アートも入れ替わる。素で差し替えるとカットが割れるので、
+	# 切替直後だけ一段暗く沈めてから戻す（暗転を挟むと別の絵でも一枚に繋がって見える）。
+	var dip := 1.0 - Kit.out_cubic(_panel_t / 0.22)
 	if sim != null and bool(sim.state["run"]["active"]):
 		# 潜航中の寄り道：背景絵は敷かず暗幕だけ＝下で戦い続けるステージが透ける
-		draw_rect(Rect2(Vector2.ZERO, sz), Color(0.02, 0.02, 0.05, 0.84))
+		draw_rect(Rect2(Vector2.ZERO, sz), Color(0.02, 0.02, 0.05, 0.84 + 0.12 * dip))
 	else:
-		Kit.backdrop(self, sz, String(PANEL_BG_ART.get(panel, "")), accent, 0.64)
+		Kit.backdrop(self, sz, String(PANEL_BG_ART.get(panel, "")), accent, 0.64 + 0.30 * dip)
 
+	_set_xf(h_ofs)
 	_draw_header(font, sz)
-	# パネル切替トランジション：内容が下から浮き上がり、暗幕が明ける
-	var pk := clampf(_panel_t / 0.25, 0.0, 1.0)
-	pk = pk * pk * (3.0 - 2.0 * pk)
+	_set_xf(Vector2.ZERO)
 	if sim != null:
 		_watch_stats()
 		_watch_gold()
-		if pk < 1.0:
-			Kit.set_xf(self, Vector2(0.0, (1.0 - pk) * 16.0))
+		_enter_i = 0
+		_set_xf(_c_ofs)
 		match panel:
 			"map": _draw_map(font, sz)
 			"member": _draw_member(font, sz)
@@ -355,11 +499,11 @@ func _draw() -> void:
 			"management": _draw_management(font, sz)
 			"renov": _draw_renov(font, sz)
 			"workshop": _draw_workshop(font, sz)
-		if pk < 1.0:
-			Kit.set_xf(self, Vector2.ZERO)
-			draw_rect(Rect2(0, HEADER_H + 2, sz.x, sz.y - HEADER_H - FOOTER_H - 2),
-					Color(0.02, 0.02, 0.05, (1.0 - pk) * 0.65))
+		_set_xf(Vector2.ZERO)
+		_draw_enter_wipe(sz, accent)
+	_set_xf(f_ofs)
 	_draw_footer(font, sz)
+	_set_xf(Vector2.ZERO)
 	Kit.vignette(self, sz)
 	_draw_toast(font, sz)
 	# 触った結果のフィードバック（押下→波紋→数値の増減）は最前面に置く
@@ -372,6 +516,20 @@ func _draw() -> void:
 	Kit.ripples(self, _ripples, _t)
 	Kit.flies(self, font, _flies, _t)
 	Kit.floats(self, font, _floats, _t)
+
+
+## パネル登場の暗幕。上から下へ引いていき、引き際に識別色の線が走る。
+## 各セクションの平行移動（_stag）と合わせて「行が上から順に現れる」を作る。
+func _draw_enter_wipe(sz: Vector2, accent: Color) -> void:
+	var span := ENTER_DUR + ENTER_STEP * ENTER_ROWS
+	if _panel_t >= span:
+		return
+	var k := Kit.out_quart(_panel_t / span)
+	var top := HEADER_H + 2.0
+	var bot := sz.y - FOOTER_H
+	var wy := top + (bot - top) * k
+	draw_rect(Rect2(0, wy, sz.x, bot - wy), Color(0.02, 0.02, 0.05, 0.72 * (1.0 - k * 0.4)))
+	draw_rect(Rect2(0, wy - 2.0, sz.x, 2.0), Color(accent.r, accent.g, accent.b, 0.7 * (1.0 - k)))
 
 
 func _draw_header(font: Font, sz: Vector2) -> void:
@@ -391,8 +549,18 @@ func _draw_header(font: Font, sz: Vector2) -> void:
 		title_x = 12.0 + bw + 16.0
 	else:
 		_btn(font, Rect2(12, 22, 104, 40), "← 店へ", PURPLE, "home", true, DS.T_BODY)
-	# タイトル
-	_txt(font, Vector2(title_x, 40), String(PANEL_TITLES.get(panel, "")), DS.T_SUB, DS.PAPER)
+	# タイトル。パネルを変えたら黙って差し替わらず、左から滑り込んで薄く入る
+	# （ヘッダは動かないので、切替を言うのはこの1行の役目）。
+	var tk := Kit.out_quart(_panel_t / 0.30)
+	var title := String(PANEL_TITLES.get(panel, ""))
+	_txt(font, Vector2(title_x - (1.0 - tk) * 26.0, 40), title, DS.T_SUB,
+			Color(DS.PAPER.r, DS.PAPER.g, DS.PAPER.b, 0.15 + 0.85 * tk))
+	# 走り際の識別色の線（タイトルの下を一度だけ横切る）
+	if tk < 1.0:
+		var tw := _tw(font, title, DS.T_SUB)
+		var acc: Color = PANEL_ACCENT.get(panel, PURPLE)
+		draw_rect(Rect2(title_x - (1.0 - tk) * 26.0, 48.0, tw * tk, 2.0),
+				Color(acc.r, acc.g, acc.b, 0.9 * (1.0 - tk)))
 	# 日数・所持金・欠片（ラベルは小さく灰、数値は白。有彩色を増やさない）
 	# 数値は Kit.num で追いかける＝変わった瞬間に必ず拡大し、差分が上へ流れる。
 	if sim != null:
@@ -421,6 +589,7 @@ func _draw_map(font: Font, sz: Vector2) -> void:
 	var y := HEADER_H + 12.0
 	var diff := int(sim.state.get("difficulty", 0))
 
+	_stag()
 	# 難易度セレクタ（4段。前難易度で第1幕突破が解放条件）
 	Kit.header(self, font, Vector2(16, y), "難易度", GOLD, sz.x - 32)
 	y += 48
@@ -447,6 +616,7 @@ func _draw_map(font: Font, sz: Vector2) -> void:
 			_hit(r, "diff:%d" % d)
 	y += 66
 
+	_stag()
 	# ステージ一覧（最前線の前後を窓表示。クリア済みは周回可）
 	var cleared: int = sim.stage_cleared(diff)
 	var frontier := cleared + 1
@@ -501,12 +671,14 @@ func _draw_map(font: Font, sz: Vector2) -> void:
 			_hit(r, "stage:%d" % fl)
 		y += 58
 
+	_stag()
 	# 出撃ボタン（フッターの上）
 	var by := sz.y - FOOTER_H - 150.0
 	if y < by:
 		y = by
 	var sortie := Rect2(16, sz.y - FOOTER_H - 140, sz.x - 32, 56)
-	var pulse := 0.5 + 0.5 * sin(_t * 2.5)
+	# 待機中の生気はこの1箇所だけ。常時揺れる sin ではなく心拍（静か→短い二拍）
+	var pulse := Kit.heartbeat(_t)
 	Kit.cta(self, sortie, Color(PINK.r * 0.22, PINK.g * 0.16, PINK.b * 0.24, 0.96), PINK, pulse)
 	var sl := "▶  ステージ %s に集中して潜る（25分）" % KuroData.stage_label(sel)
 	_txt(font, Vector2(sortie.position.x + (sortie.size.x - _tw(font, sl, 17)) * 0.5, sortie.position.y + 35), sl, 17, TEXT)
@@ -519,20 +691,27 @@ func _draw_map(font: Font, sz: Vector2) -> void:
 func _draw_member(font: Font, sz: Vector2) -> void:
 	var ids: Array = KuroData.GIRL_ORDER
 	var y := HEADER_H + 12.0
+	_stag()
 	# 6人チップ
 	var n := ids.size()
 	var gap := 8.0
 	var cw := (sz.x - 24 - gap * (n - 1)) / float(n)
+	# 「選ぶ」にも固有のモーションを持たせる：選択の帯は隣の子へ滑って、少し行き過ぎて座る。
+	# 枠の色も移動中は前の子と混ざる＝どこからどこへ移ったかが見える。
+	var si := maxi(ids.find(_sel_girl), 0)
+	var sc: Color = KuroData.GIRLS[ids[si]]["color"]
+	var sl: Dictionary = Kit.nav_slide(_selbar, 12.0 + si * (cw + gap), sc, _t)
+	var sx := float(sl["x"])
+	var scol: Color = sl["col"]
 	for i in n:
 		var id: String = ids[i]
 		var g: Dictionary = KuroData.GIRLS[id]
 		var r := Rect2(12 + i * (cw + gap), y, cw, 58)
-		var active := id == _sel_girl
 		var col: Color = g["color"]
+		var near := clampf(1.0 - absf(sx - r.position.x) / (cw + gap), 0.0, 1.0)
+		var active := near > 0.5
 		_panel(r, Color(col.r * 0.16, col.g * 0.16, col.b * 0.2, 0.95),
-				col if active else Color(col.r, col.g, col.b, 0.35), 9, 2.0 if active else 1.0)
-		if active:
-			draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 3), col)
+				Color(col.r, col.g, col.b, 0.35).lerp(col, Kit.out_cubic(near)), 9, 1.0 + near)
 		# 顔アイコン（無ければ名前のみ）
 		var drew := _draw_icon("res://assets/generated/face/%s/neutral_open.png" % id,
 				Rect2(r.position.x + (cw - 32) * 0.5, r.position.y + 4, 32, 32),
@@ -544,7 +723,10 @@ func _draw_member(font: Font, sz: Vector2) -> void:
 			var af := "♥%d" % sim.aff(id)
 			_txt(font, Vector2(r.position.x + (cw - _tw(font, af, 12)) * 0.5, r.position.y + 46), af, 12, PINK)
 		_hit(r, "_selg:" + id)
+	var sstretch := (1.0 - Kit.out_cubic(float(sl["k"]))) * cw * 0.5
+	draw_rect(Rect2(sx - sstretch * 0.5, y, cw + sstretch, 3), scol)
 
+	_stag()
 	# 選択中の子の詳細カード
 	var gid := _sel_girl
 	var g: Dictionary = KuroData.GIRLS[gid]
@@ -562,6 +744,7 @@ func _draw_member(font: Font, sz: Vector2) -> void:
 			Color(1.0, 0.6, 0.45))
 	_txt(font, Vector2(tx + 96, y + 80), "HP", DS.T_MICRO, TEXT_DIM)
 	_num(font, Vector2(tx + 130, y + 80), "hp_" + gid, float(int(sim.girl_maxhp(gid))), DS.T_BODY, GREEN)
+	_stag()
 	# 好感度バー
 	_txt(font, Vector2(tx, y + 104), "♥", DS.T_MICRO, PINK)
 	_bar(Rect2(tx + 22, y + 92, sz.x - 24 - tx - 22 - 56, 14), sim.aff(gid) / 100.0, PINK)
@@ -572,6 +755,7 @@ func _draw_member(font: Font, sz: Vector2) -> void:
 	_txt(font, Vector2(sz.x - 24 - 210, y + 28), "店番:%s" % String(g["synergy"]), 12, GOLD)
 	_txt(font, Vector2(sz.x - 24 - 210, y + 46), String(g["synergy_desc"]), 11, TEXT_DIM)
 
+	_stag()
 	# スキル（装備枠）
 	y += 132
 	var slots: int = sim.skill_slots()
@@ -598,6 +782,7 @@ func _draw_member(font: Font, sz: Vector2) -> void:
 		col2 += 1
 	y += 12 + int((known.size() + 1) / 2) * 44 + 14
 
+	_stag()
 	# 育成ツリー（記憶の欠片）
 	_txt(font, Vector2(20, y), "育成ツリー（記憶の欠片で解放）", 15, PURPLE)
 	y += 18
@@ -642,6 +827,7 @@ func _effect_label(eff: Dictionary) -> String:
 func _draw_market(font: Font, sz: Vector2) -> void:
 	var y := HEADER_H + 16.0
 	var s: Dictionary = sim.state
+	_stag()
 	# 在庫（素材アイコン＋数）
 	_txt(font, Vector2(16, y + 4), "在庫", DS.T_MICRO, TEXT_DIM)
 	var ix := 64.0
@@ -655,6 +841,7 @@ func _draw_market(font: Font, sz: Vector2) -> void:
 		ix += 74.0 if drew else 88.0
 	y += 28
 
+	_stag()
 	# 闇市（固定3品）
 	_txt(font, Vector2(16, y), "闇市", 17, GOLD)
 	y += 16
@@ -668,6 +855,7 @@ func _draw_market(font: Font, sz: Vector2) -> void:
 		_btn(font, Rect2(sz.x - 24 - 100, y + 13, 94, 32), "買う", GOLD, "buy:%d" % i, can, 15)
 		y += 64
 
+	_stag()
 	# 交易船（10分毎ローテ・装備/ペット）
 	y += 8
 	_txt(font, Vector2(16, y), "交易船（10分毎に入替）", 17, CYAN)
@@ -737,6 +925,7 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 			_chg = "仕込みが変わった"      # 改装解放など、チップ以外で動いた時
 		_chg_t = _t
 
+	_stag()
 	# ① 今夜の予報 -------------------------------------------------------
 	var y := top + 12.0
 	_mg_forecast(font, Rect2(PAD, y, w, 96.0), taste, tcol, fc, base, pen)
@@ -746,6 +935,7 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 		_mg_penalty(font, Rect2(PAD, y, w, 34.0), fc, base)
 		y += 42.0
 
+	_stag()
 	# ② 店番（適性と純益の2軸で選ぶ）-------------------------------------
 	Kit.header(self, font, Vector2(PAD, y), "店番", ac, w + 26.0, DS.T_HEAD, "適性だけでは決まらない")
 	y += 56.0
@@ -755,6 +945,7 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 	_mg_change(font, Rect2(PAD, y, w, 32.0), m)
 	y += 40.0
 
+	_stag()
 	# ③ 扉の方針 ---------------------------------------------------------
 	Kit.header(self, font, Vector2(PAD, y), "扉", ac, w + 26.0, DS.T_HEAD, "潜航中の扉をどう扱うか")
 	_chip(font, Rect2(sz.x - PAD - 168.0, y + 8.0, 168.0, 32.0), "改装ツリー ▸", ac, "_panel:renov")
@@ -763,6 +954,7 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 	_mg_segment(font, Rect2(PAD, y, w, 56.0), "踏み込む", "見送る", door_open, "door", ac)
 	y += 64.0
 
+	_stag()
 	# ④ 献立デッキ -------------------------------------------------------
 	var menu: Array = m["menu"]
 	Kit.header(self, font, Vector2(PAD, y), "献立", ac, w + 26.0, DS.T_HEAD,
@@ -771,6 +963,7 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 	var settle_top := bot - 276.0
 	_mg_deck(font, Rect2(PAD, y, w, settle_top - 16.0 - y), s, menu, taste)
 
+	_stag()
 	# ⑤ 今夜の三行精算（この画面の結論。画面最大の文字はここ）-------------
 	_mg_settle(font, Rect2(PAD, settle_top, w, 276.0), fc, base, pen, door_open, pn)
 
@@ -853,6 +1046,7 @@ func _mg_keepers(font: Font, area: Rect2, m: Dictionary, prof: Dictionary) -> vo
 		var apt_best := apt >= best_apt - 0.001
 		var p := int(prof.get(id, 0))
 		var p_best := p >= best_p
+		_begin_sink(r)   # 押されている間はカードごと沈む
 		if active:
 			Kit.slab(self, Rect2(r.position.x + 5.0, r.position.y + 6.0, r.size.x - 5.0, r.size.y),
 					Color(0, 0, 0, 0.72), 8.0)
@@ -893,6 +1087,7 @@ func _mg_keepers(font: Font, area: Rect2, m: Dictionary, prof: Dictionary) -> vo
 		# ── シナジー（2軸目）：全員ぶんを同じ大きさで並べる
 		_txt(font, Vector2(r.position.x + 10.0, r.position.y + 108.0), String(g["synergy_desc"]),
 				DS.T_MICRO, sub)
+		_end_sink()
 		_hit(r, "keeper:" + id)
 
 
@@ -1093,6 +1288,10 @@ func _mg_settle(font: Font, r: Rect2, fc: Dictionary, base: Dictionary, pen: boo
 	# 三行目：純益（面の反転・画面最大）。旧値→新値をカウントし、差分を上へ流す。
 	var pcol := ac if profit >= 0 else DS.DANGER
 	var slab := Rect2(body.position.x + 8.0, y2 + 20.0, body.size.x - 16.0, 76.0)
+	# 待機中の生気はこの画面で1箇所だけ。結論（純益）が静かに脈を打つ。
+	# 常時揺らさず、心拍の瞬間だけ下敷きの光がふくらむ。
+	var beat := Kit.heartbeat(_t)
+	Kit.spot(self, slab.get_center(), slab.size.x * 0.5, pcol, 0.05 + 0.13 * beat)
 	Kit.slab(self, Rect2(slab.position.x + 7.0, slab.position.y + 7.0, slab.size.x - 7.0, slab.size.y),
 			Color(0, 0, 0, 0.75), 12.0)
 	Kit.slab(self, slab, pcol, 12.0)
@@ -1136,6 +1335,7 @@ func _draw_workshop(font: Font, sz: Vector2) -> void:
 	_txt(font, Vector2(16, y), "Cube: 倉庫・分解・合成・刻印・装飾をここに集約", 14, TEXT_DIM)
 	y += 26
 
+	_stag()
 	# 資源とビュー切替
 	_panel(Rect2(12, y, sz.x - 24, 58), Color(0.045, 0.06, 0.08, 0.96), Color(CYAN.r, CYAN.g, CYAN.b, 0.35), 10)
 	# 倉庫・バッグ・廃材も生きた数値（分解した瞬間に廃材が跳ねる）
@@ -1281,6 +1481,7 @@ func _draw_renov(font: Font, sz: Vector2) -> void:
 			_burst[nid] = _t
 	_own_renov["__seen"] = true
 
+	_stag()
 	# 接続線（prev → node）。解放直後は前提ノードから光が流れて「線が繋がる」。
 	for nid in nodes:
 		var node: Dictionary = nodes[nid]
@@ -1352,39 +1553,58 @@ func _draw_renov(font: Font, sz: Vector2) -> void:
 
 # ── フッター・トースト ────────────────────────────────────────────────────────
 
+## フッターナビ。選択インジケータは瞬間移動させず、隣のセルへ滑って（少し行き過ぎて）座る。
 func _draw_footer(font: Font, sz: Vector2) -> void:
 	var fy := sz.y - FOOTER_H
 	draw_rect(Rect2(0, fy, sz.x, FOOTER_H), Color(0.03, 0.03, 0.06, 0.97))
 	draw_rect(Rect2(0, fy, sz.x, 1.5), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.55))
 	var n := NAV.size()
 	var cw := sz.x / float(n)
+	# 選択セルの位置と色を先に決め、追従値を1つだけ引く（描くのはセルの下ではなく上）
+	var ai := 0
+	for i in n:
+		var nid := String((NAV[i] as Dictionary)["id"])
+		if nid == panel or (panel == "renov" and nid == "management"):
+			ai = i
+			break
+	var acol: Color = (NAV[ai] as Dictionary)["col"]
+	var slide: Dictionary = Kit.nav_slide(_nav, cw * ai, acol, _t)
+	var ix := float(slide["x"])
+	var icol: Color = slide["col"]
+	# 走っている間は少し伸びる（速度が形に出る＝ただの瞬間移動にしない）
+	var stretch := (1.0 - Kit.out_cubic(float(slide["k"]))) * cw * 0.34
+	draw_rect(Rect2(ix, fy, cw, FOOTER_H), Color(icol.r, icol.g, icol.b, 0.10))
+	draw_rect(Rect2(ix - stretch * 0.5, fy, cw + stretch, 2.0), icol)
+	Kit.spot(self, Vector2(ix + cw * 0.5, fy + FOOTER_H * 0.55), cw * 0.72, icol, 0.22)
 	for i in n:
 		var e: Dictionary = NAV[i]
 		var x0 := cw * i
 		var id := String(e["id"])
 		_hit(Rect2(x0, fy, cw, FOOTER_H), id)
 		var col: Color = e["col"]
-		var active := id == panel
-		if panel == "renov" and id == "management":
-			active = true
-		if active:
-			draw_rect(Rect2(x0, fy, cw, FOOTER_H), Color(col.r, col.g, col.b, 0.10))
-			draw_rect(Rect2(x0, fy, cw, 2.0), col)
-			Kit.spot(self, Vector2(x0 + cw * 0.5, fy + FOOTER_H * 0.55), cw * 0.72, col, 0.22)
-		var gcol := col if active else Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.9)
+		# 文字の色は「インジケータがどれだけ自分の上に来ているか」で混ぜる＝色も滑る
+		var near := clampf(1.0 - absf(ix - x0) / cw, 0.0, 1.0)
+		var gcol := Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.9).lerp(col, Kit.out_cubic(near))
 		var cx := x0 + cw * 0.5
 		var glyph := String(e["icon"])
-		_txt(font, Vector2(cx - _tw(font, glyph, DS.T_SUB) * 0.5, fy + 30), glyph, DS.T_SUB, gcol)
+		var gy := fy + 30.0 - near * 2.0   # 選ばれている側だけ1〜2px持ち上がる
+		_txt(font, Vector2(cx - _tw(font, glyph, DS.T_SUB) * 0.5, gy), glyph, DS.T_SUB, gcol)
 		var label := String(e["label"])
 		_txt(font, Vector2(cx - _tw(font, label, DS.T_MICRO) * 0.5, fy + 50), label, DS.T_MICRO, gcol)
 
 
+## トースト。出る時は下から突き上げて行き過ぎ、消える時は落として短く消す。
 func _draw_toast(font: Font, sz: Vector2) -> void:
 	if _toast_t <= 0.0 or _toast == "":
 		return
-	var a := clampf(_toast_t / 0.6, 0.0, 1.0)
+	var enter := Kit.out_back(_toast_age / 0.26, 2.4)   # 出：行き過ぎて座る
+	var exit_k := Kit.in_cubic(1.0 - clampf(_toast_t / 0.32, 0.0, 1.0))  # 去：加速して落ちる
+	var a := clampf(_toast_age / 0.12, 0.0, 1.0) * (1.0 - exit_k)
+	if a <= 0.001:
+		return
+	var dy := (1.0 - enter) * 44.0 + exit_k * 22.0
 	var w := _tw(font, _toast, DS.T_BODY) + 40
-	var r := Rect2((sz.x - w) * 0.5, sz.y - FOOTER_H - 60, w, 40)
+	var r := Rect2((sz.x - w) * 0.5, sz.y - FOOTER_H - 60 + dy, w, 40)
 	Kit.slab(self, r, Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.95 * a), 10.0)
 	Kit.slab_edge(self, r, Color(PINK.r, PINK.g, PINK.b, 0.8 * a), 10.0, 2.0)
 	_txt(font, Vector2(r.position.x + 22, r.position.y + 27), _toast, DS.T_BODY, Color(TEXT.r, TEXT.g, TEXT.b, a))

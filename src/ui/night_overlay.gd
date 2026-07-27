@@ -37,8 +37,18 @@ const SLAB_H := 18.0         # 天面の厚み
 const APRON_H := 99.0        # 前板の高さ
 const CUST_H := 120.0        # 客の全高（基準体格）
 const KEEPER_H := 144.0      # 48テクセル×3（背景・客と同じ3pxモジュール）
-const AUTO_SERVE := 2.4      # 着席から自動配膳までの秒数（この間はタップ給仕可）
+const AUTO_SERVE := 2.0      # 着席から自動配膳までの秒数（この間はタップ給仕可）
 const TURNAWAY_MAX := 3      # 素材切れで帰す客の演出数上限
+
+# ── 間（タイミング）。客の一連は「歩く→座る→待つ→食べる→立つ→去る」で切れ目を作らない。
+const SIT_DUR := 0.42        # 席に腰を下ろすまで（ease-out-back で軽く沈む）
+const STAND_DUR := 0.34      # 立ち上がるまで
+const EAT_DUR := 1.70        # 皿が来てから食べ終わるまで
+const DENY_DUR := 1.20       # 素材切れの客が引き下がるまで
+const WALK_IN := 320.0       # 入店の基準速度（距離から所要時間を出す）
+const CLOSE_DUR := 2.60      # 締めの演出の尺
+const POP_DUR := 0.42        # 売上加算のバネ
+const NOREN_N := 4           # のれんの短冊数（細かく割ると布ではなく縞に見える）
 
 # 木・灯り
 const WOOD_SLAB := Color(0.36, 0.245, 0.155)
@@ -93,6 +103,21 @@ var _t := 0.0
 var _hits: Array = []
 var _ripples: Array = []
 var _keeper_frames: Array = []   # 事前生成した店番のドット絵フレーム
+var _coins: Array = []           # チップのコイン粒子 {p, v, t, tgt}
+var _bursts: Array = []          # 一瞬の衝撃リング {pos, t, col, r0, r1, dur}
+var _frac_disp := 0.0            # 進捗バーの追従値（数字と同じく ease-out）
+var _digit_pop := 0.0            # 桁が増えた瞬間の強調
+var _gold_digits := 1
+var _tip_pop := 0.0
+var _keeper_lunge := 0.0         # 配膳の瞬間、店番が身を乗り出す量
+var _keeper_dir := 0.0
+var _noren: Array = []           # のれんの短冊 {o, v}
+var _spawn_i := 0                # 何人目を入れようとしているか（素材切れの散らしに使う）
+var _turn_done := 0
+var _turn_total := 0
+var _spawn_total := 1
+var _close := 0.0                # 締めの演出の経過（_end_t 到達後）
+var _wipe := 0.0                 # 締めの布巾の位置 0..1
 
 static var _glow_t: ImageTexture = null
 static var _vign_t: ImageTexture = null
@@ -105,6 +130,9 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # ドット絵をカリッと拡大
+	if _noren.is_empty():
+		for i in NOREN_N:
+			_noren.append({"o": 0.0, "v": 0.0})
 	_warm_up()
 	set_process(true)
 
@@ -112,6 +140,53 @@ func _ready() -> void:
 ## 3px グリッドへ量子化。全ての図形座標をここに通してピクセル密度を揃える。
 func q(v: float) -> float:
 	return round(v / U) * U
+
+
+# ── イージング ───────────────────────────────────────────────────────
+# 線形補間は「機械が動かした」ように見える。入りと抜きを必ず付ける。
+
+## ease-out cubic（減速して着く：入店・着席・立ち上がり）
+func _eo(k: float) -> float:
+	var x := 1.0 - clampf(k, 0.0, 1.0)
+	return 1.0 - x * x * x
+
+
+## ease-in cubic（加速して去る：退店）
+func _ei(k: float) -> float:
+	var x := clampf(k, 0.0, 1.0)
+	return x * x * x
+
+
+## smoothstep（両端で止まる：仕草・布巾）
+func _eio(k: float) -> float:
+	var x := clampf(k, 0.0, 1.0)
+	return x * x * (3.0 - 2.0 * x)
+
+
+## 到着のカーブ。前半は一定の歩調、後半だけ減速して席の手前で止まる。
+func _arrive(k: float) -> float:
+	var x := clampf(k, 0.0, 1.0)
+	if x < 0.58:
+		return x * 1.28
+	var u := (x - 0.58) / 0.42
+	return 0.7424 + 0.2576 * (1.0 - (1.0 - u) * (1.0 - u))
+
+
+## ease-out-back（行き過ぎて戻る：腰を下ろす・伝票に皿が入る）
+func _eob(k: float) -> float:
+	var x := clampf(k, 0.0, 1.0) - 1.0
+	return 1.0 + x * x * (2.70158 * x + 1.70158)
+
+
+## 減衰バウンド（着地：皿・木札）
+func _bnc(k: float) -> float:
+	var x := clampf(k, 0.0, 1.0)
+	return absf(sin(x * PI * 2.2)) * (1.0 - x) * (1.0 - x)
+
+
+## フレームレート非依存の指数追従。lerp(a,b,delta*k) は fps で結果が変わる。
+func _chase(cur: float, tgt: float, rate: float, delta: float) -> float:
+	return cur + (tgt - cur) * (1.0 - exp(-rate * delta))
 
 
 ## 上演データを流し込んで初期化。script が空なら呼ばず、直接リザルトへ。
@@ -123,6 +198,10 @@ func set_data(d: Dictionary) -> void:
 	_script = (d.get("script", []) as Array).duplicate()
 	_total = maxi(int(d.get("customers", _script.size())), _script.size())
 	_turnaway = mini(_total - _script.size(), TURNAWAY_MAX)
+	_turn_total = _turnaway
+	_turn_done = 0
+	_spawn_i = 0
+	_spawn_total = maxi(_script.size() + _turn_total, 1)
 	_next = 0
 	_custs = []
 	_seats = [false, false, false, false, false]
@@ -134,11 +213,24 @@ func set_data(d: Dictionary) -> void:
 	_pop = 0.0
 	_served_shown = 0
 	_matched = 0
-	_spawn_cd = 0.5
+	_spawn_cd = 0.28          # 幕開けの静止を短くする（最初の一人が早く暖簾を割る）
 	_interval = clampf(30.0 / maxf(_script.size(), 1.0), 0.55, 1.8)
 	_end_t = 0.0
+	_close = 0.0
+	_wipe = 0.0
 	_done = false
 	_t = 0.0
+	_coins = []
+	_bursts = []
+	_frac_disp = 0.0
+	_digit_pop = 0.0
+	_gold_digits = 1
+	_tip_pop = 0.0
+	_keeper_lunge = 0.0
+	_keeper_dir = 0.0
+	_noren = []
+	for i in NOREN_N:
+		_noren.append({"o": 0.0, "v": 0.0})
 	_warm_up()
 	queue_redraw()
 
@@ -176,82 +268,230 @@ func _finish() -> void:
 func _process(delta: float) -> void:
 	if not visible or _done:
 		return
+	delta = minf(delta, 0.05)      # ヒッチで状態機械を飛び越えさせない
 	_t += delta
 	_spawn_cd -= delta
-	_gold_disp = lerpf(_gold_disp, float(_gold_shown), clampf(delta * 8.0, 0.0, 1.0))
+	# 売上のカウントアップは指数追従（fps 非依存）。lerpf(a,b,delta*k) は
+	# フレームレートで速度が変わってしまうので使わない。
+	_gold_disp = _chase(_gold_disp, float(_gold_shown), 7.0, delta)
+	if _gold_shown - _gold_disp < 0.6:
+		_gold_disp = float(_gold_shown)
+	var nd := str(int(round(_gold_disp))).length()
+	if nd > _gold_digits:
+		_gold_digits = nd
+		_digit_pop = 0.55           # 桁が増えた＝夜の格が上がった瞬間
 	_pop = maxf(_pop - delta, 0.0)
+	_digit_pop = maxf(_digit_pop - delta, 0.0)
+	_tip_pop = maxf(_tip_pop - delta, 0.0)
+	_keeper_lunge = maxf(_keeper_lunge - delta * 1.7, 0.0)
+	_frac_disp = _chase(_frac_disp, clampf(float(_served_shown) / maxf(_total, 1.0), 0.0, 1.0), 6.0, delta)
 	# 入店スケジューラ：空席があれば次の客（配膳 or 素材切れ）を入れる
 	if _spawn_cd <= 0.0:
 		var seat := _free_seat()
 		if seat >= 0 and (_next < _script.size() or _turnaway > 0):
 			var serving := -1
-			if _next < _script.size():
+			# 素材切れの客は最後にまとめない。まとめると夜が「✕が3回」で終わる。
+			# Bresenham で全体に散らし、最初と最後は必ず配膳の客にする。
+			var turn_now := _turnaway > 0 and _next < _script.size() \
+					and _turn_done * _spawn_total < _spawn_i * _turn_total
+			if _next < _script.size() and not turn_now:
 				serving = _next
 				_next += 1
 			else:
 				_turnaway -= 1
+				_turn_done += 1
+			_spawn_i += 1
 			_seats[seat] = true
 			# 先頭 regulars 人は常連（連続完走が連れてきた顔なじみ。チップ2倍）
 			var is_reg := serving >= 0 and serving < regulars
 			var sd := (seat * 7 + maxi(serving, 0) * 13 + _turnaway * 5 + day * 3) % 997
-			_custs.append({"seat": seat, "x": size.x + 40.0, "state": "in", "t": 0.0,
-					"serving": serving, "seed": sd,
+			var x0 := size.x + 54.0
+			var sx := _seat_x(seat)
+			_custs.append({"seat": seat, "x": x0, "x0": x0, "state": "in", "t": 0.0,
+					"dur": clampf((x0 - sx) / WALK_IN, 0.85, 1.95),
+					"serving": serving, "seed": sd, "sit": 0.0,
+					# 位相・歩調・呼吸を一人ずつずらす。全員同位相は「人形の列」に見える。
+					"ph": float(sd % 61) * 0.103, "wt": float(sd % 29) * 0.21,
+					"br": 0.92 + float(sd % 9) * 0.075,
+					"gt": 0.7 + float(sd % 7) * 0.31, "gcur": 0.0, "g": sd % 4, "gseq": sd,
+					"joy": 0.0, "bt": 0.0,
 					"scarf": GOLD if is_reg else SCARF[(_next + _turnaway) % SCARF.size()],
 					"dir": -1.0, "regular": is_reg,
 					"rname": REGULAR_NAMES[serving % REGULAR_NAMES.size()] if is_reg else ""})
 			_spawn_cd = _interval
-	# 客の状態機械
+	# 客の状態機械 — in → sit → wait → eat → up → out を途切れさせない
 	var cy := q(size.y * COUNTER_Y)
 	for c in _custs:
 		c["t"] = float(c["t"]) + delta
+		c["joy"] = maxf(float(c.get("joy", 0.0)) - delta, 0.0)
 		var seat_x := _seat_x(int(c["seat"]))
+		var ct := float(c["t"])
 		match String(c["state"]):
 			"in":
-				c["x"] = maxf(float(c["x"]) - 320.0 * delta, seat_x)
-				if float(c["x"]) <= seat_x + 0.5:
+				# 一定の歩調で来て、席の手前で減速して止まる。
+				# 等速のまま急停止すると「瞬間移動」に、全区間 ease だと滑って見える。
+				c["wt"] = float(c["wt"]) + delta
+				var k := clampf(ct / float(c["dur"]), 0.0, 1.0)
+				var rt := 7.2 + float(int(c["seed"]) % 5) * 0.55
+				# 一歩ごとの速度の脈（人は等速では歩かない）
+				var stride := sin(float(c["wt"]) * rt + float(c["ph"])) * 3.5 * (1.0 - k)
+				c["x"] = lerpf(float(c["x0"]), seat_x, _arrive(k)) + stride
+				if k >= 1.0:
+					c["x"] = seat_x
+					c["state"] = "sit"
+					c["t"] = 0.0
+			"sit":
+				# 腰を下ろす。ease-out-back で一度沈んで戻る＝椅子の反発。
+				var k2 := clampf(ct / SIT_DUR, 0.0, 1.0)
+				c["sit"] = clampf(_eob(k2), 0.0, 1.12)
+				if k2 >= 1.0:
+					c["sit"] = 1.0
 					c["state"] = "wait" if int(c["serving"]) >= 0 else "deny"
 					c["t"] = 0.0
+					c["bt"] = 0.0
 			"wait":
-				if float(c["t"]) >= AUTO_SERVE:
+				c["bt"] = float(c["bt"]) + delta
+				_tick_gesture(c, delta)
+				if ct >= AUTO_SERVE:
 					_serve(c, false)
 			"deny":
-				# 素材切れ：申し訳ない ✕ を出して帰す
-				if float(c["t"]) >= 1.3:
+				c["bt"] = float(c["bt"]) + delta
+				if ct >= DENY_DUR:
 					_leave(c)
 			"eat":
-				if float(c["t"]) >= 1.5:
+				if ct >= EAT_DUR:
 					var s: Dictionary = _script[int(c["serving"])]
 					var g := int(s["gold"])
 					_gold_shown += g
-					_gold_disp = maxf(_gold_disp, float(_gold_shown) - g * 0.9)
-					_pop = 0.18
+					_pop = POP_DUR
 					_served_shown += 1
 					if bool(s.get("match", false)):
 						_matched += 1
-					_plates.append({"kind": _dish_kind(String(s["dish"])), "match": bool(s.get("match", false))})
+					_plates.append({"kind": _dish_kind(String(s["dish"])),
+							"match": bool(s.get("match", false)), "t": 0.0})
 					_floats.append({"pos": Vector2(seat_x, cy - CUST_H + 12.0),
 							"text": "+%dG" % g, "col": GOLD, "t": 0.0})
+					_burst(Vector2(seat_x + 51.0, cy - 18.0), GOLD, 9.0, 33.0, 0.28)
 					_leave(c)
+			"up":
+				# 立ち上がる（席は既に空けてある＝次の客が歩き出せる）
+				var k3 := clampf(ct / STAND_DUR, 0.0, 1.0)
+				c["sit"] = 1.0 - _eo(k3)
+				if k3 >= 1.0:
+					c["state"] = "out"
+					c["t"] = 0.0
 			"out":
-				c["x"] = float(c["x"]) + 340.0 * delta * float(c["dir"])
+				# 加速して去る。ease-in なので歩き出しが柔らかい。
+				c["wt"] = float(c["wt"]) + delta
+				var spd := lerpf(70.0, 430.0, _ei(clampf(ct / 0.8, 0.0, 1.0)))
+				c["x"] = float(c["x"]) + spd * delta * float(c["dir"])
 	# 退店しきった客を消す
 	var keep: Array = []
 	for c in _custs:
-		if String(c["state"]) == "out" and (float(c["x"]) < -70.0 or float(c["x"]) > size.x + 70.0):
+		if String(c["state"]) == "out" and (float(c["x"]) < -80.0 or float(c["x"]) > size.x + 90.0):
 			continue
 		keep.append(c)
 	_custs = keep
+	_tick_noren(delta)
+	_tick_coins(delta)
 	# フロート寿命
 	for f in _floats:
 		f["t"] = float(f["t"]) + delta
 	while not _floats.is_empty() and float(_floats[0]["t"]) > 1.4:
 		_floats.pop_front()
-	# 全員はけて配膳も尽きたら、ひと呼吸おいて終了
+	# 伝票の皿（スロットへ落ちる演出の時計）
+	for p in _plates:
+		p["t"] = float(p.get("t", 9.0)) + delta
+	var bi := 0
+	while bi < _bursts.size():
+		_bursts[bi]["t"] = float(_bursts[bi]["t"]) + delta
+		if float(_bursts[bi]["t"]) >= float(_bursts[bi]["dur"]):
+			_bursts.remove_at(bi)
+		else:
+			bi += 1
+	# 全員はけて配膳も尽きたら、締めの演出をひと幕やってから終了
 	if _custs.is_empty() and _next >= _script.size() and _turnaway <= 0:
 		_end_t += delta
-		if _end_t >= 1.2:
-			_finish()
+		if _end_t >= 0.35:
+			if _close <= 0.0:
+				_burst(Vector2(size.x * 0.5, cy - 30.0), GOLD, 24.0, 210.0, 0.85)
+				_pop = POP_DUR
+			_close += delta
+			_wipe = _eio(clampf((_close - 0.10) / 0.95, 0.0, 1.0))
+			if _close >= CLOSE_DUR:
+				_finish()
 	queue_redraw()
+
+
+## 待っている間の仕草。時計を見る／隣と話す／体を揺らす／頭を掻く を
+## 一人ずつ違う間隔で回す。同時に同じ動きをすると「群れ」になってしまう。
+func _tick_gesture(c: Dictionary, delta: float) -> void:
+	var gc := float(c.get("gcur", 0.0))
+	if gc > 0.0:
+		c["gcur"] = maxf(gc - delta, 0.0)
+		return
+	var gt := float(c.get("gt", 1.0)) - delta
+	if gt <= 0.0:
+		var sq := int(c.get("gseq", 0))
+		c["g"] = sq % 4
+		c["gseq"] = sq + 1 + (int(c.get("seed", 0)) % 3)
+		c["gcur"] = 0.85
+		gt = 0.85 + float(int(c.get("seed", 0)) % 9) * 0.17
+	c["gt"] = gt
+
+
+## のれん。短冊ごとにバネで揺れ、客が潜ると押される＝「今、人が入ってきた」が読める。
+func _tick_noren(delta: float) -> void:
+	if _noren.size() < NOREN_N:
+		_noren = []
+		for i in NOREN_N:
+			_noren.append({"o": 0.0, "v": 0.0})
+	for i in NOREN_N:
+		var sx := _noren_x(i)
+		var push := 0.0
+		for c in _custs:
+			var st := String(c["state"])
+			if st != "in" and st != "out":
+				continue
+			var d := absf(float(c["x"]) - sx)
+			if d < 54.0:
+				push += float(c["dir"]) * (1.0 - d / 54.0) * 34.0
+		var n: Dictionary = _noren[i]
+		var v := float(n["v"])
+		var o := float(n["o"])
+		v += (push - o) * 34.0 * delta - v * 5.2 * delta
+		n["v"] = v
+		n["o"] = o + v * delta
+
+
+## チップのコイン。前半は放物線、後半は伝票のチップ欄へ吸い込まれる。
+func _tick_coins(delta: float) -> void:
+	var i := 0
+	while i < _coins.size():
+		var c: Dictionary = _coins[i]
+		var t := float(c["t"]) + delta
+		c["t"] = t
+		if t < 0.42:
+			var v: Vector2 = c["v"]
+			v.y += 900.0 * delta
+			c["v"] = v
+			c["p"] = (c["p"] as Vector2) + v * delta
+		else:
+			if not c.has("from"):
+				c["from"] = c["p"]      # 放物線の終端を吸い込みの起点にする
+			var k := clampf((t - 0.42) / 0.52, 0.0, 1.0)
+			c["p"] = (c["from"] as Vector2).lerp(c["tgt"] as Vector2, _eio(k))
+		if t >= 0.98:
+			_coins.remove_at(i)
+			_tip_pop = 0.42
+		else:
+			i += 1
+
+
+func _burst(pos: Vector2, col: Color, r0: float, r1: float, dur: float) -> void:
+	_bursts.append({"pos": pos, "t": 0.0, "col": col, "r0": r0, "r1": r1, "dur": dur})
+	while _bursts.size() > 12:
+		_bursts.pop_front()
 
 
 ## 席の x。等間隔だと「椅子を並べた工場」に見えるので seed で ±14px 崩す。
@@ -278,6 +518,12 @@ func _serve(c: Dictionary, tapped: bool) -> void:
 	_floats.append({"pos": Vector2(seat_x, cy - CUST_H + 30.0),
 			"text": String(s["dish"]) + ("　★予報的中" if bool(s.get("match", false)) else ""),
 			"col": CYAN if bool(s.get("match", false)) else TEXT, "t": 0.0})
+	# 吹き出しが消える瞬間を「弾けた」ことにする（ふっと消えると気づかれない）
+	var bub := Vector2(seat_x, cy - CUST_H - 42.0)
+	_burst(bub, GOLD if not tapped else Color(1.0, 0.94, 0.76), 12.0, 66.0, 0.34)
+	# 店番が身を乗り出して出す
+	_keeper_lunge = 1.0
+	_keeper_dir = signf(seat_x - size.x * KEEPER_X)
 	if tapped:
 		# 常連はチップ2倍——顔なじみは覚えていてくれる
 		var rate := 0.30 if bool(c.get("regular", false)) else 0.15
@@ -285,14 +531,25 @@ func _serve(c: Dictionary, tapped: bool) -> void:
 		_tips += tip
 		_floats.append({"pos": Vector2(seat_x, cy - CUST_H - 6.0),
 				"text": "チップ +%d" % tip, "col": GOLD, "t": 0.0})
+		c["joy"] = 0.72                    # 客が喜ぶ（手応え）
+		_tip_pop = 0.5
+		_burst(bub, GOLD, 20.0, 132.0, 0.46)
+		# コインが弾けて伝票のチップ欄へ吸い込まれる
+		var tgt := Vector2(size.x - 132.0, size.y - 66.0)
+		for i in 6:
+			var a := -PI * 0.82 + PI * 0.64 * (float(i) / 5.0)
+			var sp := 210.0 + float((int(c.get("seed", 0)) + i * 7) % 5) * 34.0
+			_coins.append({"p": bub, "v": Vector2(cos(a), sin(a)) * sp, "t": 0.0,
+					"tgt": tgt, "r": 6.0 + float(i % 3) * 1.5})
 		tip_tapped.emit()
 
 
+## 席は「立ち上がり」の開始で空ける。次の客が歩き出せるので流れが途切れない。
 func _leave(c: Dictionary) -> void:
 	_seats[int(c["seat"])] = false
-	c["state"] = "out"
+	c["state"] = "up"
 	c["t"] = 0.0
-	c["dir"] = 1.0 if float(c["x"]) > size.x * 0.5 else -1.0
+	c["dir"] = 1.0 if float(c["x"]) > size.x * 0.42 else -1.0
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -315,7 +572,7 @@ func _gui_input(event: InputEvent) -> void:
 	for c in _custs:
 		if String(c["state"]) != "wait":
 			continue
-		var r := Rect2(float(c["x"]) - 48.0, cy - CUST_H - 62.0, 96.0, CUST_H + 62.0)
+		var r := Rect2(float(c["x"]) - 54.0, cy - CUST_H - 84.0, 108.0, CUST_H + 84.0)
 		if r.has_point(p):
 			_serve(c, true)
 			accept_event()
@@ -359,9 +616,13 @@ func _draw() -> void:
 	for c in _custs:
 		_draw_customer(c, cy)
 
+	# ── 7b. のれん（客はこの後ろを潜って出入りする）──────────────────
+	_draw_noren(sz, art_top)
+
 	# ── 8. 前板（下半身を隠す）＋天面の光る前縁 ─────────────────────
 	_draw_apron(sz, cy)
 	_draw_edge(sz, cy)
+	_draw_wipe(sz, cy)
 
 	# ── 9. 天面の上のもの（席札・おしぼり・出された皿）────────────
 	_draw_counter_props(font, cy)
@@ -372,7 +633,8 @@ func _draw() -> void:
 	for f in _floats:
 		var ft := float(f["t"])
 		var a := clampf(1.0 - (ft - 0.9) / 0.5, 0.0, 1.0)
-		var pos: Vector2 = (f["pos"] as Vector2) + Vector2(0, -26.0 * ft)
+		# 立ち上がりは速く、上ほど減速して止まる（等速で流れると数字が読めない）
+		var pos: Vector2 = (f["pos"] as Vector2) + Vector2(0, -40.0 * _eo(ft / 1.1))
 		var col: Color = f["col"]
 		var s := String(f["text"])
 		var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.M)).x
@@ -398,7 +660,17 @@ func _draw() -> void:
 	# ── 14. ヘッダー（右端基点で右から積む）─────────────────────────
 	_draw_header(font, sz)
 
+	# ── 15. 粒子（チップのコイン・衝撃リング）──────────────────────
+	_draw_coins()
+	_draw_bursts()
+
 	_vignette(sz)
+	# 締めは暗く落として最後に灯りをひとつ残す（完全静止の黒画面を作らない）
+	if _close > 0.0:
+		var dim := _eio(clampf((_close - 1.05) / 1.3, 0.0, 1.0))
+		if dim > 0.0:
+			draw_rect(Rect2(Vector2.ZERO, sz), Color(0.02, 0.015, 0.04, dim * 0.34))
+			_glow(Vector2(sz.x * 0.5, q(sz.y * COUNTER_Y) - 150.0), sz.x * 0.5, LANT_WARM, 0.10 * (1.0 - dim))
 	_draw_ripples()
 
 
@@ -528,23 +800,49 @@ func _draw_backart(sz: Vector2, cy: float) -> void:
 
 # ── 提灯 ──────────────────────────────────────────────────────────────
 
+## 提灯ごとに炎の周期も揺れの周期も変える。同じ sin を共有すると、
+## 3つの灯りが「1枚の板」として点滅して見えてしまう。
+const LANT_F := [2.7, 3.35, 4.15, 5.3, 3.9]
+const LANT_G := [6.1, 7.7, 9.2, 5.9, 8.4]
+const LANT_S := [0.37, 0.44, 0.31, 0.52, 0.41]     # 揺れの周期
+
+
+func _flick(i: int) -> float:
+	var n := i % LANT_F.size()
+	return 1.0 + 0.055 * sin(_t * float(LANT_F[n]) + float(i) * 1.93) \
+			+ 0.032 * sin(_t * float(LANT_G[n]) + float(i) * 0.71)
+
+
+## 提灯の横揺れ（振り子）。芯の位置は動くが輝度は落とさない。
+func _lsway(i: int) -> float:
+	var n := i % LANT_S.size()
+	return round((sin(_t * float(LANT_S[n]) * TAU * 0.32 + float(i) * 2.27) * 1.15
+			+ 0.45 * sin(_t * float(LANT_S[n]) * TAU * 0.71 + float(i)))) * U
+
+
 ## 画面で最も明るい点はここ。芯を白に近い暖色で置き、周りへ光をこぼす。
 func _draw_lanterns(sz: Vector2, art_top: float, cy: float) -> void:
-	var flick := 1.0 + 0.05 * sin(_t * 3.1) + 0.03 * sin(_t * 7.7)
+	# 締めでは灯りを落として「店じまい」を作る（消しはしない）
+	var dim := 1.0 - 0.30 * _eio(clampf((_close - 1.0) / 1.2, 0.0, 1.0))
 	# 環境光は提灯より先に。芯の上に半透明を重ねると最明部が245を割る。
-	_glow(Vector2(sz.x * 0.5, cy - 150.0), sz.x * 0.75, LANT_WARM, 0.10)
-	_lantern(Vector2(q(sz.x * 0.22), 93.0), q(66.0), 20.0, flick)
-	_lantern(Vector2(q(sz.x * 0.50), 93.0), q(105.0), 26.0, 1.0 / flick)
-	_lantern(Vector2(q(sz.x * 0.78), 93.0), q(66.0), 20.0, flick * 0.98)
+	_glow(Vector2(sz.x * 0.5, cy - 150.0), sz.x * 0.75, LANT_WARM, 0.10 * dim)
+	_lantern(Vector2(q(sz.x * 0.22), 93.0), q(66.0), 20.0, _flick(0) * dim, _lsway(0))
+	_lantern(Vector2(q(sz.x * 0.50), 93.0), q(105.0), 26.0, _flick(1) * dim, _lsway(1))
+	_lantern(Vector2(q(sz.x * 0.78), 93.0), q(66.0), 20.0, _flick(2) * dim, _lsway(2))
 	# カウンター上の小さな灯（客の顔を起こす）
+	var li := 3
 	for fx in [0.20, 0.80]:
 		var lp := Vector2(q(sz.x * fx), q(art_top + 24.0))
-		_lantern(lp - Vector2(0, 24.0), 24.0, 13.0, flick)
+		# 小さい灯も 3px 単位で揺らす（係数で割ると 1.5px が出てグリッドが崩れる）
+		_lantern(lp - Vector2(0, 24.0), 24.0, 13.0, _flick(li) * dim, _lsway(li + 7))
+		li += 1
 
 
-func _lantern(top: Vector2, cord: float, r: float, flick: float) -> void:
+func _lantern(top: Vector2, cord: float, r: float, flick: float, sway := 0.0) -> void:
 	var by := q(top.y + cord)
-	draw_rect(Rect2(top.x - 1, top.y, 3, cord), Color(0.22, 0.16, 0.10))
+	# 紐は上端で固定、下端が揺れる＝振り子として読める
+	_pxdiag(Vector2(top.x, top.y), Vector2(top.x + sway, by), Color(0.22, 0.16, 0.10))
+	top = Vector2(top.x + sway, top.y)
 	var h := r * 2.6
 	var body := Color(0.92, 0.42, 0.26)
 	# 提灯の胴（縦に膨らんだ樽形）
@@ -657,6 +955,78 @@ func _draw_edge(sz: Vector2, cy: float) -> void:
 		i += 1
 
 
+## のれん（入口）。客はこの後ろを潜って出入りし、短冊は押されて揺れる。
+## 「今、人が入ってきた」を布の動きで先に知らせる＝出入りが唐突でなくなる。
+## 幅も色も控えめに。提灯より目立つ赤い面を作ると、画面の主役が入れ替わる。
+const NOREN_W := 96.0
+const NOREN_CLOTH := Color(0.245, 0.115, 0.105)
+const NOREN_RIM := Color(0.58, 0.32, 0.22)
+
+
+func _noren_x(i: int) -> float:
+	return q(size.x - NOREN_W + (float(i) + 0.5) * (NOREN_W / float(NOREN_N)))
+
+
+func _draw_noren(sz: Vector2, art_top: float) -> void:
+	if _noren.size() < NOREN_N:
+		return
+	var lift := _eo(clampf((_close - 0.45) / 0.95, 0.0, 1.0))       # 締めで巻き上げる
+	# 裾の高さは「立っている客の頭がかすめ、座った客には掛からない」位置に置く。
+	var y0 := q(art_top + 3.0 - lift * 21.0)
+	var full := 66.0
+	var hgt := q(full * (1.0 - lift * 0.86))
+	if hgt < U:
+		return
+	var pitch := NOREN_W / float(NOREN_N)
+	# 鴨居と竿（ここが入口の上端だと読ませる）
+	draw_rect(Rect2(q(sz.x - NOREN_W - 18.0), y0 - 15, q(NOREN_W + 24.0), 12), Color(0.155, 0.105, 0.075))
+	draw_rect(Rect2(q(sz.x - NOREN_W - 18.0), y0 - 15, q(NOREN_W + 24.0), 3), Color(0.32, 0.23, 0.14))
+	draw_rect(Rect2(q(sz.x - NOREN_W - 12.0), y0 - 3, q(NOREN_W + 18.0), 3), Color(0.42, 0.31, 0.18))
+	_glow(Vector2(sz.x - NOREN_W * 0.5, y0 + hgt * 0.4), 132.0, LANT_WARM, 0.07)
+	for i in NOREN_N:
+		var cxx := _noren_x(i)
+		# 押された量（バネ）＋その短冊固有のそよぎ
+		# 振れ幅は短冊の幅より小さく抑える。超えると布が裂けたように見える。
+		var o := clampf(float(_noren[i]["o"]), -18.0, 18.0)
+		var amb := sin(_t * (0.58 + float(i) * 0.11) + float(i) * 1.87) * 2.6 \
+				+ 0.8 * sin(_t * (1.31 + float(i) * 0.07) + float(i) * 0.9)
+		var yy := 0.0
+		while yy < hgt:
+			var f := yy / full                      # 下ほど大きく振れる（竿が支点）
+			var dx := q((o + amb) * pow(f, 1.45))
+			var band := NOREN_CLOTH.darkened(0.10 * sin(f * 3.4 + float(i)))
+			draw_rect(Rect2(q(cxx - pitch * 0.5 + dx + 1.5), q(y0 + yy), q(pitch - 3.0), U), band)
+			yy += U
+		# 上端の光る縁と、染め抜きの文字（短冊ごとに位置が違う＝布が別々に揺れて見える）
+		var dxt := q((o + amb) * pow(15.0 / full, 1.45))
+		draw_rect(Rect2(q(cxx - pitch * 0.5 + dxt + 1.5), q(y0), q(pitch - 3.0), 3), NOREN_RIM)
+		if hgt > 36.0:
+			# 染め抜きは1短冊に1文字ぶん。細い線を並べると縞に戻ってしまう。
+			var dxm := q((o + amb) * pow(30.0 / full, 1.45))
+			draw_rect(Rect2(q(cxx - pitch * 0.26 + dxm), q(y0 + 24.0), q(pitch * 0.52), q(15.0)),
+					Color(0.90, 0.85, 0.76, 0.82))
+			draw_rect(Rect2(q(cxx - pitch * 0.12 + dxm), q(y0 + 27.0), q(pitch * 0.24), 6),
+					NOREN_CLOTH.darkened(0.15))
+		var dxb := q((o + amb) * pow(hgt / full, 1.45))
+		draw_rect(Rect2(q(cxx - pitch * 0.5 + dxb + 1.5), q(y0 + hgt - 3.0), q(pitch - 3.0), 3),
+				Color(0.12, 0.05, 0.05, 0.75))
+
+
+## 締めの布巾。カウンターを拭いて、通った跡だけ天面が濡れて光る。
+func _draw_wipe(sz: Vector2, cy: float) -> void:
+	if _close <= 0.0 or _wipe <= 0.0 or _wipe >= 1.0:
+		return
+	var wx := q(lerpf(sz.x * 0.80, sz.x * 0.10, _wipe))
+	# 濡れた跡（布巾の後ろ側）
+	draw_rect(Rect2(wx, cy - SLAB_H + 3, q(sz.x * 0.80 - wx), SLAB_H - 6),
+			Color(1.0, 0.88, 0.62, 0.16 * (1.0 - _wipe)))
+	var flap: float = round(sin(_wipe * PI * 7.0) * 1.0) * U
+	draw_rect(Rect2(wx - 24, cy - SLAB_H - 6 + flap, 48, SLAB_H + 6), Color(0.84, 0.80, 0.70))
+	draw_rect(Rect2(wx - 24, cy - SLAB_H - 6 + flap, 48, 3), Color(0.96, 0.93, 0.86))
+	draw_rect(Rect2(wx - 24, cy - 6 + flap, 48, 3), Color(0.42, 0.38, 0.34))
+	_glow(Vector2(wx, cy - 9), 66.0, Color(1.0, 0.92, 0.74), 0.16)
+
+
 ## 天面の上：席札・おしぼり・出された皿。
 func _draw_counter_props(font: Font, cy: float) -> void:
 	var occupied := {}
@@ -674,6 +1044,14 @@ func _draw_counter_props(font: Font, cy: float) -> void:
 		draw_rect(Rect2(tc.x - 6, tc.y - 10.5, 2, 9), Color(0.78, 0.76, 0.72))
 		if not occupied.has(i):
 			continue
+		# 客がいる席の湯呑からは湯気が上がる。3px 単位で動く身体と違って
+		# ここは連続して動くので、どの客のそばにも「止まらないもの」が必ずある。
+		var sph := float(i) * 1.37
+		for k in 2:
+			var up := fmod(_t * (0.46 + float(i) * 0.045) + sph + float(k) * 0.5, 1.0)
+			var swy := sin(_t * (1.7 + float(i) * 0.23) + sph + float(k) * 2.0) * 3.5
+			draw_rect(Rect2(q(tc.x - 3.0 + k * 6.0 + swy), tc.y - 21.0 - up * 27.0, 2, 7.0 + up * 4.0),
+					Color(1, 1, 1, (0.20 - k * 0.06) * (1.0 - up) * (1.0 - up * 0.4)))
 		var c: Dictionary = occupied[i]
 		# 席札（常連＝この席の顔なじみ）
 		if bool(c.get("regular", false)):
@@ -686,40 +1064,72 @@ func _draw_counter_props(font: Font, cy: float) -> void:
 			draw_rect(Rect2(pr.position, Vector2(pr.size.x, 2)), Color(0.66, 0.50, 0.30))
 			draw_string(font, Vector2(pr.position.x + 7, pr.position.y + 11), nm,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.XS), Color(1.0, 0.90, 0.66))
-		# 出された皿。着地でグローと湯気が立つ＝「今この瞬間置かれた」が読める。
+		# 出された皿。放物線で飛んできて、着地で潰れて跳ね、湯気が吹き上がる。
 		if String(c["state"]) == "eat":
 			var s: Dictionary = _script[int(c["serving"])]
+			var ct := float(c["t"])
 			var p := _plate_pos(c, cy)
-			var land := clampf((float(c["t"]) - PLATE_FLY) / 0.45, 0.0, 1.0)
-			if land > 0.0:
-				_glow(p + Vector2(0, -6), lerpf(66.0, 24.0, land), Color(1.0, 0.88, 0.62),
-						(1.0 - land) * 0.42)
-			if bool(s.get("match", false)):
-				_glow(p + Vector2(0, -6), 42.0, CYAN, 0.28)
-			_dish(p, 33.0, _dish_kind(String(s["dish"])))
-			# 湯気（上へ上る半透明の小矩形×3）
-			if land > 0.05:
+			var land := clampf((ct - PLATE_FLY) / 0.45, 0.0, 1.0)
+			var fly := clampf(ct / PLATE_FLY, 0.0, 1.0)
+			# 飛んでいる間は動きの尾を引く（1コマだけ見えて消えるのを防ぐ）
+			if fly < 1.0:
 				for k in 3:
-					var wob := sin(_t * 1.9 + k * 2.1) * 6.0
-					draw_rect(Rect2(q(p.x - 9.0 + k * 9.0 + wob), q(p.y - 27.0 - k * 9.0), 3, 9),
-							Color(1, 1, 1, (0.22 - k * 0.05) * land))
+					var tp := _plate_pos({"seat": c["seat"], "t": maxf(ct - 0.035 * (k + 1), 0.0)}, cy)
+					_ellipse(tp, Vector2(13.0 - k * 2.0, 4.0), Color(1.0, 0.86, 0.58, 0.20 - k * 0.06))
+			if land > 0.0 and land < 1.0:
+				_glow(p + Vector2(0, -6), lerpf(78.0, 24.0, land), Color(1.0, 0.88, 0.62),
+						(1.0 - land) * 0.46)
+				# 着地の砂ぼこり（左右へ散る短い横棒）
+				for k2 in 2:
+					var sgn := -1.0 if k2 == 0 else 1.0
+					draw_rect(Rect2(q(p.x + sgn * (15.0 + 21.0 * land)), q(p.y + 3.0),
+							9, 2), Color(1.0, 0.90, 0.70, (1.0 - land) * 0.45))
+			if bool(s.get("match", false)):
+				_glow(p + Vector2(0, -6), 42.0, CYAN, 0.24 + 0.10 * sin(_t * 3.7 + x * 0.05))
+			# 着地の潰れ。皿だけスケールを掛けて重さを出す。
+			var sq := _plate_squash(ct)
+			if sq > 0.0:
+				draw_set_transform(p, 0.0, Vector2(1.0 + sq, 1.0 - sq * 0.8))
+				_dish(Vector2.ZERO, 33.0, _dish_kind(String(s["dish"])))
+				draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			else:
+				_dish(p, 33.0, _dish_kind(String(s["dish"])))
+			# 湯気：置かれた直後は勢いよく、そのあと細く長く上る
+			if land > 0.02:
+				var burst := 1.0 + (1.0 - land) * 1.6
+				for k3 in 3:
+					var wob := sin(_t * (1.55 + k3 * 0.37) + x * 0.031 + k3 * 2.1) * 6.0
+					var rise := (27.0 + k3 * 9.0) * burst
+					draw_rect(Rect2(q(p.x - 9.0 + k3 * 9.0 + wob), q(p.y - rise), 3, q(9.0 * burst)),
+							Color(1, 1, 1, (0.24 - k3 * 0.05) * clampf(land * 3.0, 0.0, 1.0)))
 
 
-const PLATE_FLY := 0.34      # 店番の手元から席へ皿が飛ぶ時間
+const PLATE_FLY := 0.40      # 店番の手元から席へ皿が飛ぶ時間
+const PLATE_BNC := 0.44      # 着地してから落ち着くまで
 
 
-## 皿の位置。落下は ease(pt, 2.4) で加速し、着地でいちど2pxめり込ませて戻す。
+## 皿の位置。店番の手元から放物線で飛び、着地で二度バウンドして止まる。
+## 横は ease-out（減速して置かれる）、縦は sin の弧＋減衰バウンド。
 ## 客の腕もここを終点にするので、皿と人が同じ1点を共有する。
 func _plate_pos(c: Dictionary, cy: float) -> Vector2:
 	var x := _seat_x(int(c["seat"]))
 	var t := float(c["t"])
 	var pt := clampf(t / PLATE_FLY, 0.0, 1.0)
-	var fall := ease(pt, 2.4)
-	var px := q(lerpf(size.x * KEEPER_X, x + 51.0, pt))
-	var sink := 0.0
+	var px := q(lerpf(size.x * KEEPER_X, x + 51.0, _eo(pt)))
+	var y0 := cy - 69.0                    # 店番の手元の高さ
+	var y1 := cy - 12.0                    # 天面
+	var py := lerpf(y0, y1, _eio(pt)) - 46.0 * sin(pt * PI)
 	if pt >= 1.0:
-		sink = sin(clampf((t - PLATE_FLY) / 0.16, 0.0, 1.0) * PI) * 2.0
-	return Vector2(px, cy - 12.0 - (1.0 - fall) * 24.0 + sink)
+		py = y1 - 15.0 * _bnc((t - PLATE_FLY) / PLATE_BNC)
+	return Vector2(px, py)
+
+
+## 着地の潰れ（横に広がって縦に縮む）。0 なら等倍。
+func _plate_squash(t: float) -> float:
+	var k := (t - PLATE_FLY) / 0.22
+	if k < 0.0 or k > 1.0:
+		return 0.0
+	return sin(k * PI) * 0.30
 
 
 # ── 客 ────────────────────────────────────────────────────────────────
@@ -762,8 +1172,11 @@ func _cust_spec(c: Dictionary) -> Dictionary:
 		0:  look = 1.0 if seat < 2 else -1.0                              # 隣を見る
 		1:  look = signf(KEEPER_X - float(SEAT_XS[seat]))                 # 店番を見る
 		_:  down = true                                                   # うつむく
+	# 立っている間は背が伸びる（座ると沈む）。下半身は前板に隠れるので、
+	# 「全高が変わる」ことが着席・起立の唯一の手がかりになる。
+	var sit: float = clampf(float(c.get("sit", 1.0)), 0.0, 1.15)
 	return {
-		"h": CUST_H * (float(POSE_H[pose]) + jitter),
+		"h": CUST_H * (float(POSE_H[pose]) + jitter) * (1.0 + 0.185 * (1.0 - sit)),
 		"sw": 27.0 * (float(POSE_W[pose]) + jitter * 0.6),
 		"hr": 21.0 * float(POSE_HEAD[pose]) * (0.96 + float((sd / 9) % 3) * 0.04),
 		"pose": pose,
@@ -777,24 +1190,68 @@ func _cust_spec(c: Dictionary) -> Dictionary:
 		"accent": c["scarf"],
 		"eat": 0.0,
 		"reach": Vector2.ZERO,
+		"lreach": Vector2.ZERO,
+		"leat": 0.0,
+		"chop": Vector2.ZERO,
+		"hdx": 0.0,
+		"hdy": 0.0,
+		"swing": 0.0,
 	}
 
 
+## 客一人の描画。歩く／座る／待つ／食べる／立つ をここで身体の形に落とす。
 func _draw_customer(c: Dictionary, cy: float) -> void:
 	var st := String(c["state"])
 	var walk := st == "in" or st == "out"
 	var x := q(float(c["x"]))
-	var bob: float = round(absf(sin(_t * 8.0)) * 2.0) * U if walk else round(absf(sin(_t * 1.6)) * 0.6) * U
-	var base: float = q(cy + 9.0) - bob
 	var sp := _cust_spec(c)
+	var ph: float = float(c.get("ph", 0.0))
+	var sit: float = clampf(float(c.get("sit", 1.0)), 0.0, 1.15)
+	var bob := 0.0
+	if walk:
+		# 歩行の上下動。歩調は一人ずつ違う（同じ拍で揃うと行進に見える）
+		var rate := 7.2 + float(int(c.get("seed", 0)) % 5) * 0.55
+		var wt := float(c.get("wt", 0.0))
+		bob = round(absf(sin(wt * rate + ph)) * 2.0) * U
+		sp["swing"] = sin(wt * rate + ph)      # 腕振り
+	else:
+		# 呼吸。3px 単位で -1/0/+1 段だけ動かす＝ドット絵の「息をしている」量。
+		# 3px の整数倍だけ動かす。1.5px を混ぜるとグリッドが崩れて絵がにじむ。
+		var br: float = float(c.get("br", 1.0))
+		bob = round(sin(_t * br + ph) * 0.7) * U
+		# 胴・頭・横揺れの周期を大きくずらす。近い周期だと三つが同時に止まり、
+		# 「息をしていない客」が 0.5 秒ぶん出てしまう。
+		sp["hdy"] = round(sin(_t * br * 1.63 + ph + 0.9) * 0.55) * U
+		sp["hdx"] = round(sin(_t * br * 0.47 + ph * 1.9) * 0.6) * U
+	var base: float = q(cy + 9.0 + (1.0 - sit) * 12.0) - bob
+	# 待っている間の仕草（時計を見る・隣と話す・体を揺らす・頭を掻く）
+	if st == "wait" or st == "deny":
+		_apply_gesture(c, sp, x, base, cy)
 	# 食べている間は腕の終点を皿へ寄せる。腕が届くだけで「その皿はこの人のもの」になる。
 	if st == "eat":
-		sp["eat"] = clampf((float(c["t"]) - 0.12) / 0.34, 0.0, 1.0)
-		sp["reach"] = _plate_pos(c, cy) + Vector2(-15.0, 6.0)
+		var et := float(c["t"])
+		var pp := _plate_pos(c, cy)
+		sp["eat"] = _eo(clampf((et - PLATE_FLY * 0.5) / 0.42, 0.0, 1.0))
+		# 皿↔口を往復する（箸を運ぶ）。1回ごとに頭が少し落ちる。
+		var bite := clampf((et - PLATE_FLY - 0.20) / (EAT_DUR - PLATE_FLY - 0.25), 0.0, 1.0)
+		var cyc := _eio(absf(sin(bite * PI * 2.6)))
+		var mouth := Vector2(x + float(sp["hr"]) * 0.5, base - float(sp["h"]) + float(sp["hr"]) * 1.9)
+		sp["reach"] = (pp + Vector2(-15.0, 6.0)).lerp(mouth, cyc * 0.88)
+		sp["chop"] = pp + Vector2(-6.0, -6.0)      # 箸の先は器の中
+		sp["hdy"] = float(sp["hdy"]) + round(cyc * 1.4) * U
+		sp["hdx"] = float(sp["hdx"]) + round((1.0 - cyc) * 1.2) * U   # 器へ身を寄せる
 		sp["look"] = 0.0
 		sp["down"] = true
-	# 影（天面に落ちる接地影）
-	draw_rect(Rect2(x - float(sp["sw"]) - 6, cy - SLAB_H, float(sp["sw"]) * 2.0 + 12, 3), Color(0, 0, 0, 0.35))
+	# タップ給仕の反応：肩を上げて喜ぶ
+	var joy: float = float(c.get("joy", 0.0))
+	if joy > 0.0:
+		var jk := sin(clampf(joy / 0.72, 0.0, 1.0) * PI * 3.0) * (joy / 0.72)
+		base -= round(absf(jk) * 1.4) * U
+		sp["hdy"] = float(sp["hdy"]) - round(absf(jk) * 1.0) * U
+	base = q(base)
+	# 影（天面に落ちる接地影）。立ち上がると薄く広がる。
+	draw_rect(Rect2(x - float(sp["sw"]) - 6, cy - SLAB_H, float(sp["sw"]) * 2.0 + 12, 3),
+			Color(0, 0, 0, 0.35 - 0.14 * (1.0 - sit)))
 	# 濃い輪郭 → 暖色のリムライト → 本体
 	for o in [Vector2(-3, 0), Vector2(3, 0), Vector2(0, -3), Vector2(0, 3)]:
 		_person(x + o.x, base + o.y, sp, INK, true)
@@ -802,6 +1259,33 @@ func _draw_customer(c: Dictionary, cy: float) -> void:
 	for o2 in [Vector2(0, -3), Vector2(-3, -3)]:
 		_person(x + o2.x, base + o2.y, sp, RIM, true)
 	_person(x, base, sp, INK, false)
+
+
+## 仕草を身体の形に落とす。env は 0→1→0 の山なので入りも抜けも滑らか。
+func _apply_gesture(c: Dictionary, sp: Dictionary, x: float, base: float, _cy: float) -> void:
+	var gc := float(c.get("gcur", 0.0))
+	if gc <= 0.0:
+		return
+	var gp := 1.0 - gc / 0.85
+	var env := sin(clampf(gp, 0.0, 1.0) * PI)
+	var h: float = sp["h"]
+	var hr: float = sp["hr"]
+	var head := Vector2(x, base - h + hr * 1.4)
+	match int(c.get("g", 0)):
+		0:   # 時計を見る（左手を顔の前へ・目線を落とす）
+			sp["lreach"] = head + Vector2(-hr * 0.9, hr * 0.9)
+			sp["leat"] = env
+			sp["down"] = true
+		1:   # 隣と話す（首を振ってうなずく）
+			sp["look"] = float(sp["look"]) * 0.2 + signf(sin(float(c.get("ph", 0.0)) * 3.0)) * 0.9
+			sp["hdx"] = float(sp["hdx"]) + round(env * 1.2) * U
+			sp["hdy"] = float(sp["hdy"]) + round(absf(sin(gp * PI * 3.0)) * env * 1.2) * U
+		2:   # 体を揺らす（退屈）
+			sp["hdx"] = float(sp["hdx"]) + round(sin(gp * PI * 2.0) * env * 1.6) * U
+		_:   # 頭を掻く
+			sp["lreach"] = head + Vector2(-hr * 1.1, -hr * 1.0)
+			sp["leat"] = env
+			sp["hdy"] = float(sp["hdy"]) + round(env * 0.8) * U
 
 
 ## 手続き描画の人。骨格（pose）・目線（look）・持ち物（prop）が客ごとに違う。
@@ -819,8 +1303,8 @@ func _person(x: float, base: float, sp: Dictionary, flat: Color, use_flat: bool)
 	var skin: Color = flat if use_flat else sp["skin"]
 	var top := base - h
 	var slope: float = POSE_SLOPE[pose]
-	var hx := x + float(POSE_HEADDX[pose]) * (0.6 if down else 1.0)
-	var hcy := top + hr + 3.0 + (3.0 if pose == POSE_STOOP else 0.0)
+	var hx := x + float(POSE_HEADDX[pose]) * (0.6 if down else 1.0) + float(sp.get("hdx", 0.0))
+	var hcy := top + hr + 3.0 + (3.0 if pose == POSE_STOOP else 0.0) + float(sp.get("hdy", 0.0))
 	var sy := top + hr * 2.0 + 12.0 * float(POSE_NECK[pose])   # 肩の高さ
 	var style := int(sp["style"])
 
@@ -843,21 +1327,33 @@ func _person(x: float, base: float, sp: Dictionary, flat: Color, use_flat: bool)
 			Vector2(hx - 10.5, sy - 15), Vector2(x - sw, sy + 3 + slope), Vector2(x - sw * 0.95, base),
 			Vector2(x + sw * 0.95, base), Vector2(x + sw, sy + 3 + slope), Vector2(hx + 10.5, sy - 15)]), cloth)
 	if not use_flat:
-		# 服の陰影と前立て（べた塗りを避けて布に見せる）
+		# 服の陰影と前立て（べた塗りを避けて布に見せる）。
+		# 頭が前傾・横揺れすると肩口の頂点が前立てを追い越して自己交差する
+		# ＝三角形分割が失敗して陰影が丸ごと消える。順序を保証しておく。
+		var v5x := x - sw * 0.42
+		var v1x := minf(hx - 10.5, v5x - 3.0)
 		draw_colored_polygon(PackedVector2Array([
-				Vector2(hx - 10.5, sy - 15), Vector2(x - sw, sy + 3 + slope), Vector2(x - sw * 0.95, base),
-				Vector2(x - sw * 0.45, base), Vector2(x - sw * 0.42, sy - 6)]),
+				Vector2(v1x, sy - 15), Vector2(x - sw, sy + 3 + slope), Vector2(x - sw * 0.95, base),
+				Vector2(x - sw * 0.45, base), Vector2(v5x, sy - 6)]),
 				Color(0, 0, 0, 0.20))
 		draw_rect(Rect2(x - 2, sy - 6, 4, base - sy + 6), cloth.darkened(0.35))
 		draw_rect(Rect2(x - sw * 0.55, sy - 4 + slope * 0.4, 6, 4), cloth.lightened(0.25))
 		draw_rect(Rect2(x + sw * 0.55 - 6, sy - 4 + slope * 0.4, 6, 4), cloth.lightened(0.25))
 	# 腕。通常は天面へ、食事中は右腕の終点を皿へ寄せる（＝皿と人が繋がる）。
+	# 歩行中は肩を支点に前後へ振る。仕草では左腕が顔や頭へ届く。
 	var arm_y := base - 27.0
+	var swing: float = sp.get("swing", 0.0)
+	var lreach: Vector2 = sp.get("lreach", Vector2.ZERO)
+	var leat: float = sp.get("leat", 0.0)
 	for s in [-1.0, 1.0]:
 		var sh := Vector2(x + s * (sw - 3), sy + slope * 0.6)
 		var hand := Vector2(x + s * (sw + 4.5), arm_y)
+		if swing != 0.0:
+			hand += Vector2(swing * s * 9.0, -absf(swing) * 4.5)
 		if eat > 0.0 and s > 0.0 and reach != Vector2.ZERO:
 			hand = hand.lerp(reach, eat)
+		if leat > 0.0 and s < 0.0 and lreach != Vector2.ZERO:
+			hand = hand.lerp(lreach, leat)
 		var d := (hand - sh)
 		if d.length() < 1.0:
 			d = Vector2(0, 1)
@@ -866,6 +1362,18 @@ func _person(x: float, base: float, sp: Dictionary, flat: Color, use_flat: bool)
 				cloth.darkened(0.28))
 		if not use_flat:
 			draw_rect(Rect2(q(hand.x - 7.5), q(hand.y - 7.5), 15, 10.5), skin)
+		# 箸。手と器を繋ぐ細い2本。手が動くたびに角度が変わるので、
+		# 3px 単位で止まりがちな身体に「連続して動くもの」がひとつ増える。
+		var chop: Vector2 = sp.get("chop", Vector2.ZERO)
+		if s > 0.0 and chop != Vector2.ZERO and eat > 0.35:
+			var cd := (chop - hand).normalized()
+			var cn := Vector2(-cd.y, cd.x) * 2.0
+			for k in 2:
+				var off := cn * (1.0 if k == 0 else -1.0)
+				draw_colored_polygon(PackedVector2Array([
+						hand + off, hand + off + cn * 0.6,
+						chop + off * 0.4 + cn * 0.6, chop + off * 0.4]),
+						flat if use_flat else Color(0.78, 0.66, 0.44))
 	# 顔
 	_pxcircle(Vector2(hx, hcy), int(round(hr / U)), skin)
 	draw_rect(Rect2(hx - hr * 0.72, hcy, hr * 1.44, hr * 0.9), skin)
@@ -913,10 +1421,12 @@ func _person_prop(sp: Dictionary, hx: float, hcy: float, hr: float, x: float, sw
 			draw_rect(Rect2(q(sx), q(arm_y - 12.0), 9, 4), flat if use_flat else Color(0.90, 0.88, 0.82))
 			draw_rect(Rect2(q(sx + 9), q(arm_y - 12.0), 4, 4), flat if use_flat else Color(1.0, 0.52, 0.22))
 			if not use_flat:
+				var sph := x * 0.041
 				for k in 3:
-					var wob := sin(_t * 1.3 + k * 1.7) * 6.0
-					draw_rect(Rect2(q(sx + 9 + wob), q(arm_y - 24.0 - k * 12.0), 3, 8),
-							Color(1, 1, 1, 0.16 - k * 0.04))
+					var wob := sin(_t * (1.12 + float(k) * 0.29) + sph + float(k) * 1.7) * 7.0
+					var up := fmod(_t * 0.42 + sph + float(k) * 0.33, 1.0)
+					draw_rect(Rect2(q(sx + 9 + wob), q(arm_y - 21.0 - k * 12.0 - up * 21.0), 3, 8),
+							Color(1, 1, 1, (0.17 - k * 0.045) * (1.0 - up * 0.7)))
 		_:
 			pass
 
@@ -963,22 +1473,47 @@ func _draw_bubble(font: Font, c: Dictionary, cy: float) -> void:
 		return
 	var x := q(float(c["x"]))
 	var sp := _cust_spec(c)
+	var ph: float = float(c.get("ph", 0.0))
 	var top := q(cy + 9.0) - float(sp["h"])
 	var bw := 78.0
 	var bh := 66.0
-	var by := q(top - bh - 18.0)
-	var pulse := 0.5 + 0.5 * sin(_t * 5.0)
+	# 客ごとに違う周期でふわりと上下する（全部同じだと看板に見える）
+	var float_y: float = round(sin(_t * (2.05 + fmod(ph, 0.6)) + ph * 2.3) * 1.2) * U
+	var by := q(top - bh - 18.0 + float_y)
+	var pulse := 0.5 + 0.5 * sin(_t * (4.4 + fmod(ph, 1.3)) + ph)
 	var accent := GOLD if st == "wait" else DENY
 	var bx := clampf(q(x - bw * 0.5), 6.0, size.x - bw - 6.0)
 	var r := Rect2(bx, by, bw, bh)
+	# 出るときは弾んで開く。ぱっと出るとプレイヤーの目が拾えない。
+	# スケール 0 は多角形が潰れて三角形分割に失敗する。最小値を残す。
+	var pin := maxf(_eob(clampf(float(c.get("bt", 1.0)) / 0.24, 0.0, 1.0)), 0.08)
+	var piv := Vector2(x, by + bh + 15.0)
+	if pin < 0.999:
+		draw_set_transform(piv, 0.0, Vector2(pin, pin))
+		_bubble_body(font, c, st, Rect2(r.position - piv, r.size), Vector2(x, by) - piv, accent, pulse)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		return
 	_glow(Vector2(x, by + bh * 0.5), 78.0, accent, 0.14 + 0.12 * pulse)
+	_bubble_body(font, c, st, r, Vector2(x, by), accent, pulse)
+
+
+## 吹き出しの中身。ポップイン中は draw_set_transform 下で同じ形を描く。
+func _bubble_body(font: Font, c: Dictionary, st: String, r: Rect2, anchor: Vector2,
+		accent: Color, pulse: float) -> void:
+	var bx := r.position.x
+	var by := r.position.y
+	var bw := r.size.x
+	var bh := r.size.y
+	var x := anchor.x
 	# しっぽ
 	draw_colored_polygon(PackedVector2Array([Vector2(x - 10.5, by + bh - 3), Vector2(x + 10.5, by + bh - 3),
 			Vector2(x + 1.5, by + bh + 18)]), Color(0.97, 0.95, 0.92, 0.97))
 	_panel(r, Color(0.97, 0.95, 0.92, 0.97), Color(accent.r, accent.g, accent.b, 0.5 + 0.5 * pulse), 10, 2.0)
 	if st == "wait":
 		var s: Dictionary = _script[int(c["serving"])]
-		_dish(Vector2(bx + bw * 0.5, by + bh * 0.62), 54.0, _dish_kind(String(s["dish"])), true)
+		# 器も少し呼吸する（客ごとに位相違い）
+		var dz := 54.0 + sin(_t * 3.1 + float(c.get("ph", 0.0)) * 2.0) * 1.6
+		_dish(Vector2(bx + bw * 0.5, by + bh * 0.62), dz, _dish_kind(String(s["dish"])), true)
 		if bool(s.get("match", false)):
 			_pxcircle(Vector2(bx + bw - 15, by + 15), maxi(int(round((10.0) / U)), 1), Color(0.20, 0.62, 0.78))
 			_sh(font, Vector2(bx + bw - 21, by + 20), "★", int(FS.XS), Color(0.95, 1.0, 1.0))
@@ -990,16 +1525,24 @@ func _draw_bubble(font: Font, c: Dictionary, cy: float) -> void:
 # ── 店番 ──────────────────────────────────────────────────────────────
 
 func _draw_keeper(sz: Vector2, cy: float) -> void:
-	var kx := q(sz.x * KEEPER_X)
-	_glow(Vector2(kx, cy - KEEPER_H * 0.55), 150.0, LANT_WARM, 0.24)
+	# 配膳の瞬間は席の方へ身を乗り出し、締めではカウンターを拭く動きに合わせて動く。
+	var lean := _eo(clampf(_keeper_lunge * 2.4, 0.0, 1.0)) * _keeper_lunge * _keeper_dir
+	# 締めの布巾は行って戻る。片道だけだと拭き終わりに店番がずれたまま残る。
+	var wipe_off := sin(clampf(_wipe, 0.0, 1.0) * PI) * 42.0 if _close > 0.0 else 0.0
+	var kx := q(sz.x * KEEPER_X + lean * 26.0 - wipe_off)
+	# 立ち仕事の重心移動（提灯とも客とも違う周期）
+	var kbob: float = round(sin(_t * 1.13 + 0.8) * 0.6) * U - round(absf(lean) * 1.6) * U
+	_glow(Vector2(kx, cy - KEEPER_H * 0.55), 150.0, LANT_WARM, 0.24 + 0.10 * _keeper_lunge)
 	if _keeper_frames.is_empty():
 		return
-	var tex: Texture2D = _keeper_frames[int(_t * 3.0) % _keeper_frames.size()]
+	# 出す瞬間だけコマ送りを速める＝手が動いている
+	var fr := _t * (3.0 + 5.0 * _keeper_lunge)
+	var tex: Texture2D = _keeper_frames[int(fr) % _keeper_frames.size()]
 	if tex == null:
 		return
 	var kh := q(KEEPER_H)
 	var kw := q(kh * tex.get_width() / float(tex.get_height()))
-	var kr := Rect2(q(kx - kw * 0.5), q(cy - 12.0 - kh), kw, kh)
+	var kr := Rect2(q(kx - kw * 0.5), q(cy - 12.0 - kh + kbob), kw, kh)
 	# 足元の影
 	draw_rect(Rect2(kr.position.x + 6, cy - 18, kr.size.x - 12, 6), Color(0, 0, 0, 0.45))
 	draw_texture_rect(tex, kr, false)
@@ -1165,15 +1708,17 @@ func _draw_floor(sz: Vector2, cy: float, floor_y: float, rec_top: float) -> void
 	# 光柱は暗幕の上に落とす（下に敷くと自分の落とす影に消される）
 	var lant_fx := [0.22, 0.50, 0.78]
 	for li in 3:
-		var lx := q(sz.x * float(lant_fx[li]))
+		# 提灯の揺れがそのまま光柱の根元を動かす（灯りと床が繋がって見える）
+		var lx := q(sz.x * float(lant_fx[li]) + _lsway(li) * 0.7)
 		var col_h := h * (0.90 if li == 1 else 0.66)
 		var base_w := 21.0 if li == 1 else 15.0
-		var peak := 0.30 if li == 1 else 0.20
+		var peak := (0.30 if li == 1 else 0.20) * (0.92 + 0.08 * _flick(li))
+		var wr: float = [0.62, 0.83, 0.71][li]
 		var yy := floor_y
 		while yy < floor_y + col_h:
 			var f := (yy - floor_y) / maxf(col_h, 1.0)
 			var wdt := q(base_w * lerpf(1.0, 1.6, f))
-			var wob := sin(f * 5.2 + _t * 0.8 + li * 2.1) * 12.0 * f
+			var wob := sin(f * (4.4 + li * 0.7) + _t * wr + li * 2.1) * 12.0 * f
 			var a := (1.0 - f) * (1.0 - f) * peak
 			draw_rect(Rect2(q(lx - wdt * 0.5 + wob), yy, wdt, U), Color(1.0, 0.74, 0.40, a))
 			yy += U
@@ -1196,7 +1741,11 @@ func _draw_floor(sz: Vector2, cy: float, floor_y: float, rec_top: float) -> void
 			for k in cols:
 				var vx := q(sz.x * (k + 0.5) / cols + (i % 2) * 18.0)
 				draw_rect(Rect2(vx, ly, 1.5, minf(39.0, rec_top - ly)), Color(1, 1, 1, 0.028))
-	_draw_cat(Vector2(q(sz.x * (0.5 + 0.30 * sin(_t * 0.25))), q(rec_top - 27.0)))
+	# 猫は等速で往復しない。歩いては立ち止まる（三角波を丸めた進み方）。
+	var cph := _t * 0.22
+	var cwalk := sin(cph) * 0.82 + sin(cph * 3.0) * 0.12
+	_draw_cat(Vector2(q(sz.x * (0.5 + 0.32 * cwalk)), q(rec_top - 27.0)),
+			cos(cph) * 0.82 + cos(cph * 3.0) * 0.36)
 	# 手前の荷（蒸籠と木箱）— 前景のシルエットで奥行きを作り、黒い平面を潰す
 	_draw_seiro(Vector2(q(sz.x * 0.13), rec_top - 6.0))
 	_draw_crates(Vector2(q(sz.x * 0.87), rec_top - 6.0))
@@ -1224,13 +1773,15 @@ func _draw_seiro(base: Vector2) -> void:
 	draw_rect(Rect2(base.x - 57, ty - 15, 114, 3), rim.lightened(0.12))
 	for k in 5:
 		draw_rect(Rect2(q(base.x - 45.0 + k * 21.0), ty - 12, 3, 12), Color(0, 0, 0, 0.22))
-	# 立ちのぼる湯気
+	# 立ちのぼる湯気（1本ずつ周期も上る速さも違う。同期すると簾のように見える）
 	var top := base.y - 6.0 - 4 * 21.0 - 18.0
-	for k in 3:
-		var w2 := sin(_t * 1.6 + k) * 6.0
-		draw_rect(Rect2(q(base.x - 18.0 + k * 18.0 + w2), q(top - 18.0 - k * 6.0), 3, 15),
-				Color(1, 1, 1, 0.07))
-	_glow(Vector2(base.x, top), 96.0, LANT_WARM, 0.06)
+	for k in 4:
+		var fr := 0.71 + float(k) * 0.23
+		var w2 := sin(_t * fr + float(k) * 2.4) * 7.5 + 2.5 * sin(_t * fr * 2.3 + float(k))
+		var up := fmod(_t * (0.30 + 0.07 * k) + float(k) * 0.27, 1.0)
+		draw_rect(Rect2(q(base.x - 24.0 + k * 16.0 + w2), q(top - 12.0 - k * 6.0 - up * 42.0),
+				3, q(15.0 + up * 9.0)), Color(1, 1, 1, 0.09 * (1.0 - up)))
+	_glow(Vector2(base.x, top), 96.0, LANT_WARM, 0.06 + 0.012 * sin(_t * 1.41 + 0.7))
 
 
 ## 酒箱の山。
@@ -1255,16 +1806,23 @@ func _draw_crates(base: Vector2) -> void:
 
 
 ## 店名の主・黒猫。土間をゆっくり往復し、尻尾だけがネオンの間で揺れる。
-func _draw_cat(pos: Vector2) -> void:
-	var dirx: float = signf(cos(_t * 0.25))
+func _draw_cat(pos: Vector2, vel := 1.0) -> void:
+	var dirx: float = signf(vel) if absf(vel) > 0.06 else 1.0
+	var mov := clampf(absf(vel), 0.0, 1.0)
 	var body := Color(0.035, 0.032, 0.055)
+	# 歩いている時だけ体が上下する（止まっている猫は止まる）
+	pos.y -= round(absf(sin(_t * 4.3)) * mov * 1.0) * U
 	draw_rect(Rect2(pos.x - 27, pos.y + 8, 54, 6), Color(0, 0, 0, 0.4))
 	_ellipse(pos, Vector2(24, 12), body)
 	# 脚（歩いている）
 	for s in [-1.0, 1.0]:
-		draw_rect(Rect2(pos.x + s * 12.0 - 3, pos.y + 4, 6, 10), body)
+		var lg: float = round(sin(_t * 4.3 + (0.0 if s < 0.0 else PI)) * mov * 1.0) * U
+		draw_rect(Rect2(pos.x + s * 12.0 - 3, pos.y + 4 + lg * 0.5, 6, 10 - lg * 0.5), body)
 	var hx := pos.x + 20.0 * dirx
-	_pxcircle(Vector2(hx, pos.y - 9), maxi(int(round((10.5) / U)), 1), body)
+	# 立ち止まると耳が動く
+	var ear: float = round(sin(_t * 1.9) * (1.0 - mov) * 1.2) * U
+	pos.y += ear * 0.0
+	_pxcircle(Vector2(hx, pos.y - 9 - ear * 0.5), maxi(int(round((10.5) / U)), 1), body)
 	draw_colored_polygon(PackedVector2Array([Vector2(hx - 9, pos.y - 14),
 			Vector2(hx - 3, pos.y - 25), Vector2(hx + 1, pos.y - 13)]), body)
 	draw_colored_polygon(PackedVector2Array([Vector2(hx + 9, pos.y - 14),
@@ -1272,7 +1830,7 @@ func _draw_cat(pos: Vector2) -> void:
 	draw_rect(Rect2(q(hx + 1.5 * dirx), q(pos.y - 12), 4, 4), Color(1.0, 0.82, 0.4, 0.95))
 	draw_rect(Rect2(q(hx - 6.0 * dirx), q(pos.y - 12), 4, 4), Color(1.0, 0.82, 0.4, 0.75))
 	var tx := pos.x - 21.0 * dirx
-	var sway := sin(_t * 2.2) * 7.5
+	var sway := sin(_t * 2.2) * 7.5 + sin(_t * 3.7 + 1.2) * 3.5
 	_pxdiag(Vector2(tx, pos.y - 3), Vector2(tx - 14.0 * dirx + sway * 0.4, pos.y - 24 - absf(sway) * 0.4),
 			body)
 
@@ -1305,12 +1863,15 @@ func _draw_receipt(font: Font, r: Rect2) -> void:
 	var pb := Rect2(r.position.x + 18, hy + 12, r.size.x - 36, 6)
 	draw_rect(pb, Color(0, 0, 0, 0.45))
 	draw_rect(Rect2(pb.position, Vector2(pb.size.x, 1.5)), Color(1, 1, 1, 0.08))
-	var frac := clampf(float(_served_shown) / maxf(_total, 1.0), 0.0, 1.0)
-	if frac > 0.0:
-		var fw := maxf(pb.size.x * frac, 6.0)
+	# 伸びるのは実数ではなく追従値。跳ねずに、しかし遅れて伸びる。
+	if _frac_disp > 0.0:
+		var fw := maxf(pb.size.x * _frac_disp, 6.0)
 		draw_rect(Rect2(pb.position, Vector2(fw, pb.size.y)), GOLD)
 		draw_rect(Rect2(pb.position, Vector2(fw, 2)), Color(1.0, 0.94, 0.72))
-		_glow(Vector2(pb.position.x + fw, pb.position.y + 3), 33.0, GOLD, 0.45)
+		# 先端が走る（伸びている最中だけ明るい）
+		var frac := clampf(float(_served_shown) / maxf(_total, 1.0), 0.0, 1.0)
+		var run := clampf((frac - _frac_disp) * 14.0, 0.0, 1.0)
+		_glow(Vector2(pb.position.x + fw, pb.position.y + 3), 33.0 + 30.0 * run, GOLD, 0.45 + 0.35 * run)
 
 	# 皿のスロット（今夜の客数ぶん。埋まった順に料理アイコン）
 	var gy := r.position.y + r.size.y - 33.0
@@ -1335,12 +1896,23 @@ func _draw_receipt(font: Font, r: Rect2) -> void:
 		var cyy := q(oy + int(i / cols) * pitch + pitch * 0.5)
 		if i < _plates.size():
 			var pl: Dictionary = _plates[i]
+			# スロットへ「落ちて入る」。上から降りてきて、縁が一度光る。
+			var age := float(pl.get("t", 9.0))
+			var dk := clampf(age / 0.46, 0.0, 1.0)
+			var drop := q(-30.0 * (1.0 - _eo(dk)) + 12.0 * _bnc(dk))
+			var flash := clampf(1.0 - age / 0.55, 0.0, 1.0)
+			var sc := Vector2(cx, cyy + drop)
+			if dk < 1.0:
+				_glow(sc, ring * (2.6 + 2.0 * (1.0 - dk)), GOLD, 0.30 * flash)
 			if bool(pl["match"]):
-				_glow(Vector2(cx, cyy), ring * 2.2, CYAN, 0.30)
-				_pxring(Vector2(cx, cyy), ru, Color(CYAN.r, CYAN.g, CYAN.b, 0.9))
+				_glow(sc, ring * 2.2, CYAN, 0.30)
+				_pxring(sc, ru, Color(CYAN.r, CYAN.g, CYAN.b, 0.9))
 			else:
-				_pxring(Vector2(cx, cyy), ru, Color(1, 1, 1, 0.16))
-			_dish(Vector2(cx, cyy + pitch * 0.13), pitch * 0.62, int(pl["kind"]))
+				_pxring(sc, ru, Color(1, 1, 1, 0.16 + 0.70 * flash))
+			_dish(Vector2(sc.x, sc.y + pitch * 0.13), pitch * 0.62, int(pl["kind"]))
+			if flash > 0.0:
+				_pxring(Vector2(cx, cyy), maxi(int(round(ring * (1.0 + 1.6 * (1.0 - flash)) / U)), 2),
+						Color(1.0, 0.92, 0.66, flash * 0.5), 1)
 		else:
 			# 未配膳＝伏せた空皿。これから埋まる余白として読ませる
 			_pxring(Vector2(cx, cyy), ru, Color(1, 1, 1, 0.11))
@@ -1350,17 +1922,28 @@ func _draw_receipt(font: Font, r: Rect2) -> void:
 	# 売上（大きく・コイン付き・カウントアップ）
 	draw_rect(Rect2(r.position.x + 18, gy - 63, r.size.x - 36, 1.5), Color(1, 1, 1, 0.10))
 	var coin := Vector2(r.position.x + 45.0, gy - 21.0)
-	var pk := 1.0 if _pop <= 0.0 else 1.0 + 0.25 * sin((1.0 - _pop / 0.18) * PI)
-	_glow(coin, 60.0, GOLD, 0.22)
-	draw_set_transform(coin, 0.0, Vector2(pk, pk))
+	# 加算の瞬間は減衰バネで跳ねる（山を1つ描くだけだと「大きくなった」で終わる）
+	var pk := 1.0
+	if _pop > 0.0:
+		var u := POP_DUR - _pop
+		pk = 1.0 + 0.26 * exp(-7.0 * u) * cos(u * 26.0)
+	var dpop := _eo(clampf(_digit_pop / 0.55, 0.0, 1.0)) * (_digit_pop / 0.55)
+	pk += dpop * 0.22                                   # 桁が増えた瞬間はさらに大きく
+	_glow(coin, 60.0 + 60.0 * dpop, GOLD, 0.22 + 0.35 * dpop)
+	draw_set_transform(coin, sin(_t * 0.9) * 0.02 + dpop * 0.30, Vector2(pk, pk))
 	_coin(Vector2.ZERO, 21.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	var gs := "%d" % int(round(_gold_disp))
 	var gw := font.get_string_size(gs, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.XL)).x
 	var gp := Vector2(coin.x + 36.0, gy)
+	if dpop > 0.0:
+		_pxring(Vector2(gp.x + gw * 0.5, gp.y - 15.0),
+				maxi(int(round(lerpf(90.0, 24.0, dpop) / U)), 2), Color(1.0, 0.94, 0.70, dpop * 0.55), 1)
 	draw_set_transform(gp, 0.0, Vector2(pk, pk))
 	draw_string(font, Vector2(2, 3), gs, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.XL), Color(0, 0, 0, 0.6))
-	draw_string(font, Vector2.ZERO, gs, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.XL), Color(1.0, 0.88, 0.52))
+	# 桁が増えた瞬間だけ白へ寄せる＝夜の格が一段上がった合図
+	var gcol := Color(1.0, 0.88, 0.52).lerp(Color(1.0, 1.0, 0.94), dpop)
+	draw_string(font, Vector2.ZERO, gs, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.XL), gcol)
 	draw_string(font, Vector2(gw + 6, -2), "G", HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.L), Color(0.85, 0.66, 0.34))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	_sh(font, Vector2(coin.x - 21.0, gy - 51.0), "今夜の売上", int(FS.XS), TEXT_DIM)
@@ -1378,9 +1961,56 @@ func _draw_receipt(font: Font, r: Rect2) -> void:
 	var ts := ("チップ +%dG" % _tips) if _tips > 0 else "チップ　—"
 	var tcol := GOLD if _tips > 0 else TEXT_DIM
 	var tw := font.get_string_size(ts, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.M)).x
+	# コインが着いた瞬間に跳ねる＝タップの手応えがここまで繋がる
+	var tk := 1.0
+	if _tip_pop > 0.0:
+		var tu := 0.5 - _tip_pop
+		tk = 1.0 + 0.30 * exp(-8.0 * tu) * cos(tu * 30.0)
 	if _tips > 0:
-		_glow(Vector2(stamp.x - 39.0 - tw * 0.5, gy - 15), 90.0, GOLD, 0.14)
-	_sh(font, Vector2(stamp.x - 39.0 - tw, gy - 9), ts, int(FS.M), tcol)
+		_glow(Vector2(stamp.x - 39.0 - tw * 0.5, gy - 15), 90.0 + 60.0 * _tip_pop, GOLD, 0.14 + 0.30 * _tip_pop)
+	var tp := Vector2(stamp.x - 39.0 - tw, gy - 9)
+	draw_set_transform(tp, 0.0, Vector2(tk, tk))
+	draw_string(font, Vector2(1, 1), ts, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.M), Color(0, 0, 0, 0.55))
+	draw_string(font, Vector2.ZERO, ts, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.M), tcol)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	# 締めの木札（最後の客が帰ったあと、画面を静止させないための一手）
+	_draw_closing(font, r, Vector2(gp.x + gw * 0.5, gp.y - 18.0))
+
+
+## 締め：木札が上から落ちてバウンドし、売上に光の輪が広がる。
+func _draw_closing(font: Font, r: Rect2, gold_at: Vector2) -> void:
+	if _close <= 0.0:
+		return
+	var k := clampf((_close - 0.75) / 0.85, 0.0, 1.0)
+	if k <= 0.0:
+		return
+	# 売上を一度だけ大きく囲む
+	var rk := clampf((_close - 0.75) / 0.9, 0.0, 1.0)
+	if rk < 1.0:
+		_pxring(gold_at, maxi(int(round(lerpf(30.0, 190.0, _eo(rk)) / U)), 2),
+				Color(1.0, 0.92, 0.66, (1.0 - rk) * (1.0 - rk) * 0.55), 1)
+	var txt := "完売御礼" if _served_shown >= maxi(_total, 1) else "本日の営業 終了"
+	var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.M)).x
+	var pw := q(tw + 48.0)
+	var ph := 45.0
+	var ty := r.position.y - 60.0
+	# 落ちて弾む（等速で降りると「板が滑り込んだ」に見える）
+	var y := ty - 96.0 * (1.0 - _eo(k)) + 15.0 * _bnc(k)
+	var px := q(r.position.x + (r.size.x - pw) * 0.5)
+	var tilt := sin(k * PI * 3.0) * (1.0 - k) * 0.06
+	draw_rect(Rect2(px + pw * 0.5 - 2, y - 24, 4, 24), Color(0.34, 0.26, 0.15))
+	draw_set_transform(Vector2(px + pw * 0.5, y), tilt, Vector2.ONE)
+	var lr := Rect2(-pw * 0.5, 0, pw, ph)
+	draw_rect(Rect2(lr.position + Vector2(3, 5), lr.size), Color(0, 0, 0, 0.5))
+	draw_rect(lr, Color(0.44, 0.33, 0.19))
+	draw_rect(Rect2(lr.position, Vector2(pw, 3)), Color(0.70, 0.55, 0.32))
+	draw_rect(Rect2(lr.position.x, lr.position.y + ph - 3, pw, 3), Color(0.16, 0.11, 0.07))
+	draw_string(font, Vector2(-tw * 0.5 + 1, 31), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.M),
+			Color(0, 0, 0, 0.5))
+	draw_string(font, Vector2(-tw * 0.5, 30), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.M),
+			Color(1.0, 0.93, 0.74))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	_glow(Vector2(px + pw * 0.5, y + ph * 0.5), 132.0, GOLD, 0.14 * k)
 
 
 func _coin(c: Vector2, r: float) -> void:
@@ -1498,13 +2128,18 @@ func _plate(c: Vector2, s: float) -> void:
 	_ellipse(Vector2(c.x, c.y - u * 0.3), Vector2(s * 0.30, u * 1.0), Color(0.96, 0.94, 0.92))
 
 
+## 湯気。位置から位相と周期を作る＝画面に並んだ器が一斉に同じ揺れをしない。
 func _steam(c: Vector2, s: float) -> void:
 	var u := s / 12.0
-	var w := sin(_t * 3.0) * u * 0.5
+	var ph := c.x * 0.037 + c.y * 0.021
+	var fr := 2.4 + fmod(absf(c.x) * 0.013 + absf(c.y) * 0.007, 1.5)
+	var w := sin(_t * fr + ph) * u * 0.55
+	var rise := fmod(_t * (0.5 + fr * 0.1) + ph, 1.0)      # 立ちのぼって消える周期
 	for i in 2:
 		var sx := c.x - s * 0.16 + i * s * 0.32 + w * (1.0 if i == 0 else -1.0)
-		draw_rect(Rect2(q(sx), c.y - u * 4.4, 2, u * 1.4), Color(1, 1, 1, 0.22))
-		draw_rect(Rect2(q(sx + 2), c.y - u * 5.8, 2, u * 1.2), Color(1, 1, 1, 0.14))
+		var dy := rise * u * 1.6
+		draw_rect(Rect2(q(sx), c.y - u * 4.4 - dy, 2, u * 1.4), Color(1, 1, 1, 0.24 * (1.0 - rise * 0.5)))
+		draw_rect(Rect2(q(sx + 2), c.y - u * 5.8 - dy, 2, u * 1.2), Color(1, 1, 1, 0.16 * (1.0 - rise)))
 
 
 # ── ヘッダー ──────────────────────────────────────────────────────────
@@ -1658,10 +2293,45 @@ func _draw_ripples() -> void:
 			continue
 		var e := 1.0 - pow(1.0 - k, 2.0)
 		var p: Vector2 = _ripples[i]["pos"]
-		var r := lerpf(10.0, 46.0, e)
-		_pxcircle(p, maxi(int(round(r / U)), 1), Color(1, 1, 1, (1.0 - k) * 0.06))
-		_pxring(p, maxi(int(round(r / U)), 1), Color(1, 1, 1, (1.0 - k) * 0.30))
+		var r := lerpf(9.0, 60.0, e)
+		_pxcircle(p, maxi(int(round(r / U)), 1), Color(1, 1, 1, (1.0 - k) * 0.07))
+		_pxring(p, maxi(int(round(r / U)), 1), Color(1, 1, 1, (1.0 - k) * 0.42), 1)
+		# 二重の輪（遅れて追いかける）で「押した」感触を強くする
+		var k2 := clampf(k * 1.8 - 0.35, 0.0, 1.0)
+		if k2 > 0.0 and k2 < 1.0:
+			_pxring(p, maxi(int(round(lerpf(6.0, 33.0, 1.0 - pow(1.0 - k2, 2.0)) / U)), 1),
+					Color(1.0, 0.90, 0.66, (1.0 - k2) * 0.34), 1)
 		i += 1
+
+
+## チップのコイン。回転を横幅で表し、伝票のチップ欄へ吸い込まれて消える。
+func _draw_coins() -> void:
+	for c in _coins:
+		var p: Vector2 = c["p"]
+		var t := float(c["t"])
+		var a := clampf(1.0 - (t - 0.72) / 0.26, 0.0, 1.0)
+		var rr: float = c["r"]
+		var spin := absf(cos(t * 15.0 + rr))
+		var w := maxf(q(rr * 2.0 * spin), U)
+		var h := q(rr * 2.0)
+		_glow(p, rr * 4.5, GOLD, 0.22 * a)
+		draw_rect(Rect2(q(p.x - w * 0.5), q(p.y - h * 0.5), w, h), Color(0.62, 0.42, 0.14, a))
+		draw_rect(Rect2(q(p.x - w * 0.5), q(p.y - h * 0.5 + U), w, maxf(h - U * 2.0, U)),
+				Color(1.0, 0.84, 0.36, a))
+		draw_rect(Rect2(q(p.x - w * 0.5), q(p.y - h * 0.5 + U), maxf(w * 0.4, U), U),
+				Color(1.0, 0.96, 0.74, a))
+
+
+## 衝撃の輪。配膳・タップ・締めの「今」を1点に集める。
+func _draw_bursts() -> void:
+	for b in _bursts:
+		var k := clampf(float(b["t"]) / float(b["dur"]), 0.0, 1.0)
+		var e := _eo(k)
+		var r := lerpf(float(b["r0"]), float(b["r1"]), e)
+		var a := (1.0 - k) * (1.0 - k)
+		var col: Color = b["col"]
+		_pxring(b["pos"], maxi(int(round(r / U)), 1), Color(col.r, col.g, col.b, a * 0.55), 1)
+		_glow(b["pos"], r * 1.15, col, a * 0.16)
 
 
 ## 影付きテキスト。
