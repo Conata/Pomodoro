@@ -846,9 +846,19 @@ func _on_mob_killed(m: Dictionary) -> void:
 	var g := int(KuroData.GOLD_PER_KILL * sc * gold_mult() * gain_mult() \
 			* (10.0 if m["boss"] else (3.0 if m["elite"] else 1.0)))
 	state["gold"] = int(state["gold"]) + g
+	var got_ing := ""
+	var got_n := 0
 	if rng.chance(mat_chance()):
-		var ing := String(KuroData.BIOMES[current_floor() % KuroData.BIOMES.size()]["ing"])
-		run["mats"][ing] = int(run["mats"][ing]) + maxi(1, int(gain_mult()))
+		got_ing = String(KuroData.BIOMES[current_floor() % KuroData.BIOMES.size()]["ing"])
+		got_n = maxi(1, int(gain_mult()))
+		run["mats"][got_ing] = int(run["mats"][got_ing]) + got_n
+	# 撃破は2.5秒に1回起きている。UI が「+3G」「素材+1」を出せるように必ず知らせる
+	# （数字が動いたのに画面が黙っている状態を作らない）。
+	_emit("kill", "", {
+		"gold": g, "ing": got_ing, "ing_n": got_n,
+		"elite": bool(m["elite"]), "boss": bool(m["boss"]),
+		"kills": int(run["kills"]),
+	})
 	if rng.chance(discover_chance()) or m["boss"]:
 		_acquire_item(SimItems.roll(rng, current_floor(), _next_id()))
 	if m["elite"] and rng.chance(KuroData.ELITE_BOX_CHANCE):
@@ -876,7 +886,8 @@ func _end_combat() -> void:
 		var scl: Dictionary = state["stage_clear"]
 		var dk := str(int(state.get("difficulty", 0)))
 		scl[dk] = maxi(int(scl.get(dk, -1)), fl)
-		_emit("gate", "ステージ %s 突破。欠落を埋めた——ボス箱は送付済み" % KuroData.stage_label(fl))
+		_emit("gate", "ステージ %s 突破。欠落を埋めた——ボス箱は送付済み" % KuroData.stage_label(fl),
+				{"floor": fl + 1, "label": KuroData.stage_label(fl)})
 		_maybe_drop_memory(int(state["best_floor"]))
 	for id in divers():
 		if float(state["hp"].get(id, 0.0)) <= 0.0:

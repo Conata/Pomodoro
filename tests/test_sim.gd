@@ -594,3 +594,22 @@ func _test_sync_level() -> void:
 	sim2.abandon_run()
 	sim2.start_run("pomo", 25.0, 0.0)
 	check(sim2.sync_level() == 1, "次の潜航では Lv.1 に戻る")
+	# クッキークリッカーの原則：状態が動いたら必ずイベントが出る（UIが描けるように）
+	var sim3 := _fresh(79)
+	sim3.start_run("pomo", 25.0, 0.0)
+	var kill_ev := 0
+	var floor_ev := 0
+	var gold_seen := 0
+	for i in int(300.0 / KuroData.SIM_DT):
+		sim3.step(KuroData.SIM_DT)
+		for e in sim3.drain_events():
+			match String(e.get("kind", "")):
+				"kill":
+					kill_ev += 1
+					gold_seen += int(e.get("gold", 0))
+				"gate":
+					floor_ev += 1
+					check(int(e.get("floor", -1)) > 0, "gate が到達階を運ぶ")
+	check(kill_ev > 50, "撃破ごとに kill イベントが出る（5分で%d回）" % kill_ev)
+	check(gold_seen > 0, "kill イベントが獲得金を運ぶ（計%dG）" % gold_seen)
+	check(floor_ev >= 1, "階層突破で gate イベントが出る（%d回）" % floor_ev)
