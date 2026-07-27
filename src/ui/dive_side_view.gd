@@ -120,7 +120,6 @@ var _pops: Array = []        # 撃破の破裂 {p, t0, elite, boss}
 #   ① 直前に技（fx イベント）が飛んだ＝決め手の一撃
 #   ② その数字が直近の移動平均を明確に超えた＝装備や同期率で火力が跳ねた瞬間
 # 数字そのものは sim の値をそのまま出す。大きさと白さの判定だけがUIの仕事。
-var _dmg_ema := 0.0
 var _fx_t := -9.9
 var _lv_t := -9.9            # レベルアップ時刻（足元からの光柱）
 var _lv_res := false         # その回が共鳴（Lv3/6/9/12）かどうか＝光柱の格を上げる
@@ -279,10 +278,9 @@ func add_events(events: Array) -> void:
 					# 与ダメ：sim は必ず隊列の先頭（mobs[0]）を削るので、斬撃も数字も
 					# スロット0に落とす（＝画面の因果と sim の因果を一致させる）。
 					var slot := 0
-					# 会心＝技の直後、または火力が跳ねた一撃。色は足さず「白く・大きく」で差を作る。
-					var crit := (_t - _fx_t) < 0.35 \
-							or (_dmg_ema > 0.0 and float(val) > _dmg_ema * 1.20)
-					_dmg_ema = float(val) if _dmg_ema <= 0.0 else lerpf(_dmg_ema, float(val), 0.35)
+					# 会心は sim が拍ごとに判定してフラグで流してくる。推測しない。
+					# （以前は「技の直後」「火力が跳ねた」で当てにいっていたが外れる）
+					var crit := bool(e.get("crit", false))
 					# 同じ場所に積まないよう横も縦もばらす（重なると数字が読めなくなる）
 					_floaters.append({"txt": ("%d!" % val) if crit else str(val),
 							"col": Color(1, 1, 1) if crit else Color(0.93, 0.95, 1.0),

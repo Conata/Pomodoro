@@ -13,7 +13,6 @@ var state: Dictionary = {}
 var rng := SimRNG.new()
 var events: Array = []
 var _hurt_expr_cd := {}   # {girl_id: float} 被弾表情の連打防止（非保存）
-var _dmg_pop_cd := 0.0    # 敵ダメージポップの連打防止
 
 
 func _init(p_state: Dictionary = {}) -> void:
@@ -428,7 +427,7 @@ func start_run(mode: String, minutes: float, anchor: float, task: String = "") -
 		"boxes": [], "mats": {"dry": 0, "meat": 0, "sea": 0},
 		"gold0": int(state["gold"]), "kills": 0,
 		"resyncs": 0, "door_pending": 0.0, "banked": 0,
-		"sync_xp": 0, "sync_lv": 1,
+		"sync_xp": 0, "sync_lv": 1, "crit_beat": 0.0,
 	}
 	state["hp"] = {}
 	for id in divers():
@@ -469,6 +468,9 @@ func step(dt: float) -> void:
 
 const QUANT := 0.0001
 
+## 会心を判定する拍の間隔（秒）。ダメージポップの間隔も兼ねる。
+const CRIT_BEAT := 0.8
+
 
 ## 蓄積する浮動小数を毎ステップ固定グリッドへスナップする。
 ## JSON往復で double の最下位ビットがずれても次のステップで自己修復し、
@@ -480,6 +482,8 @@ func _quantize() -> void:
 	var run: Dictionary = state["run"]
 	run["elapsed"] = snappedf(float(run["elapsed"]), QUANT)
 	run["door_pending"] = snappedf(float(run["door_pending"]), QUANT)
+	if run.has("crit_beat"):
+		run["crit_beat"] = snappedf(float(run["crit_beat"]), QUANT)
 	for id in state["hp"]:
 		state["hp"][id] = snappedf(float(state["hp"][id]), QUANT)
 	for id in state["cds"]:
@@ -630,7 +634,6 @@ func _combat_step(dt: float) -> void:
 	var dps := 0.0
 	for id in alive:
 		dps += girl_atk(id)
-	dps *= crit_mult()
 	dps *= sync_atk_mult()   # 同期率レベルぶんの伸び（画面のレベル表示と一致させる）
 	# ムュウの歌（たまに全体回復）
 	if "muu" in alive and rng.chance(0.06 * dt / 0.2):
@@ -652,10 +655,21 @@ func _combat_step(dt: float) -> void:
 		for id in alive:
 			state["hp"][id] = minf(girl_maxhp(id), float(state["hp"][id]) + girl_maxhp(id) * 0.012 * dt)
 	_damage_mobs(dps * dt)
-	_dmg_pop_cd = maxf(0.0, _dmg_pop_cd - dt)
-	if _dmg_pop_cd <= 0.0 and not state["mobs"].is_empty():
-		_emit("dmg_pop", "", {"at": "enemy", "val": int(dps * 0.8)})
-		_dmg_pop_cd = 0.8
+	# 会心は「拍」で判定する。CRIT_BEAT 秒ごとにロールし、当たればその拍のぶんを上乗せ
+	# ＝その一撃が倍になる。確率 p = crit_mult()-1 なので期待値は従来の平坦な倍率と同じで、
+	# バランスを変えずに「今のが会心だった」という事実だけを作れる。
+	var run: Dictionary = state["run"]
+	var beat := float(run.get("crit_beat", 0.0)) - dt
+	if beat <= 0.0 and not state["mobs"].is_empty():
+		beat += CRIT_BEAT
+		var p := clampf(crit_mult() - 1.0, 0.0, 0.9)
+		var is_crit := rng.chance(p)
+		var val := dps * CRIT_BEAT
+		if is_crit:
+			_damage_mobs(val)   # 上乗せぶん。この拍だけ2倍になる
+			val *= 2.0
+		_emit("dmg_pop", "", {"at": "enemy", "val": int(val * 0.8), "crit": is_crit})
+	run["crit_beat"] = beat
 	if state["mobs"].is_empty():
 		return
 	# 敵攻撃は盾（隊列順の先頭＝ミルがいれば必ずミル）へ。守護で被弾-25%

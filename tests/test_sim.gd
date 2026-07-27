@@ -613,3 +613,24 @@ func _test_sync_level() -> void:
 	check(kill_ev > 50, "撃破ごとに kill イベントが出る（5分で%d回）" % kill_ev)
 	check(gold_seen > 0, "kill イベントが獲得金を運ぶ（計%dG）" % gold_seen)
 	check(floor_ev >= 1, "階層突破で gate イベントが出る（%d回）" % floor_ev)
+	# 会心は「拍」単位の事実として流れる（UIが推測で描かなくて済むように）
+	var sim4 := _fresh(80)
+	sim4.start_run("pomo", 25.0, 0.0)
+	var pops := 0
+	var crits := 0
+	var crit_val := 0
+	var norm_val := 0
+	for i in int(600.0 / KuroData.SIM_DT):
+		sim4.step(KuroData.SIM_DT)
+		for e in sim4.drain_events():
+			if String(e.get("kind", "")) == "dmg_pop" and String(e.get("at", "")) == "enemy":
+				pops += 1
+				if bool(e.get("crit", false)):
+					crits += 1
+					crit_val = maxi(crit_val, int(e.get("val", 0)))
+				else:
+					norm_val = maxi(norm_val, int(e.get("val", 0)))
+	check(pops > 20, "敵ダメージの拍が流れる（%d回）" % pops)
+	check(crits > 0, "会心フラグの立った拍がある（%d回）" % crits)
+	check(crits < pops, "全部が会心にはならない")
+	check(crit_val > norm_val, "会心の拍は数字が大きい（%d > %d）" % [crit_val, norm_val])
