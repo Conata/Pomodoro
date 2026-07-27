@@ -183,6 +183,31 @@ static func slab_edge(ci: CanvasItem, rect: Rect2, col: Color, skew := 10.0, wid
 	ci.draw_polyline(p, col, width)
 
 
+## 斜めカットの「面」。角丸パネル panel() の置き換えで、全画面の面はこれに寄せる。
+## 影（黒板を1枚ずらす）→ 面 → 縦グラデ → 天面ハイライト → 罫 の順。
+## skew<0 で DS.skew(高さ) を使う＝傾き量を各描画点で決めさせない。
+static func slab_panel(ci: CanvasItem, rect: Rect2, bg: Color, border: Color, skew := -1.0,
+		bw := 1.5) -> void:
+	var sk := DS.skew(rect.size.y) if skew < 0.0 else skew
+	# 影：ぼかしではなく黒い板を1枚ずらす（紙を叩きつけた感じ＝形が一致する）
+	if bg.a >= 0.55 and rect.size.y > 20.0:
+		slab(ci, Rect2(rect.position + Vector2(0.0, 5.0), rect.size), Color(0, 0, 0, 0.45), sk)
+	slab(ci, rect, bg, sk)
+	# 縦グラデ（上＝面の折り返し／下＝影に沈む）。矩形テクスチャだと角がはみ出すので頂点色で。
+	ci.draw_polygon(PackedVector2Array([
+			Vector2(rect.position.x + sk, rect.position.y),
+			Vector2(rect.end.x, rect.position.y),
+			Vector2(rect.end.x - sk, rect.end.y),
+			Vector2(rect.position.x, rect.end.y)]),
+			PackedColorArray([Color(1, 1, 1, 0.06), Color(1, 1, 1, 0.06),
+			Color(0, 0, 0, 0.16), Color(0, 0, 0, 0.16)]))
+	# 天面ハイライト（1pxの折り返し）
+	ci.draw_line(Vector2(rect.position.x + sk + 3.0, rect.position.y + 1.5),
+			Vector2(rect.end.x - 3.0, rect.position.y + 1.5), Color(1, 1, 1, 0.07), 1.0)
+	if border.a > 0.02:
+		slab_edge(ci, rect, border, sk, bw)
+
+
 ## 斜めの地紋。無情報の平面を1cmも残さないための縞。
 static func hatch(ci: CanvasItem, rect: Rect2, col: Color, spacing := 26.0, width := 9.0) -> void:
 	var h := rect.size.y
@@ -300,12 +325,12 @@ static func panel(ci: CanvasItem, rect: Rect2, bg: Color, border: Color, radius 
 	ci.draw_style_box(line, rect)
 
 
-## アクセントの強い主役ボタン面（CTA）。panel＋強めの二重グロー。
-static func cta(ci: CanvasItem, rect: Rect2, bg: Color, accent: Color, pulse := 0.0, radius := 16.0) -> void:
+## アクセントの強い主役ボタン面（CTA）。斜めの面＋強めの二重グロー。
+static func cta(ci: CanvasItem, rect: Rect2, bg: Color, accent: Color, pulse := 0.0) -> void:
 	# 大きめの下敷きグロー
 	var g := Color(accent.r, accent.g, accent.b, 0.10 + 0.10 * pulse)
 	ci.draw_texture_rect(_glow(), rect.grow(26), false, g)
-	panel(ci, rect, bg, Color(accent.r, accent.g, accent.b, 0.65 + 0.3 * pulse), radius, 2.0)
+	slab_panel(ci, rect, bg, Color(accent.r, accent.g, accent.b, 0.65 + 0.3 * pulse), -1.0, 2.0)
 
 
 # ── 画面の地（背景・ビネット・ヘッダー帯）──────────────────────────────
@@ -596,6 +621,21 @@ static func press_sink(age: float, depth := 3.0) -> float:
 	return depth * (1.0 - out_back((age - PRESS_DOWN) / (PRESS_LIFE - PRESS_DOWN), 2.2))
 
 
+## 押下中なら「沈んだ矩形」を返す（押されていなければそのまま返す）。
+## 即時モード描画の各点で1行呼べば、押し込みが全ヒット領域へ届く：
+##     var dr := Kit.sunk(r, _press, _t)   # 描くのは dr
+##     _hit(r, id)                          # 当たり判定は最終位置のまま
+## press は各オーバーレイが持つ直近の押下 {"rect": Rect2, "t0": float}。
+static func sunk(rect: Rect2, press: Dictionary, now: float, depth := 3.0) -> Rect2:
+	if press.is_empty():
+		return rect
+	var pr: Rect2 = press.get("rect", Rect2())
+	if not pr.position.is_equal_approx(rect.position) or not pr.size.is_equal_approx(rect.size):
+		return rect
+	var s := press_sink(now - float(press.get("t0", -9.0)), depth)
+	return rect if is_zero_approx(s) else Rect2(rect.position + Vector2(0.0, s), rect.size)
+
+
 ## 押下フィードバック。押せる場所は押した瞬間に必ず応える（3状態目）。
 ## 「点いて消える」だけにしないため、2相にする：
 ##   相1（沈む）  枠が内側へ締まり、上端に影が差す＝指の下へ入り込む
@@ -607,29 +647,24 @@ static func press(ci: CanvasItem, rect: Rect2, col: Color, k: float) -> void:
 	var age := (1.0 - clampf(k, 0.0, 1.0)) * PRESS_LIFE
 	var sink := press_sink(age)
 	var r := Rect2(rect.position + Vector2(0.0, sink), rect.size)
+	var sk := DS.skew(rect.size.y)
 	if age < PRESS_DOWN:
 		# 沈む：枠を内へ締めて、上端に落ち影（へこんだ面）
 		var t := out_cubic(age / PRESS_DOWN)
 		var inset := 2.4 * t
-		var sb := StyleBoxFlat.new()
-		sb.bg_color = Color(0, 0, 0, 0.20 * t)
-		sb.set_corner_radius_all(8)
-		sb.border_color = Color(col.r, col.g, col.b, 0.55 + 0.45 * t)
-		sb.set_border_width_all(2)
-		ci.draw_style_box(sb, r.grow(-inset))
-		ci.draw_line(r.position + Vector2(6.0, 1.0), Vector2(r.end.x - 6.0, r.position.y + 1.0),
+		var ir := r.grow(-inset)
+		slab(ci, ir, Color(0, 0, 0, 0.20 * t), sk)
+		slab_edge(ci, ir, Color(col.r, col.g, col.b, 0.55 + 0.45 * t), sk, 2.0)
+		ci.draw_line(r.position + Vector2(sk + 4.0, 1.0), Vector2(r.end.x - 6.0, r.position.y + 1.0),
 				Color(0, 0, 0, 0.42 * t), 3.0)
 		return
 	# 戻る：out_back で外へ行き過ぎてから収束。白の面は素早く抜き、輪だけ残す
 	var u := clampf((age - PRESS_DOWN) / (PRESS_LIFE - PRESS_DOWN), 0.0, 1.0)
 	var grow := -2.4 + 8.2 * out_back(u, 2.2)
 	var a := 1.0 - out_cubic(u)
-	var sb2 := StyleBoxFlat.new()
-	sb2.bg_color = Color(1, 1, 1, 0.16 * a * a)
-	sb2.set_corner_radius_all(8)
-	sb2.border_color = Color(col.r, col.g, col.b, 0.95 * a)
-	sb2.set_border_width_all(2)
-	ci.draw_style_box(sb2, r.grow(grow))
+	var gr := r.grow(grow)
+	slab(ci, gr, Color(1, 1, 1, 0.16 * a * a), sk)
+	slab_edge(ci, gr, Color(col.r, col.g, col.b, 0.95 * a), sk, 2.0)
 
 
 ## 解放の瞬間。光の輪が拡がり、放射が飛ぶ（改装ノード・購入の着弾）。

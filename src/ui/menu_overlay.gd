@@ -10,14 +10,16 @@ signal action_pressed(id: String)
 const PINK := Color(1.0, 0.36, 0.72)
 const CYAN := Color(0.35, 0.92, 1.0)
 const PURPLE := Color(0.66, 0.4, 1.0)
-const GOLD := Color(1.0, 0.82, 0.4)
-const GREEN := Color(0.45, 0.9, 0.5)
+const GOLD := DS.GOLD          # 状態色・獲得
+const GREEN := DS.SUCCESS      # 状態色・成功
 const TEXT := Color(0.96, 0.95, 0.98)
 const TEXT_DIM := Color(0.75, 0.76, 0.84)
 const BG := Color(0.05, 0.05, 0.08, 1.0)
 
 const HEADER_H := 84.0
 const FOOTER_H := 58.0
+# 外側マージンは全画面で 16（DS.SP_4）。12/14/20 の場当たりは置かない。
+const M := DS.SP_4
 
 # フッターナビ（home_overlay と揃える）。
 const NAV := [
@@ -92,10 +94,14 @@ var _sheet := "closed"     # closed / opening / open / closing
 var _sheet_t := 9.0
 var _vis_guard := false    # visible を自分で書き換える間の再入防止
 var _xf_now := Vector2.ZERO   # いまの描画原点（押下の沈み込みが基準にする）
+var _sink_ofs := Vector2.ZERO # いま掛かっている押下の沈み込み（入れ子の復元用）
 var _c_ofs := Vector2.ZERO    # 中身レイヤのオフセット（シート開閉ぶん）
 var _enter_i := 0             # 描画中に消費するスタガー番号
 var _nav: Dictionary = {}     # フッター選択インジケータの追従台帳（Kit.nav_slide）
 var _selbar: Dictionary = {}  # メンバー6人チップの選択帯の追従台帳（同上）
+var _selg_t := -99.0          # メンバー詳細カードの切替時刻（差し替えにモーションを付ける）
+var _selg_dir := 1.0          # その切替がどちらへ動いたか（＋右／−左）
+const SELG_DUR := 0.30        # 詳細カードが滑り込む時間
 var _toast_age := 9.0         # トースト表示開始からの経過秒（出入りのモーション用）
 
 
@@ -211,7 +217,13 @@ func _gui_input(event: InputEvent) -> void:
 ## 画面内だけで完結する操作（選択ハイライトなど）。
 func _local(id: String) -> void:
 	if id.begins_with("_selg:"):
-		_sel_girl = id.substr(6)
+		var nxt := id.substr(6)
+		if nxt != _sel_girl:
+			# 詳細カードは瞬間差し替えしない。選択が動いた向きから滑り込ませる
+			var ids: Array = KuroData.GIRL_ORDER
+			_selg_dir = 1.0 if ids.find(nxt) >= ids.find(_sel_girl) else -1.0
+			_selg_t = _t
+		_sel_girl = nxt
 		queue_redraw()
 	elif id.begins_with("_panel:"):
 		if panel != id.substr(7):
@@ -366,17 +378,30 @@ func _sink(r: Rect2) -> Vector2:
 
 
 ## 押下の沈み込みを、この矩形に属する描画すべてに掛ける。必ず _end_sink() で戻す。
-func _begin_sink(r: Rect2) -> void:
+## 入れ子（行の中のボタン）でも壊れないよう、直前のオフセットを返す＝
+##     var pv := _begin_sink(r) ... _end_sink(pv)
+func _begin_sink(r: Rect2) -> Vector2:
+	var prev := _sink_ofs
 	var s := _sink(r)
 	if s != Vector2.ZERO:
+		_sink_ofs = s
 		Kit.set_xf(self, _xf_now + s)
+	return prev
 
 
-func _end_sink() -> void:
-	Kit.set_xf(self, _xf_now)
+func _end_sink(prev := Vector2.ZERO) -> void:
+	_sink_ofs = prev
+	Kit.set_xf(self, _xf_now + prev)
 
 
-func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
+## 面はすべて斜めカット（Kit.slab_panel）。角丸は全画面から外した。
+func _panel(rect: Rect2, bg: Color, border: Color, bw := 1.5) -> void:
+	Kit.slab_panel(self, rect, bg, border, -1.0, bw)
+
+
+## 角丸／円が要る箇所だけの逃げ道。斜めカットに寄せた中で、改装ツリーのノードは
+## 円であることに意味がある（ツリーの節点は方向を持たない）ので形を残す。
+func _round_panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
 	Kit.panel(self, rect, bg, border, radius, bw)
 
 
@@ -422,24 +447,27 @@ func _draw_icon(path: String, rect: Rect2, modulate := Color(1, 1, 1, 1), plated
 ## 小さな操作チップ（識別色の輪郭＋本文）。斜めの板で統一する。
 ## 押されている間は板ごと数px沈む（_begin_sink）＝面が指の下へ入り込む。
 func _chip(font: Font, r: Rect2, label: String, col: Color, id: String) -> void:
-	_begin_sink(r)
-	Kit.slab(self, r, Color(col.r * 0.22, col.g * 0.18, col.b * 0.26, 0.95), 8.0)
-	Kit.slab_edge(self, r, Color(col.r, col.g, col.b, 0.85), 8.0, 1.5)
+	var pv := _begin_sink(r)
+	var sk := DS.skew(r.size.y)
+	Kit.slab(self, r, Color(col.r * 0.22, col.g * 0.18, col.b * 0.26, 0.95), sk)
+	Kit.slab_edge(self, r, Color(col.r, col.g, col.b, 0.85), sk, 1.5)
 	_txt(font, Vector2(r.position.x + (r.size.x - _tw(font, label, DS.T_BODY)) * 0.5 + 4.0,
 			r.position.y + r.size.y * 0.5 + 6.0), label, DS.T_BODY, DS.TEXT)
-	_end_sink()
+	_end_sink(pv)
 	_hit(r, id)
 
 
-## ラベル付きボタン。enabled=false は灰色＆非ヒット。
-func _btn(font: Font, rect: Rect2, label: String, col: Color, id: String, enabled := true, size := 16) -> void:
+## ラベル付きボタン。enabled=false は灰色＆非ヒット。字は本文か小見出しの2段だけ。
+func _btn(font: Font, rect: Rect2, label: String, col: Color, id: String, enabled := true,
+		size := DS.T_BODY) -> void:
 	var c := col if enabled else Color(0.4, 0.4, 0.45)
-	_begin_sink(rect)
-	_panel(rect, Color(c.r * 0.18, c.g * 0.16, c.b * 0.2, 0.92), Color(c.r, c.g, c.b, 0.8 if enabled else 0.4), 9, 1.5)
+	var pv := _begin_sink(rect)
+	_panel(rect, Color(c.r * 0.18, c.g * 0.16, c.b * 0.2, 0.92),
+			Color(c.r, c.g, c.b, 0.8 if enabled else 0.4))
 	var w := _tw(font, label, size)
-	_txt(font, Vector2(rect.position.x + (rect.size.x - w) * 0.5, rect.position.y + rect.size.y * 0.5 + size * 0.38),
-			label, size, TEXT if enabled else TEXT_DIM)
-	_end_sink()
+	_txt(font, Vector2(rect.position.x + (rect.size.x - w) * 0.5 + 3.0,
+			rect.position.y + rect.size.y * 0.5 + size * 0.38), label, size, TEXT if enabled else TEXT_DIM)
+	_end_sink(pv)
 	if enabled:
 		_hit(rect, id)
 
@@ -537,18 +565,18 @@ func _draw_header(font: Font, sz: Vector2) -> void:
 	Kit.hatch(self, Rect2(0, 0, sz.x, HEADER_H), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.07), 26.0, 9.0)
 	draw_rect(Rect2(0, HEADER_H - 3.0, sz.x, 3.0), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.85))
 	# 戻る（潜航中＝編成の寄り道なら「潜航へ復帰」。残り時間はアンカーから実時間で計算）
-	var title_x := 120.0
+	var title_x := M + 108.0 + DS.SP_4
 	if sim != null and bool(sim.state["run"]["active"]):
 		var run: Dictionary = sim.state["run"]
 		var remain := maxf(float(run["duration"]) \
 				- (Time.get_unix_time_from_system() - float(run["anchor"])), 0.0)
 		var lbl := "▼ %d:%02d 潜航へ" % [int(remain / 60.0), int(remain) % 60]
-		var bw := _tw(font, lbl, DS.T_BODY) + 26
+		var bw := _tw(font, lbl, DS.T_BODY) + 30
 		var pulse := 0.5 + 0.5 * sin(_t * 3.0)
-		_btn(font, Rect2(12, 22, bw, 40), lbl, GOLD.lerp(Color(1.0, 0.55, 0.4), pulse), "resume_dive", true, DS.T_BODY)
-		title_x = 12.0 + bw + 16.0
+		_btn(font, Rect2(M, 22, bw, 40), lbl, GOLD.lerp(Color(1.0, 0.55, 0.4), pulse), "resume_dive")
+		title_x = M + bw + DS.SP_4
 	else:
-		_btn(font, Rect2(12, 22, 104, 40), "← 店へ", PURPLE, "home", true, DS.T_BODY)
+		_btn(font, Rect2(M, 22, 108, 40), "← 店へ", PURPLE, "home")
 	# タイトル。パネルを変えたら黙って差し替わらず、左から滑り込んで薄く入る
 	# （ヘッダは動かないので、切替を言うのはこの1行の役目）。
 	var tk := Kit.out_quart(_panel_t / 0.30)
@@ -561,26 +589,11 @@ func _draw_header(font: Font, sz: Vector2) -> void:
 		var acc: Color = PANEL_ACCENT.get(panel, PURPLE)
 		draw_rect(Rect2(title_x - (1.0 - tk) * 26.0, 48.0, tw * tk, 2.0),
 				Color(acc.r, acc.g, acc.b, 0.9 * (1.0 - tk)))
-	# 日数・所持金・欠片（ラベルは小さく灰、数値は白。有彩色を増やさない）
-	# 数値は Kit.num で追いかける＝変わった瞬間に必ず拡大し、差分が上へ流れる。
+	# 日数・所持金・欠片。書式・色・ケースは DS.draw_hud が1箇所で決める
+	# （ホームのトップバーとまったく同じ物が出る）。所持金の差分は「飛ぶ数値」が運ぶ。
 	if sim != null:
-		var s: Dictionary = sim.state
-		var pairs := [["DAY", "day", float(int(s["day"])), DS.PAPER],
-				["金", "gold", float(int(s["gold"])), GOLD],
-				["欠片", "shards", float(int(s["shards"])), DS.PAPER]]
-		var total := 0.0
-		for p in pairs:
-			total += _tw(font, String(p[0]), DS.T_MICRO) + 6.0 \
-					+ _tw(font, "%d" % int(p[2]), DS.T_SUB) + 20.0
-		var hx := sz.x - 16.0 - total + 20.0
-		for p in pairs:
-			_txt(font, Vector2(hx, 68), String(p[0]), DS.T_MICRO, DS.TEXT_MUTE)
-			hx += _tw(font, String(p[0]), DS.T_MICRO) + 6.0
-			if String(p[1]) == "gold":
-				_gold_pos = Vector2(hx, 68)
-			# 所持金は「飛ぶ数値」が差分を運ぶので、ここでのフロートは出さない（重ねない）
-			hx += _num(font, Vector2(hx, 68), "hdr_" + String(p[1]), float(p[2]), DS.T_SUB,
-					p[3], GOLD, DS.DANGER, "", String(p[1]) != "gold") + 20.0
+		_gold_pos = DS.draw_hud(self, font, Rect2(0, HEADER_H * 0.5, sz.x, HEADER_H * 0.5),
+				sim.state, _fx, _t)
 
 
 # ── 深層マップ（ステージ制・タスクバーヒーロー準拠）──────────────────────────
@@ -591,30 +604,32 @@ func _draw_map(font: Font, sz: Vector2) -> void:
 
 	_stag()
 	# 難易度セレクタ（4段。前難易度で第1幕突破が解放条件）
-	Kit.header(self, font, Vector2(16, y), "難易度", GOLD, sz.x - 32)
-	y += 48
-	var dw := (sz.x - 24 - 8 * 3) / 4.0
+	Kit.header(self, font, Vector2(M, y), "難易度", GOLD, sz.x - M * 2)
+	y += 52
+	var dw := (sz.x - M * 2 - DS.SP_2 * 3) / 4.0
 	for d in KuroData.DIFFICULTIES.size():
 		var dd: Dictionary = KuroData.DIFFICULTIES[d]
-		var r := Rect2(12 + d * (dw + 8), y, dw, 52)
+		var r := Rect2(M + d * (dw + DS.SP_2), y, dw, 62)
 		var unlocked: bool = sim.diff_unlocked(d)
 		var active := d == diff
 		var col: Color = dd["color"]
 		if not unlocked:
 			col = Color(0.4, 0.4, 0.46)
+		var pv := _begin_sink(r)
 		_panel(r, Color(col.r * 0.18, col.g * 0.16, col.b * 0.2, 0.94),
-				col if active else Color(col.r, col.g, col.b, 0.35), 9, 2.0 if active else 1.0)
+				col if active else Color(col.r, col.g, col.b, 0.35), 2.0 if active else 1.0)
 		if active:
 			Kit.spot(self, r.get_center(), dw * 0.7, col, 0.20)
 		var nm := String(dd["name"])
-		_txt(font, Vector2(r.position.x + (dw - _tw(font, nm, 13)) * 0.5, r.position.y + 22), nm, 13,
-				TEXT if unlocked else TEXT_DIM)
-		var sub := ("×%.1f" % float(dd["mult"])) if unlocked else "第%d幕突破で解放" % 1
-		_txt(font, Vector2(r.position.x + (dw - _tw(font, sub, 10)) * 0.5, r.position.y + 40), sub, 10,
-				col if unlocked else TEXT_DIM)
+		_txt(font, Vector2(r.position.x + (dw - _tw(font, nm, DS.T_BODY)) * 0.5 + 3.0, r.position.y + 26),
+				nm, DS.T_BODY, TEXT if unlocked else TEXT_DIM)
+		var sub := ("×%.1f" % float(dd["mult"])) if unlocked else "第1幕突破"
+		_txt(font, Vector2(r.position.x + (dw - _tw(font, sub, DS.T_MICRO)) * 0.5 + 1.0, r.position.y + 48),
+				sub, DS.T_MICRO, col if unlocked else TEXT_DIM)
+		_end_sink(pv)
 		if unlocked:
 			_hit(r, "diff:%d" % d)
-	y += 66
+	y += 76
 
 	_stag()
 	# ステージ一覧（最前線の前後を窓表示。クリア済みは周回可）
@@ -623,193 +638,218 @@ func _draw_map(font: Font, sz: Vector2) -> void:
 	var sel := int(sim.state.get("stage_sel", -1))
 	if sel < 0 or sel > frontier:
 		sel = frontier
-	Kit.header(self, font, Vector2(16, y), "ステージ", CYAN, sz.x - 32, DS.T_SUB, "クリア済みは周回できる")
-	y += 48
+	Kit.header(self, font, Vector2(M, y), "ステージ", CYAN, sz.x - M * 2, DS.T_SUB, "クリア済みは周回できる")
+	y += 52
 	var first := maxi(0, frontier - 3)
 	if first > 0:
-		_txt(font, Vector2(24, y + 14), "… %d-1 までクリア済み" % (int(first / float(KuroData.ACT_LEN)) + 1), 12, TEXT_DIM)
-		y += 24
+		_txt(font, Vector2(M + DS.SP_2, y + 16), "… %d-1 までクリア済み" % (int(first / float(KuroData.ACT_LEN)) + 1),
+				DS.T_MICRO, TEXT_DIM)
+		y += 28
 	for fl in range(first, frontier + 2):
-		var r := Rect2(12, y, sz.x - 24, 52)
+		var r := Rect2(M, y, sz.x - M * 2, 62)
 		var unlocked: bool = fl <= frontier
 		var is_cleared := fl <= cleared
 		var is_sel := fl == sel
 		var biome: Dictionary = KuroData.BIOMES[fl % KuroData.BIOMES.size()]
 		var bcol: Color = biome["color"]
 		var row_col := CYAN if is_sel else (Color(bcol.r * 2.2, bcol.g * 2.2, bcol.b * 2.2) if unlocked else Color(0.35, 0.35, 0.4))
+		var pv := _begin_sink(r)
 		_panel(r, Color(0.05, 0.06, 0.10, 0.93 if unlocked else 0.6),
-				Color(row_col.r, row_col.g, row_col.b, 0.85 if is_sel else 0.4), 10, 2.0 if is_sel else 1.0)
+				Color(row_col.r, row_col.g, row_col.b, 0.85 if is_sel else 0.4), 2.0 if is_sel else 1.0)
 		# 章票
 		var chip := KuroData.stage_label(fl)
-		_txt(font, Vector2(26, y + 32), chip, 18, TEXT if unlocked else TEXT_DIM)
+		_txt(font, Vector2(r.position.x + 18, y + 38), chip, DS.T_SUB, TEXT if unlocked else TEXT_DIM)
 		# バイオーム＋落ちる素材（店の需要から行き先を選べるように）
-		draw_circle(Vector2(96, y + 26), 5.0, Color(bcol.r * 2.0, bcol.g * 2.0, bcol.b * 2.0) if unlocked else TEXT_DIM)
-		_txt(font, Vector2(108, y + 22), String(biome["name"]), 13, TEXT if unlocked else TEXT_DIM)
+		var bx := r.position.x + 96.0
+		draw_circle(Vector2(bx, y + 25), 5.0, Color(bcol.r * 2.0, bcol.g * 2.0, bcol.b * 2.0) if unlocked else TEXT_DIM)
+		_txt(font, Vector2(bx + 14, y + 30), String(biome["name"]), DS.T_BODY, TEXT if unlocked else TEXT_DIM)
 		if unlocked:
 			var ing := String(biome["ing"])
 			var itag := String(KuroData.ING_NAMES.get(ing, ing))
-			var ix := 112.0 + _tw(font, String(biome["name"]), 13) + 8.0
+			var ix := bx + 22.0 + _tw(font, String(biome["name"]), DS.T_BODY)
 			var icol: Color = {"dry": GOLD, "meat": Color(1.0, 0.55, 0.45), "sea": CYAN}.get(ing, TEXT_DIM)
-			_panel(Rect2(ix, y + 10, _tw(font, itag, 11) + 12, 18),
-					Color(icol.r * 0.16, icol.g * 0.14, icol.b * 0.16, 0.9), Color(icol.r, icol.g, icol.b, 0.5), 5, 1.0)
-			_txt(font, Vector2(ix + 6, y + 24), itag, 11, icol)
+			var tagr := Rect2(ix, y + 12, _tw(font, itag, DS.T_MICRO) + 20, 24)
+			Kit.slab(self, tagr, Color(icol.r * 0.16, icol.g * 0.14, icol.b * 0.16, 0.9), DS.SKEW_MIN)
+			Kit.slab_edge(self, tagr, Color(icol.r, icol.g, icol.b, 0.5), DS.SKEW_MIN, 1.0)
+			_txt(font, Vector2(ix + 11, y + 30), itag, DS.T_MICRO, icol)
 		# ボス（心象語）と推奨戦力
 		var psyche: String = KuroData.PSYCHE[fl % KuroData.PSYCHE.size()]
 		var power := int(KuroData.depth_scale(fl) * float(KuroData.DIFFICULTIES[diff]["mult"]) * 10.0)
-		_txt(font, Vector2(108, y + 42), ("BOSS 人格『%s』 ・ 戦力%d" % [psyche, power]) if unlocked else "？？？", 11,
-				TEXT_DIM)
+		_txt(font, Vector2(bx + 14, y + 52), ("BOSS『%s』 ・ 戦力%d" % [psyche, power]) if unlocked else "？？？",
+				DS.T_MICRO, TEXT_DIM)
 		# 状態
-		if not unlocked:
-			_txt(font, Vector2(sz.x - 64, y + 32), "🔒", 16, TEXT_DIM)
-		elif is_sel:
-			_txt(font, Vector2(sz.x - 70, y + 32), "▶ 出撃", 14, CYAN)
+		var st := "未開放"
+		var stc := TEXT_DIM
+		if is_sel:
+			st = "▶ 出撃"
+			stc = CYAN
 		elif is_cleared:
-			_txt(font, Vector2(sz.x - 64, y + 32), "✓", 16, GREEN)
-		else:
-			_txt(font, Vector2(sz.x - 78, y + 32), "最前線", 12, GOLD)
+			st = "✓ 済"
+			stc = GREEN
+		elif unlocked:
+			st = "最前線"
+			stc = GOLD
+		_txt(font, Vector2(r.end.x - _tw(font, st, DS.T_BODY) - 20, y + 38), st, DS.T_BODY, stc)
+		_end_sink(pv)
 		if unlocked:
 			_hit(r, "stage:%d" % fl)
-		y += 58
+		y += 70
 
 	_stag()
 	# 出撃ボタン（フッターの上）
-	var by := sz.y - FOOTER_H - 150.0
-	if y < by:
-		y = by
-	var sortie := Rect2(16, sz.y - FOOTER_H - 140, sz.x - 32, 56)
+	var sortie := Rect2(M, sz.y - FOOTER_H - 140, sz.x - M * 2, 56)
 	# 待機中の生気はこの1箇所だけ。常時揺れる sin ではなく心拍（静か→短い二拍）
 	var pulse := Kit.heartbeat(_t)
+	var spv := _begin_sink(sortie)
 	Kit.cta(self, sortie, Color(PINK.r * 0.22, PINK.g * 0.16, PINK.b * 0.24, 0.96), PINK, pulse)
-	var sl := "▶  ステージ %s に集中して潜る（25分）" % KuroData.stage_label(sel)
-	_txt(font, Vector2(sortie.position.x + (sortie.size.x - _tw(font, sl, 17)) * 0.5, sortie.position.y + 35), sl, 17, TEXT)
+	var sl := "▶ %s に集中して潜る（25分）" % KuroData.stage_label(sel)
+	_txt(font, Vector2(sortie.position.x + (sortie.size.x - _tw(font, sl, DS.T_SUB)) * 0.5 + 4.0,
+			sortie.position.y + 38), sl, DS.T_SUB, TEXT)
+	_end_sink(spv)
 	_hit(sortie, "sortie_pomo")
-	_btn(font, Rect2(16, sz.y - FOOTER_H - 72, sz.x - 32, 44), "クイック仕入れ（80秒）", CYAN, "sortie_quick", true, 15)
+	_btn(font, Rect2(M, sz.y - FOOTER_H - 72, sz.x - M * 2, 44), "クイック仕入れ（80秒）", CYAN, "sortie_quick")
 
 
 # ── メンバー ─────────────────────────────────────────────────────────────────
 
 func _draw_member(font: Font, sz: Vector2) -> void:
 	var ids: Array = KuroData.GIRL_ORDER
-	var y := HEADER_H + 12.0
+	var y := HEADER_H + float(M)
 	_stag()
 	# 6人チップ
 	var n := ids.size()
-	var gap := 8.0
-	var cw := (sz.x - 24 - gap * (n - 1)) / float(n)
+	var gap := float(DS.SP_2)
+	var cw := (sz.x - M * 2 - gap * (n - 1)) / float(n)
 	# 「選ぶ」にも固有のモーションを持たせる：選択の帯は隣の子へ滑って、少し行き過ぎて座る。
 	# 枠の色も移動中は前の子と混ざる＝どこからどこへ移ったかが見える。
 	var si := maxi(ids.find(_sel_girl), 0)
 	var sc: Color = KuroData.GIRLS[ids[si]]["color"]
-	var sl: Dictionary = Kit.nav_slide(_selbar, 12.0 + si * (cw + gap), sc, _t)
+	var sl: Dictionary = Kit.nav_slide(_selbar, float(M) + si * (cw + gap), sc, _t)
 	var sx := float(sl["x"])
 	var scol: Color = sl["col"]
 	for i in n:
 		var id: String = ids[i]
-		var g: Dictionary = KuroData.GIRLS[id]
-		var r := Rect2(12 + i * (cw + gap), y, cw, 58)
-		var col: Color = g["color"]
+		var g0: Dictionary = KuroData.GIRLS[id]
+		var r := Rect2(M + i * (cw + gap), y, cw, 70)
+		var col: Color = g0["color"]
 		var near := clampf(1.0 - absf(sx - r.position.x) / (cw + gap), 0.0, 1.0)
 		var active := near > 0.5
+		var pv := _begin_sink(r)
 		_panel(r, Color(col.r * 0.16, col.g * 0.16, col.b * 0.2, 0.95),
-				Color(col.r, col.g, col.b, 0.35).lerp(col, Kit.out_cubic(near)), 9, 1.0 + near)
+				Color(col.r, col.g, col.b, 0.35).lerp(col, Kit.out_cubic(near)), 1.0 + near)
 		# 顔アイコン（無ければ名前のみ）
 		var drew := _draw_icon("res://assets/generated/face/%s/neutral_open.png" % id,
-				Rect2(r.position.x + (cw - 32) * 0.5, r.position.y + 4, 32, 32),
+				Rect2(r.position.x + (cw - 36) * 0.5, r.position.y + 4, 36, 36),
 				Color(1, 1, 1, 1.0 if active else 0.8))
-		var nm := String(g["name"])
-		var ny := r.position.y + (49.0 if drew else 26.0)
-		_txt(font, Vector2(r.position.x + (cw - _tw(font, nm, 13)) * 0.5, ny), nm, 13, TEXT if active else TEXT_DIM)
-		if not drew:
-			var af := "♥%d" % sim.aff(id)
-			_txt(font, Vector2(r.position.x + (cw - _tw(font, af, 12)) * 0.5, r.position.y + 46), af, 12, PINK)
+		var nm := String(g0["name"])
+		var ny := r.position.y + (60.0 if drew else 42.0)
+		_txt(font, Vector2(r.position.x + (cw - _tw(font, nm, DS.T_MICRO)) * 0.5 + 2.0, ny), nm,
+				DS.T_MICRO, TEXT if active else TEXT_DIM)
+		_end_sink(pv)
 		_hit(r, "_selg:" + id)
 	var sstretch := (1.0 - Kit.out_cubic(float(sl["k"]))) * cw * 0.5
 	draw_rect(Rect2(sx - sstretch * 0.5, y, cw + sstretch, 3), scol)
+	y += 82
 
 	_stag()
-	# 選択中の子の詳細カード
+	# 選択中の子の詳細カード。切替は瞬間差し替えではなく、動いた向きから滑り込ませる
+	# （帯だけが動いて中身が黙って入れ替わる、をやめる）。
 	var gid := _sel_girl
 	var g: Dictionary = KuroData.GIRLS[gid]
-	y += 70
-	var card := Rect2(12, y, sz.x - 24, 118)
-	_panel(card, Color(0.06, 0.06, 0.1, 0.92), Color(g["color"].r, g["color"].g, g["color"].b, 0.5), 12)
+	var mk := Kit.out_quart((_t - _selg_t) / SELG_DUR)
+	var card := Rect2(M, y, sz.x - M * 2, 150)
+	_panel(card, Color(0.06, 0.06, 0.1, 0.92), Color(g["color"].r, g["color"].g, g["color"].b, 0.5))
+	if mk < 1.0:
+		Kit.set_xf(self, _xf_now + Vector2((1.0 - mk) * 46.0 * _selg_dir, 0.0))
 	# 立ち絵（左・無ければテキストだけ左寄せ）
-	var has_portrait := _draw_icon("res://assets/portraits/%s.png" % gid, Rect2(18, y + 7, 80, 104))
-	var tx := 110.0 if has_portrait else 26.0
-	_txt(font, Vector2(tx, y + 28), String(g["name"]), 22, g["color"])
-	_txt(font, Vector2(tx, y + 52), String(g["role"]), 13, TEXT_DIM)
+	var has_portrait := _draw_icon("res://assets/portraits/%s.png" % gid, Rect2(card.position.x + 14, y + 8, 88, 134))
+	var tx := card.position.x + (116.0 if has_portrait else 24.0)
+	_txt(font, Vector2(tx, y + 46), String(g["name"]), DS.T_HEAD, g["color"])
+	_txt(font, Vector2(tx, y + 72), String(g["role"]), DS.T_MICRO, TEXT_DIM)
 	# ステータス（装備を替えたら、その場で数字が動いて差分が流れる）
-	_txt(font, Vector2(tx, y + 80), "攻", DS.T_MICRO, TEXT_DIM)
-	_num(font, Vector2(tx + 26, y + 80), "atk_" + gid, float(int(sim.girl_atk(gid))), DS.T_BODY,
+	_txt(font, Vector2(tx, y + 108), "攻", DS.T_MICRO, TEXT_DIM)
+	_num(font, Vector2(tx + 36, y + 108), "atk_" + gid, float(int(sim.girl_atk(gid))), DS.T_SUB,
 			Color(1.0, 0.6, 0.45))
-	_txt(font, Vector2(tx + 96, y + 80), "HP", DS.T_MICRO, TEXT_DIM)
-	_num(font, Vector2(tx + 130, y + 80), "hp_" + gid, float(int(sim.girl_maxhp(gid))), DS.T_BODY, GREEN)
-	_stag()
+	_txt(font, Vector2(tx + 132, y + 108), "HP", DS.T_MICRO, TEXT_DIM)
+	_num(font, Vector2(tx + 176, y + 108), "hp_" + gid, float(int(sim.girl_maxhp(gid))), DS.T_SUB, GREEN)
 	# 好感度バー
-	_txt(font, Vector2(tx, y + 104), "♥", DS.T_MICRO, PINK)
-	_bar(Rect2(tx + 22, y + 92, sz.x - 24 - tx - 22 - 56, 14), sim.aff(gid) / 100.0, PINK)
-	var aw := _num(font, Vector2(sz.x - 24 - 56, y + 104), "aff_" + gid, float(sim.aff(gid)),
+	_txt(font, Vector2(tx, y + 138), "♥", DS.T_MICRO, PINK)
+	var bar_w := card.end.x - 96.0 - (tx + 28.0)
+	_bar(Rect2(tx + 28, y + 124, bar_w, 16), sim.aff(gid) / 100.0, PINK)
+	var aw := _num(font, Vector2(card.end.x - 92.0, y + 138), "aff_" + gid, float(sim.aff(gid)),
 			DS.T_BODY, PINK)
-	_txt(font, Vector2(sz.x - 24 - 56 + aw, y + 104), "/100", DS.T_MICRO, TEXT_DIM)
-	# 店番シナジー
-	_txt(font, Vector2(sz.x - 24 - 210, y + 28), "店番:%s" % String(g["synergy"]), 12, GOLD)
-	_txt(font, Vector2(sz.x - 24 - 210, y + 46), String(g["synergy_desc"]), 11, TEXT_DIM)
+	_txt(font, Vector2(card.end.x - 92.0 + aw, y + 138), "/100", DS.T_MICRO, TEXT_DIM)
+	# 店番シナジー（右上）
+	var syn := "店番 %s" % String(g["synergy"])
+	_txt(font, Vector2(card.end.x - _tw(font, syn, DS.T_MICRO) - 20.0, y + 46), syn, DS.T_MICRO, GOLD)
+	var sdesc := String(g["synergy_desc"])
+	_txt(font, Vector2(card.end.x - _tw(font, sdesc, DS.T_MICRO) - 20.0, y + 72), sdesc, DS.T_MICRO, TEXT_DIM)
+	# 切替中の暗幕（面の色で伏せて、滑りながら現れる）
+	if mk < 1.0:
+		Kit.set_xf(self, _xf_now)
+		Kit.slab(self, card.grow(-2.0), Color(0.06, 0.06, 0.1, (1.0 - mk) * 0.98), DS.skew(card.size.y))
+	y += 162
 
 	_stag()
 	# スキル（装備枠）
-	y += 132
 	var slots: int = sim.skill_slots()
 	var eq: Array = sim.state["girls"][gid]["skills_eq"]
-	_txt(font, Vector2(20, y), "スキル（装備 %d/%d）" % [eq.size(), slots], 15, CYAN)
-	y += 12
+	Kit.header(self, font, Vector2(M, y), "スキル", CYAN, sz.x - M * 2, DS.T_SUB,
+			"装備 %d/%d　タップで着脱" % [eq.size(), slots])
+	y += 52
 	var known: Array = sim.known_skills(gid)
 	var col2 := 0
+	var half := (sz.x - M * 2 - DS.SP_2) * 0.5
 	for sid in known:
 		var def: Dictionary = KuroData.SKILL_DB[sid]
-		var rx := 12 + (col2 % 2) * (sz.x - 24) * 0.5
-		var ry := y + 12 + int(col2 / 2) * 44
-		var r := Rect2(rx, ry, (sz.x - 24) * 0.5 - 8, 38)
+		var rx := M + (col2 % 2) * (half + DS.SP_2)
+		var ry := y + int(col2 / 2) * 60
+		var r := Rect2(rx, ry, half, 52)
 		var on: bool = sid in eq
-		_panel(r, Color(0.08, 0.08, 0.12, 0.95), CYAN if on else Color(0.4, 0.42, 0.5, 0.6), 8, 2.0 if on else 1.0)
+		var pv := _begin_sink(r)
+		_panel(r, Color(0.08, 0.08, 0.12, 0.95), CYAN if on else Color(0.4, 0.42, 0.5, 0.6), 2.0 if on else 1.0)
 		# スキルアイコン（doctor/nurse 等は未用意 → テキストのみ）
-		var has_icon := _draw_icon("res://assets/generated/skill/%s.png" % sid, Rect2(rx + 6, ry + 5, 28, 28),
+		var has_icon := _draw_icon("res://assets/generated/skill/%s.png" % sid, Rect2(rx + 10, ry + 10, 32, 32),
 				Color(1, 1, 1, 1.0 if on else 0.7))
-		var stx := rx + (40.0 if has_icon else 10.0)
-		_txt(font, Vector2(stx, ry + 17), String(def["name"]), 14, TEXT if on else TEXT_DIM)
-		_txt(font, Vector2(stx, ry + 33), "CD%.0fs  %s" % [float(def["cd"]), ("装備中" if on else "タップで装備")], 11,
-				CYAN if on else TEXT_DIM)
+		var stx := rx + (52.0 if has_icon else 16.0)
+		_txt(font, Vector2(stx, ry + 24), String(def["name"]), DS.T_BODY, TEXT if on else TEXT_DIM)
+		_txt(font, Vector2(stx, ry + 44), "CD%.0fs　%s" % [float(def["cd"]), ("装備中" if on else "タップで装備")],
+				DS.T_MICRO, CYAN if on else TEXT_DIM)
+		_end_sink(pv)
 		_hit(r, "skill:%s:%s" % [gid, sid])
 		col2 += 1
-	y += 12 + int((known.size() + 1) / 2) * 44 + 14
+	y += int((known.size() + 1) / 2) * 60 + DS.SP_2
 
 	_stag()
 	# 育成ツリー（記憶の欠片）
-	_txt(font, Vector2(20, y), "育成ツリー（記憶の欠片で解放）", 15, PURPLE)
-	y += 18
+	Kit.header(self, font, Vector2(M, y), "育成", PURPLE, sz.x - M * 2, DS.T_SUB, "記憶の欠片で解放")
+	y += 52
 	var nodes: Array = KuroData.GIRL_TREES.get(gid, [])
 	var owned: Array = sim.state["girls"][gid].get("tree", [])
 	for node in nodes:
 		var nid := String(node["id"])
-		var r := Rect2(12, y, sz.x - 24, 40)
+		var r := Rect2(M, y, sz.x - M * 2, 48)
 		var is_owned: bool = nid in owned
 		var avail: bool = sim.tree_available(gid, nid)
 		var border := GREEN if is_owned else (PURPLE if avail else Color(0.35, 0.35, 0.4, 0.5))
-		_panel(r, Color(0.07, 0.07, 0.1, 0.9), border, 8, 1.5)
-		_txt(font, Vector2(24, y + 25), String(node["name"]), 14, TEXT if (is_owned or avail) else TEXT_DIM)
+		_panel(r, Color(0.07, 0.07, 0.1, 0.9), border)
+		_txt(font, Vector2(r.position.x + 18, y + 31), String(node["name"]), DS.T_BODY,
+				TEXT if (is_owned or avail) else TEXT_DIM)
 		var eff := _effect_label(node["effect"])
-		_txt(font, Vector2(180, y + 25), eff, 12, TEXT_DIM)
+		_txt(font, Vector2(r.position.x + 200, y + 31), eff, DS.T_MICRO, TEXT_DIM)
 		if is_owned:
-			_txt(font, Vector2(sz.x - 24 - 56, y + 25), "解放済", 13, GREEN)
+			_txt(font, Vector2(r.end.x - _tw(font, "解放済", DS.T_MICRO) - 20, y + 31), "解放済", DS.T_MICRO, GREEN)
 		else:
 			var cost := int(node["cost"])
 			var req := int(node.get("req_aff", 0))
 			if avail:
-				_btn(font, Rect2(sz.x - 24 - 96, y + 6, 90, 28), "欠片%d" % cost, PURPLE, "tree:%s:%s" % [gid, nid],
-						int(sim.state["shards"]) >= cost, 13)
+				_btn(font, Rect2(r.end.x - 116, y + 7, 108, 34), "欠片%d" % cost, PURPLE,
+						"tree:%s:%s" % [gid, nid], int(sim.state["shards"]) >= cost)
 			else:
 				var why := "♥%d必要" % req if sim.aff(gid) < req else "前提未"
-				_txt(font, Vector2(sz.x - 24 - 80, y + 25), why, 12, Color(0.6, 0.6, 0.66))
-		y += 46
+				_txt(font, Vector2(r.end.x - _tw(font, why, DS.T_MICRO) - 20, y + 31), why, DS.T_MICRO,
+						Color(0.6, 0.6, 0.66))
+		y += 56
 
 
 func _effect_label(eff: Dictionary) -> String:
@@ -825,48 +865,50 @@ func _effect_label(eff: Dictionary) -> String:
 # ── 市場 ─────────────────────────────────────────────────────────────────────
 
 func _draw_market(font: Font, sz: Vector2) -> void:
-	var y := HEADER_H + 16.0
+	var y := HEADER_H + float(M)
 	var s: Dictionary = sim.state
 	_stag()
 	# 在庫（素材アイコン＋数）
-	_txt(font, Vector2(16, y + 4), "在庫", DS.T_MICRO, TEXT_DIM)
-	var ix := 64.0
+	Kit.header(self, font, Vector2(M, y), "在庫", CYAN, sz.x - M * 2, DS.T_SUB, "潜って獲る／闇市で買う")
+	y += 56
+	var ix := float(M) + 8.0
 	for ing in ["dry", "meat", "sea"]:
 		# 素材も「増えたら跳ねる」。買った瞬間に在庫の数字が動くのが見える。
-		var drew := _draw_icon("res://assets/generated/ing/%s.png" % ing, Rect2(ix, y - 8, 26, 26))
+		var drew := _draw_icon("res://assets/generated/ing/%s.png" % ing, Rect2(ix, y - 26, 32, 32))
+		var nx := ix + (40.0 if drew else 0.0)
 		if not drew:
-			_txt(font, Vector2(ix, y + 4), String(KuroData.ING_NAMES[ing]), DS.T_MICRO, TEXT_DIM)
-		var nx := ix + (28.0 if drew else 36.0)
-		_num(font, Vector2(nx, y + 4), "stock_" + String(ing), float(int(s["stock"][ing])), DS.T_BODY, TEXT)
-		ix += 74.0 if drew else 88.0
+			_txt(font, Vector2(ix, y), String(KuroData.ING_NAMES[ing]), DS.T_MICRO, TEXT_DIM)
+			nx = ix + _tw(font, String(KuroData.ING_NAMES[ing]), DS.T_MICRO) + DS.SP_2
+		_num(font, Vector2(nx, y), "stock_" + String(ing), float(int(s["stock"][ing])), DS.T_SUB, TEXT)
+		ix = nx + 72.0
 	y += 28
 
 	_stag()
 	# 闇市（固定3品）
-	_txt(font, Vector2(16, y), "闇市", 17, GOLD)
-	y += 16
+	Kit.header(self, font, Vector2(M, y), "闇市", GOLD, sz.x - M * 2, DS.T_SUB, "いつでも同じ棚")
+	y += 56
 	for i in KuroData.MARKET.size():
 		var it: Dictionary = KuroData.MARKET[i]
-		var r := Rect2(12, y, sz.x - 24, 56)
-		_panel(r, Color(0.07, 0.06, 0.04, 0.92), Color(GOLD.r, GOLD.g, GOLD.b, 0.4), 10)
-		_txt(font, Vector2(26, y + 24), String(it["name"]), 15, TEXT)
-		_txt(font, Vector2(26, y + 44), "%dG" % int(it["price"]), 14, GOLD)
+		var r := Rect2(M, y, sz.x - M * 2, 64)
+		_panel(r, Color(0.07, 0.06, 0.04, 0.92), Color(GOLD.r, GOLD.g, GOLD.b, 0.4))
+		_txt(font, Vector2(r.position.x + 20, y + 28), String(it["name"]), DS.T_BODY, TEXT)
+		_txt(font, Vector2(r.position.x + 20, y + 52), "%dG" % int(it["price"]), DS.T_MICRO, GOLD)
 		var can: bool = int(s["gold"]) >= int(it["price"])
-		_btn(font, Rect2(sz.x - 24 - 100, y + 13, 94, 32), "買う", GOLD, "buy:%d" % i, can, 15)
-		y += 64
+		_btn(font, Rect2(r.end.x - 116, y + 15, 104, 36), "買う", GOLD, "buy:%d" % i, can)
+		y += 72
 
 	_stag()
 	# 交易船（10分毎ローテ・装備/ペット）
-	y += 8
-	_txt(font, Vector2(16, y), "交易船（10分毎に入替）", 17, CYAN)
-	y += 16
+	y += DS.SP_2
+	Kit.header(self, font, Vector2(M, y), "交易船", CYAN, sz.x - M * 2, DS.T_SUB, "10分毎に入替")
+	y += 56
 	var ship: Array = s["ship"]["stock"]
 	if ship.is_empty():
-		_txt(font, Vector2(26, y + 8), "今は停泊していない。", 14, TEXT_DIM)
+		_txt(font, Vector2(M + 8, y + 20), "今は停泊していない。", DS.T_BODY, TEXT_DIM)
 		return
 	for i in ship.size():
 		var entry: Dictionary = ship[i]
-		var r := Rect2(12, y, sz.x - 24, 56)
+		var r := Rect2(M, y, sz.x - M * 2, 64)
 		var label := ""
 		var sub := ""
 		var col := CYAN
@@ -881,17 +923,18 @@ func _draw_market(font: Font, sz: Vector2) -> void:
 			label = SimItems.display_name(item)
 			sub = "%s ・ %s" % [SimItems.GRADES[grade]["name"], SimItems.affix_text(item)]
 			col = KuroData.equip_grade_color(grade)
-		_panel(r, Color(0.05, 0.07, 0.09, 0.92), Color(col.r, col.g, col.b, 0.45), 10)
+		_panel(r, Color(0.05, 0.07, 0.09, 0.92), Color(col.r, col.g, col.b, 0.45))
 		# 装備はスロットアイコン（武器/防具/装飾）を添える
-		var tx := 26.0
+		var tx := r.position.x + 20.0
 		if entry["type"] != "pet":
-			if _draw_icon("res://assets/generated/equip/%s.png" % String(entry["item"]["slot"]), Rect2(18, y + 10, 36, 36), col):
-				tx = 62.0
-		_txt(font, Vector2(tx, y + 24), label, 15, col)
-		_txt(font, Vector2(tx, y + 44), "%s   %dG" % [sub, int(entry["price"])], 13, TEXT_DIM)
+			if _draw_icon("res://assets/generated/equip/%s.png" % String(entry["item"]["slot"]),
+					Rect2(r.position.x + 14, y + 14, 36, 36), col):
+				tx = r.position.x + 60.0
+		_txt(font, Vector2(tx, y + 28), label, DS.T_BODY, col)
+		_txt(font, Vector2(tx, y + 52), "%s　%dG" % [sub, int(entry["price"])], DS.T_MICRO, TEXT_DIM)
 		var can: bool = int(s["gold"]) >= int(entry["price"])
-		_btn(font, Rect2(sz.x - 24 - 100, y + 13, 94, 32), "買う", col, "ship:%d" % i, can, 15)
-		y += 64
+		_btn(font, Rect2(r.end.x - 116, y + 15, 104, 36), "買う", col, "ship:%d" % i, can)
+		y += 72
 
 
 # ── 経営 ─────────────────────────────────────────────────────────────────────
@@ -1381,7 +1424,7 @@ func _draw_workshop(font: Font, sz: Vector2) -> void:
 		var col := KuroData.equip_grade_color(grade)
 		var r := Rect2(12, y + i * (row_h + 6), sz.x * 0.58, row_h)
 		var active := iid == _work_item_id
-		_panel(r, Color(0.06, 0.065, 0.09, 0.95), col if active else Color(col.r, col.g, col.b, 0.38), 8, 2.0 if active else 1.0)
+		_panel(r, Color(0.06, 0.065, 0.09, 0.95), col if active else Color(col.r, col.g, col.b, 0.38), 2.0 if active else 1.0)
 		var tx := r.position.x + 12.0
 		if _draw_icon("res://assets/generated/equip/%s.png" % String(it["slot"]), Rect2(r.position.x + 8, r.position.y + 8, 32, 32), col):
 			tx += 38.0
@@ -1507,7 +1550,7 @@ func _draw_renov(font: Font, sz: Vector2) -> void:
 		var can: bool = avail and int(s["gold"]) >= int(node["cost"])
 		var col := GREEN if is_owned else (GOLD if can else (PURPLE if avail else Color(0.4, 0.4, 0.46)))
 		var r := Rect2(c - Vector2(rad, rad), Vector2(rad * 2, rad * 2))
-		_panel(r, Color(col.r * 0.16, col.g * 0.16, col.b * 0.2, 0.96), col, rad, 2.0 if (is_owned or avail) else 1.0)
+		_round_panel(r, Color(col.r * 0.16, col.g * 0.16, col.b * 0.2, 0.96), col, rad, 2.0 if (is_owned or avail) else 1.0)
 		# 改装アイコン（無ければ名前テキスト）
 		var lit := is_owned or avail
 		var has_icon := _draw_icon("res://assets/generated/renov/%s.png" % nid, Rect2(c.x - 19, c.y - 22, 38, 38),

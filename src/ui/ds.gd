@@ -19,8 +19,9 @@ const TEXT_MUTE := Color("707070")   # 注記/無効
 const ACCENT := Color("e6a15a")      # 識別色（暖炉オレンジ＝店）
 const ACCENT_DIM := Color("e6a15a80")
 const WARM := Color("e6a15a")        # 店番・看板の暖色
-const DANGER := Color("e05a5a")      # 切断・撤退
-const SUCCESS := Color("6fd37d")     # 収穫・廃材
+const DANGER := Color("e05a5a")      # 状態色・危険（切断・撤退・損）
+const SUCCESS := Color("6fd37d")     # 状態色・成功（収穫・廃材・得）
+const GOLD := Color(1.0, 0.82, 0.4)  # 状態色・獲得（所持金・値札）
 const INK := Color("0a0812")         # 黒い板（見出しの地・反転面の文字）
 const PAPER := Color("fbfaff")       # 白抜き（板の上の文字）
 
@@ -43,6 +44,55 @@ const SP_5 := 24
 const R_SM := 4
 const R_MD := 8
 const R_LG := 12
+
+# ── 面の形（全画面で1つ。斜めカットの平行四辺形＝P5流）────────────────
+# 角丸と斜めカットの混在をやめ、「面はすべて傾いている」に寄せた。
+# 傾き量を各描画点で決めると 5/8/10/12 と散らかるので、高さから1つの式で出す。
+const SKEW_MIN := 5.0
+const SKEW_MAX := 12.0
+
+
+## 面の傾き（px）。高さに比例させ、上下限で頭打ちにする。
+static func skew(h: float) -> float:
+	return clampf(h * 0.18, SKEW_MIN, SKEW_MAX)
+
+
+# ── ヘッダの資源表示（書式・色・ケースはここでだけ決める）──────────────
+# 「DAY 12  金 1240  欠片 7」。ラベルは小さく灰・全大文字、数値は T_SUB。
+# 有彩色は金だけ（獲得色）。ホームも経営もこの1つを呼ぶ＝同じ物が同じ形で出る。
+const HUD_ITEMS := [["DAY", "day", false], ["金", "gold", true], ["欠片", "shards", false]]
+
+
+## ヘッダ帯 bar の右詰めに資源を描く。fx は Kit.num の台帳、now は経過秒。
+## 戻り値＝金の描画位置（「飛ぶ数値」の着地点に使う）。
+static func draw_hud(ci: CanvasItem, font: Font, bar: Rect2, state: Dictionary,
+		fx: Dictionary, now: float) -> Vector2:
+	var y := bar.position.y + bar.size.y * 0.5 + float(T_SUB) * 0.34
+	var items: Array = []
+	var total := 0.0
+	for e in HUD_ITEMS:
+		var lbl := String(e[0])
+		var key := String(e[1])
+		var n: Dictionary = Kit.num(fx, "hud_" + key, float(int(state.get(key, 0))), now)
+		var s := "%d" % int(round(float(n["v"])))
+		var lw := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, T_MICRO).x
+		var vw := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, T_SUB).x
+		items.append({"l": lbl, "s": s, "pop": float(n["pop"]), "lw": lw, "vw": vw, "gold": bool(e[2])})
+		total += lw + float(SP_2) + vw + float(SP_5)
+	var x := bar.end.x - float(SP_4) - total + float(SP_5)
+	var gold_at := Vector2(x, y)
+	for it in items:
+		var lbl := String(it["l"])
+		ci.draw_string_outline(font, Vector2(x, y), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, T_MICRO, 3,
+				Color(0, 0, 0, 0.85))
+		ci.draw_string(font, Vector2(x, y), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, T_MICRO, TEXT_MUTE)
+		x += float(it["lw"]) + float(SP_2)
+		if bool(it["gold"]):
+			gold_at = Vector2(x, y)
+		Kit.num_draw(ci, font, Vector2(x, y), String(it["s"]), T_SUB,
+				GOLD if bool(it["gold"]) else PAPER, float(it["pop"]))
+		x += float(it["vw"]) + float(SP_5)
+	return gold_at
 
 
 ## 面の反転（選択＝ベタ板＋暗色の文字）で使う、地の上に置く文字色。

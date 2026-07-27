@@ -12,9 +12,12 @@ const PANEL_BG := Color(0.04, 0.04, 0.07, 0.78)
 const PINK := Color(1.0, 0.36, 0.72)
 const CYAN := Color(0.35, 0.92, 1.0)
 const PURPLE := Color(0.66, 0.4, 1.0)
-const GOLD := Color(1.0, 0.82, 0.4)
+const GOLD := DS.GOLD                    # 状態色・獲得（DS と同じ物を使う）
 const TEXT := Color(0.96, 0.95, 0.98)
 const TEXT_DIM := Color(0.75, 0.76, 0.84)
+
+# 外側マージンは全画面で 16（DS.SP_4）。場当たりの 12/14/20 は置かない。
+const M := DS.SP_4
 
 # バンタ（掛け合い）設定
 const HOME_CAST := ["mil", "yuzuki", "muu", "kiriko", "doctor", "nurse"]
@@ -23,6 +26,7 @@ const EXCHANGE_STEP  := 3.2    # 秒：掛け合いの1行表示時間
 
 const STRIP_H := 60.0   # 最下部 HD-2D フィールド帯の高さ（FieldStrip と一致させる）
 const FOOTER_H := 58.0   # 最下部フッターナビバーの高さ（旧版のボトムタブを踏襲）
+const TOPBAR_H := 84.0   # トップバー（経営シートのヘッダと同じ高さ・同じ作法）
 
 # 各主要機能へのフッターナビ（旧 main_legacy の 店/メンバー/工房/市場/経営 を踏襲）。
 # id は main.gd の _on_home_action(id) に届く。
@@ -136,8 +140,8 @@ func _num(font: Font, pos: Vector2, key: String, v: float, size: int, col: Color
 
 ## 数値に添える単位（小さく・灰）。戻り値は幅。
 func _unit(font: Font, x: float, y: float, s: String) -> float:
-	_txt(font, Vector2(x, y), s, 16, TEXT_DIM)
-	return font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+	_txt(font, Vector2(x, y), s, DS.T_MICRO, TEXT_DIM)
+	return font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_MICRO).x
 
 
 ## 切断ペナルティが「無かった場合」の見込みを sim 自身に計算させる。
@@ -216,23 +220,30 @@ func _end_sink() -> void:
 	Kit.set_xf(self, _xf_now)
 
 
-func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
-	Kit.panel(self, rect, bg, border, radius, bw)
+## 面はすべて斜めカット（Kit.slab_panel）。角丸は使わない＝経営パネルと同じ作法。
+func _panel(rect: Rect2, bg: Color, border: Color, bw := 1.5) -> void:
+	Kit.slab_panel(self, rect, bg, border, -1.0, bw)
 
 
 func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
-	draw_string(font, pos + Vector2(1, 1), s, ha, w, size, Color(0, 0, 0, 0.6))
+	draw_string_outline(font, pos, s, ha, w, size, 3, Color(0.02, 0.02, 0.04, 0.9))
 	draw_string(font, pos, s, ha, w, size, col)
 
 
-func _icon(font: Font, c: Vector2, r: float, label: String, col: Color, id: String) -> void:
-	var rect := Rect2(c - Vector2(r, r), Vector2(r * 2, r * 2))
+func _tw(font: Font, s: String, size: int) -> float:
+	return font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+
+
+## トップバーの入口チップ。x から置いて、次の x を返す（斜めの板＋押し込み）。
+func _icon(font: Font, x: float, label: String, col: Color, id: String) -> float:
+	var w := _tw(font, label, DS.T_BODY) + 28.0
+	var rect := Rect2(x, 22.0, w, 40.0)
 	_begin_sink(rect)
-	_panel(rect, Color(0.05, 0.05, 0.09, 0.85), col, r, 1.5)
-	var w := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
-	_txt(font, c + Vector2(-w * 0.5, 6), label, 15, TEXT)
+	_panel(rect, Color(col.r * 0.16, col.g * 0.14, col.b * 0.18, 0.92), Color(col.r, col.g, col.b, 0.7))
+	_txt(font, Vector2(x + (w - _tw(font, label, DS.T_BODY)) * 0.5 + 3.0, 48.0), label, DS.T_BODY, TEXT)
 	_end_sink()
 	_hit(rect, id)
+	return x + w + DS.SP_2
 
 
 func _draw() -> void:
@@ -242,24 +253,26 @@ func _draw() -> void:
 	_enter_i = 0
 	_set_xf(Vector2.ZERO)   # 拡大描画が戻る先を自分の座標系に固定する
 
-	# ===== トップバー（薄い帯＋アイコン） =====
+	# ===== トップバー（黒い帯＋斜めの地紋。経営シートのヘッダと同じ作法） =====
 	_stag()
-	var tb := Rect2(0, 0, sz.x, 60)
-	draw_rect(tb, Color(0.02, 0.02, 0.05, 0.55))
-	draw_rect(Rect2(0, 60, sz.x, 1.5), Color(PINK.r, PINK.g, PINK.b, 0.4))
-	_icon(font, Vector2(34, 30), 21, "≡", PINK, "menu")
-	_topbar_wallet(font)
-	# 右：猫 / 設定 / ベル
-	_icon(font, Vector2(sz.x - 34, 30), 21, "猫", PINK, "cat")
-	_icon(font, Vector2(sz.x - 86, 30), 21, "設定", CYAN, "settings")
-	_icon(font, Vector2(sz.x - 138, 30), 21, "報", GOLD, "bell")
+	var tb := Rect2(0, 0, sz.x, TOPBAR_H)
+	draw_rect(tb, Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.94))
+	Kit.hatch(self, tb, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.07), 26.0, 9.0)
+	draw_rect(Rect2(0, TOPBAR_H - 3.0, sz.x, 3.0), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.85))
+	var bx := float(M)
+	bx = _icon(font, bx, "≡", PINK, "menu")
+	bx = _icon(font, bx, "報", GOLD, "bell")
+	bx = _icon(font, bx, "設定", CYAN, "settings")
+	_icon(font, bx, "猫", PINK, "cat")
+	# HUD は経営シートのヘッダと同じ位置・同じ書式（帯の下半分に右詰め）
+	_topbar_wallet(font, Rect2(0, TOPBAR_H * 0.5, sz.x, TOPBAR_H * 0.5))
 
 	_stag()
 	# ===== 探索入口ポータル（右端・縦書き＋紫の渦） =====
 	var pc := Vector2(sz.x - 56, sz.y * 0.47)
 	_hit(Rect2(pc.x - 52, pc.y - 56, 104, 170), "depart")
 	# うっすら枠
-	_panel(Rect2(pc.x - 50, pc.y - 54, 100, 168), Color(0.05, 0.03, 0.10, 0.45), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.5), 14)
+	_panel(Rect2(pc.x - 50, pc.y - 54, 100, 168), Color(0.05, 0.03, 0.10, 0.45), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.5))
 	var pr := 38.0 + 3.0 * sin(_t * 2.2)
 	draw_circle(pc, pr + 8, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.12))
 	draw_arc(pc, pr, _t * 1.6, _t * 1.6 + TAU * 0.78, 36, PURPLE, 3.0)
@@ -268,39 +281,40 @@ func _draw() -> void:
 	# 縦書き「仕入れへ」（深層へ食材を獲りに行く＝仕入れ）
 	var vy := pc.y + pr + 16.0
 	for ch in "仕入れへ":
-		_txt(font, Vector2(pc.x - 9, vy), ch, 17, PINK)
+		_txt(font, Vector2(pc.x - 9, vy), ch, DS.T_BODY, PINK)
 		vy += 22.0
 
 	_stag()
 	# ===== ポモドーロ集中ボタン（主役CTA・VN窓の上） =====
-	var vh := 96.0
-	var vy0 := sz.y - STRIP_H - vh - 8
-	_prep_card(font, sz, vy0 - 70 - 10)   # 朝の仕込みカード（CTAの直上）
+	var vh := 100.0
+	var vy0 := sz.y - STRIP_H - vh - DS.SP_2
+	_prep_card(font, sz, vy0 - 70 - DS.SP_2)   # 朝の仕込みカード（CTAの直上）
 	_stag()                               # CTA は仕込みカードより一拍あとに着く
-	var cta := Rect2(sz.x * 0.5 - 145, vy0 - 70, 290, 56)
+	var cta := Rect2(sz.x * 0.5 - 180, vy0 - 70, 360, 56)
 	_hit(cta, "pomodoro")
 	# 待機中の生気はこの1箇所だけ。常時揺れる sin ではなく心拍（静か→短い二拍）
 	var pulse := Kit.heartbeat(_t)
 	_begin_sink(cta)
 	Kit.cta(self, cta, Color(PINK.r * 0.22, PINK.g * 0.16, PINK.b * 0.24, 0.96), PINK, pulse)
 	var ct := "▶  集中する（25分）"
-	var ctw := font.get_string_size(ct, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
-	_txt(font, Vector2(cta.position.x + (cta.size.x - ctw) * 0.5, cta.position.y + 36), ct, 19, TEXT)
+	_txt(font, Vector2(cta.position.x + (cta.size.x - _tw(font, ct, DS.T_SUB)) * 0.5 + 4.0,
+			cta.position.y + 38), ct, DS.T_SUB, TEXT)
 	_end_sink()
 
 	_stag()
 	# ===== VN セリフ窓（フィールド帯の上） =====
-	_panel(Rect2(16, vy0, sz.x - 32, vh), Color(0.04, 0.04, 0.08, 0.86), Color(PINK.r, PINK.g, PINK.b, 0.5), 12)
-	# 名前タグ
-	_panel(Rect2(28, vy0 - 14, 96, 30), Color(0.10, 0.05, 0.10, 0.95), Color(PINK.r, PINK.g, PINK.b, 0.7), 8)
-	_txt(font, Vector2(40, vy0 + 8), speaker, 17, PINK)
+	_panel(Rect2(M, vy0, sz.x - M * 2, vh), Color(0.04, 0.04, 0.08, 0.88), Color(PINK.r, PINK.g, PINK.b, 0.5))
+	# 名前タグ（斜めの板・幅は名前に合わせる）
+	var tag := Rect2(M + DS.SP_3, vy0 - 15.0, _tw(font, speaker, DS.T_BODY) + 32.0, 30.0)
+	_panel(tag, Color(0.10, 0.05, 0.10, 0.96), Color(PINK.r, PINK.g, PINK.b, 0.8))
+	_txt(font, Vector2(tag.position.x + 16.0, vy0 + 7), speaker, DS.T_BODY, PINK)
 	# ボイスアイコン
-	draw_circle(Vector2(134, vy0 + 1), 8, Color(CYAN.r, CYAN.g, CYAN.b, 0.85))
+	draw_circle(Vector2(tag.end.x + 14.0, vy0), 8, Color(CYAN.r, CYAN.g, CYAN.b, 0.85))
 	# 本文
-	_txt(font, Vector2(34, vy0 + 46), line, 17, TEXT, HORIZONTAL_ALIGNMENT_LEFT, sz.x - 70)
+	_txt(font, Vector2(M + 22, vy0 + 52), line, DS.T_BODY, TEXT, HORIZONTAL_ALIGNMENT_LEFT, sz.x - M * 2 - 40)
 	# 送りインジケータ
 	if fmod(_t, 1.0) < 0.6:
-		_txt(font, Vector2(sz.x - 44, vy0 + vh - 14), "▼", 14, PINK)
+		_txt(font, Vector2(sz.x - M - 28, vy0 + vh - 14), "▼", DS.T_MICRO, PINK)
 
 	# ===== 最下部：フィールドへの導線 =====
 	# 以前はここに 168px の HD-2D フィールド帯（FieldStrip）を敷いていたが、
@@ -325,20 +339,15 @@ func _draw() -> void:
 	Kit.floats(self, font, _floats, _t)
 
 
-## トップバーの財布。日数と所持金は「変わったら動く」＝黙って差し替わらない。
-func _topbar_wallet(font: Font) -> void:
+## トップバーの財布。書式・色・ケースは DS.draw_hud が1箇所で決める
+## （経営シートのヘッダとまったく同じ物が出る）。
+func _topbar_wallet(font: Font, bar: Rect2) -> void:
 	if sim == null:
-		_txt(font, Vector2(66, 38), day_gold, 16, GOLD)
+		_txt(font, Vector2(bar.end.x - M - _tw(font, day_gold, DS.T_BODY),
+				bar.position.y + bar.size.y * 0.5 + 8.0), day_gold, DS.T_BODY, GOLD)
 		return
-	var x := 66.0
-	_txt(font, Vector2(x, 38), "Day", 16, TEXT_DIM)
-	x += font.get_string_size("Day", HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 6.0
-	x += _num(font, Vector2(x, 38), "day", float(int(sim.state["day"])), 16, TEXT) + 18.0
-	_txt(font, Vector2(x, 38), "金", 16, TEXT_DIM)
-	x += font.get_string_size("金", HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 6.0
-	_gold_pos = Vector2(x, 38)
+	_gold_pos = DS.draw_hud(self, font, bar, sim.state, _fx, _t)
 	var g := float(int(sim.state["gold"]))
-	_num(font, Vector2(x, 38), "gold", g, 16, GOLD)
 	# 所持金の出入りは「飛ぶ数値」で財布と操作点をつなぐ
 	var seen := float(_fx.get("gold_seen", g))
 	if absf(g - seen) >= 1.0:
@@ -357,37 +366,39 @@ func _prep_card(font: Font, sz: Vector2, y_bottom: float) -> void:
 	if sim == null:
 		return
 	var pen: bool = bool(sim.state.get("crowd_penalty", false))
-	var h := 128.0 if pen else 96.0
-	var r := Rect2(16, y_bottom - h, sz.x - 32, h)
+	var h := 132.0 if pen else 100.0
+	var r := Rect2(M, y_bottom - h, sz.x - M * 2, h)
 	var edge := DS.DANGER if pen else GOLD
-	_panel(r, Color(0.04, 0.04, 0.08, 0.86), Color(edge.r, edge.g, edge.b, 0.55 if pen else 0.4), 12)
+	_begin_sink(r)
+	_panel(r, Color(0.04, 0.04, 0.08, 0.88), Color(edge.r, edge.g, edge.b, 0.55 if pen else 0.4))
+	_end_sink()
 	var fc: Dictionary = sim.forecast_night()
 	var m: Dictionary = sim.state["morning"]
 	# 見出し＋予報（右上）
-	_txt(font, Vector2(r.position.x + 14, r.position.y + 22), "今日の仕込み", 16, GOLD)
+	_txt(font, Vector2(r.position.x + 20, r.position.y + 24), "今日の仕込み", DS.T_BODY, GOLD)
 	var fst := "予報『%s』" % String(fc["forecast"])
-	var fw := font.get_string_size(fst, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
-	_txt(font, Vector2(r.end.x - fw - 14, r.position.y + 22), fst, 16, CYAN)
+	var fw := _tw(font, fst, DS.T_BODY)
+	_txt(font, Vector2(r.end.x - fw - 20, r.position.y + 24), fst, DS.T_BODY, CYAN)
 	# ペナルティ帯：昨夜の切断が今日の客足をいくら削ったかを、赤い板で名指しする
 	if pen:
 		var base: Dictionary = _forecast_base()
-		var pr := Rect2(r.position.x + 10.0, r.position.y + 30.0, r.size.x - 20.0, 30.0)
-		Kit.slab(self, pr, DS.DANGER, 8.0)
+		var pr := Rect2(r.position.x + DS.SP_3, r.position.y + 32.0, r.size.x - DS.SP_3 * 2, 30.0)
+		Kit.slab(self, pr, DS.DANGER, DS.skew(pr.size.y))
 		var ink := DS.on(DS.DANGER)
-		draw_string(font, Vector2(pr.position.x + 14.0, pr.position.y + 21.0),
-				"▼ 昨夜の切断 ─ 客足 -40%", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, ink)
+		draw_string(font, Vector2(pr.position.x + 16.0, pr.position.y + 21.0),
+				"▼ 昨夜の切断 ─ 客足 -40%", HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_BODY, ink)
 		# 「8人 → 5人」。元の値は取り消し線で残す（黙って減らさない）
-		var bx := pr.end.x - 118.0
+		var bx := pr.end.x - 122.0
 		bx += Kit.struck(self, font, Vector2(bx, pr.position.y + 21.0),
-				"%d人" % int(base.get("customers", fc["customers"])), 16,
+				"%d人" % int(base.get("customers", fc["customers"])), DS.T_BODY,
 				Color(ink.r, ink.g, ink.b, 0.62), ink, false) + 8.0
-		draw_string(font, Vector2(bx, pr.position.y + 21.0), "→", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, ink)
-		bx += font.get_string_size("→", HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 8.0
+		draw_string(font, Vector2(bx, pr.position.y + 21.0), "→", HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_BODY, ink)
+		bx += _tw(font, "→", DS.T_BODY) + 8.0
 		draw_string(font, Vector2(bx, pr.position.y + 21.0), "%d人" % int(fc["customers"]),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 16, ink)
+				HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_BODY, ink)
 	# 行1：店番／扉（タップで変更）＋献立（タップで経営へ）
-	var y1 := r.position.y + (66.0 if pen else 30.0)
-	var x := r.position.x + 12
+	var y1 := r.position.y + (68.0 if pen else 34.0)
+	var x := r.position.x + DS.SP_3
 	var keeper := String(m["keeper"])
 	var kname := String((KuroData.GIRLS.get(keeper, {}) as Dictionary).get("name", keeper))
 	x = _chip(font, Vector2(x, y1), "店番 %s ▸" % kname, PINK, "keeper_next")
@@ -397,17 +408,17 @@ func _prep_card(font: Font, sz: Vector2, y_bottom: float) -> void:
 	var menu: Array = m["menu"]
 	x = _chip(font, Vector2(x, y1), "献立 %d品 ▸" % menu.size(), PURPLE, "management")
 	# 行2：見込み（客・皿・金）。数字は動いたら必ずカウントし、差分を上へ流す
-	var y2 := r.end.y - 14.0
-	var nx := r.position.x + 14.0
-	_txt(font, Vector2(nx, y2), "見込み", 16, TEXT_DIM)
-	nx += font.get_string_size("見込み", HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 16.0
-	nx += _num(font, Vector2(nx, y2), "cust", float(int(fc["customers"])), 16,
+	var y2 := r.end.y - 16.0
+	var nx := r.position.x + 20.0
+	_txt(font, Vector2(nx, y2), "見込み", DS.T_MICRO, TEXT_DIM)
+	nx += _tw(font, "見込み", DS.T_MICRO) + DS.SP_4
+	nx += _num(font, Vector2(nx, y2), "cust", float(int(fc["customers"])), DS.T_BODY,
 			DS.DANGER if pen else TEXT) + 2.0
-	nx += _unit(font, nx, y2, "人") + 10.0
-	nx += _num(font, Vector2(nx, y2), "served", float(int(fc["served"])), 16, TEXT) + 2.0
-	nx += _unit(font, nx, y2, "皿") + 10.0
+	nx += _unit(font, nx, y2, "人") + DS.SP_3
+	nx += _num(font, Vector2(nx, y2), "served", float(int(fc["served"])), DS.T_BODY, TEXT) + 2.0
+	nx += _unit(font, nx, y2, "皿") + DS.SP_3
 	nx += _unit(font, nx, y2, "約")
-	nx += _num(font, Vector2(nx, y2), "gain", float(int(fc["gold"])), 16, GOLD) + 2.0
+	nx += _num(font, Vector2(nx, y2), "gain", float(int(fc["gold"])), DS.T_BODY, GOLD) + 2.0
 	nx += _unit(font, nx, y2, "G")
 	if int(fc["short"]) > 0:
 		var outs: Array = fc["out"]
@@ -425,25 +436,25 @@ func _prep_card(font: Font, sz: Vector2, y_bottom: float) -> void:
 		var warn := "⚠ %s切れ（%d皿売り逃し）" % [lack, int(fc["short"])]
 		if goto_fl >= 0:
 			warn += " → %s へ ▸" % KuroData.stage_label(goto_fl)
-		var ww := font.get_string_size(warn, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
-		var wr := Rect2(r.end.x - ww - 22, y2 - 18, ww + 16, 26)
+		var ww := _tw(font, warn, DS.T_MICRO)
+		var wr := Rect2(r.end.x - ww - 26, y2 - 20, ww + DS.SP_4, 28)
 		if goto_fl >= 0:
 			_hit(wr, "restock:%d" % goto_fl)   # タップ＝その階を選択してマップへ
-		_txt(font, Vector2(wr.position.x + 8, y2), warn, 16, DS.DANGER)
+		_txt(font, Vector2(Kit.sunk(wr, _press, _t).position.x + DS.SP_2, y2), warn, DS.T_MICRO, DS.DANGER)
 	_hit(r, "prep_card")   # 余白タップは経営パネルへ（上の個別チップが優先）
 
 
 ## 仕込みカードの小チップを1つ描き、次のX座標を返す。
 ## 押されている間はチップごと数px沈む（押し込み→戻りのオーバーシュートは Kit.press_sink）。
 func _chip(font: Font, pos: Vector2, label: String, col: Color, id: String) -> float:
-	var w := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 20
-	var cr := Rect2(pos.x, pos.y, w, 30)
+	var w := _tw(font, label, DS.T_BODY) + 26.0
+	var cr := Rect2(pos.x, pos.y, w, 34)
 	_hit(cr, id)
 	_begin_sink(cr)
-	_panel(cr, Color(col.r * 0.16, col.g * 0.14, col.b * 0.18, 0.9), Color(col.r, col.g, col.b, 0.55), 8, 1.2)
-	_txt(font, Vector2(pos.x + 10, pos.y + 21), label, 14, col.lerp(TEXT, 0.35))
+	_panel(cr, Color(col.r * 0.16, col.g * 0.14, col.b * 0.18, 0.92), Color(col.r, col.g, col.b, 0.65), 1.2)
+	_txt(font, Vector2(pos.x + 13, pos.y + 24), label, DS.T_BODY, col.lerp(TEXT, 0.35))
 	_end_sink()
-	return pos.x + w + 8
+	return pos.x + w + DS.SP_2
 
 
 ## 各主要機能へつながるフッターナビバー（旧版のボトムタブを踏襲）。
@@ -480,8 +491,7 @@ func _footer(font: Font, sz: Vector2) -> void:
 		var gcol := Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.9).lerp(col, Kit.out_cubic(near))
 		var cx := x0 + cw * 0.5
 		var glyph := String(e["icon"])
-		var gw := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, 22).x
-		_txt(font, Vector2(cx - gw * 0.5, fy + 28 - near * 2.0), glyph, 22, gcol)
+		# 字の段・位置ともメニューシートのフッターと完全に同じにする（同じ物は同じ形）
+		_txt(font, Vector2(cx - _tw(font, glyph, DS.T_SUB) * 0.5, fy + 30.0 - near * 2.0), glyph, DS.T_SUB, gcol)
 		var label := String(e["label"])
-		var lw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
-		_txt(font, Vector2(cx - lw * 0.5, fy + 48), label, 11, gcol)
+		_txt(font, Vector2(cx - _tw(font, label, DS.T_MICRO) * 0.5, fy + 50), label, DS.T_MICRO, gcol)

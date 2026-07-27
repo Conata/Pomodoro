@@ -13,7 +13,15 @@ extends Control
 ##  - 画面に無情報の黒い平面を作らない。下部は「今夜の伝票」。
 ##  - ピクセル密度を 3px モジュールに統一（q()）。背景は等倍（1テクセル=1px）。
 
-signal finished(tips: int)   # 劇場の終了（チップ合計を持ち帰る）
+## 判断が生まれる形（この劇場の芯）:
+##  - 同時に複数の客が「！」になる。それぞれ皿の価値（G）と残りの我慢が違う。
+##  - タップは一度に1人。高い客を先に出すか、切れそうな客を先に出すか＝選択。
+##  - **放置しても罰しない。** 基本の客は店番が我慢の直前に必ず滑り込む（walked_out=0）。
+##    タップは上積み（チップ＋席の回転で入る追い客）であって、押さないと減るのではない。
+##  - 取り逃がしうるのは「タップで呼び込んだ追い客」だけ。しかも最後のタップから
+##    IDLE_FORGIVE 秒で店番が全員を引き受ける＝席を外した人は絶対に損をしない。
+
+signal finished(tips: int, extra: int, walked_out: int)   # 劇場の終了（給仕の実績を持ち帰る）
 signal tip_tapped            # タップ給仕の瞬間（SFX用）
 
 # 状態色は一対一対応にする：CYAN=予報的中 だけ。金＝お金（売上・チップ）、赤＝素材切れ。
@@ -37,8 +45,20 @@ const SLAB_H := 18.0         # 天面の厚み
 const APRON_H := 99.0        # 前板の高さ
 const CUST_H := 120.0        # 客の全高（基準体格）
 const KEEPER_H := 144.0      # 48テクセル×3（背景・客と同じ3pxモジュール）
-const AUTO_SERVE := 2.0      # 着席から自動配膳までの秒数（この間はタップ給仕可）
 const TURNAWAY_MAX := 3      # 素材切れで帰す客の演出数上限
+
+# ── 我慢と自動給仕 ───────────────────────────────────────────────────
+# 我慢は客ごとに違う（1.9〜3.3秒）。この差が「どっちを先に出すか」を生む。
+# 店番は残り我慢がいちばん少ない客から出し、RESCUE を切ったら必ず滑り込む。
+# ＝放置しても基本の客はひとりも取り逃がさない（増減ゼロが保証される）。
+const PAT_MIN := 1.90        # 我慢の最短（秒）
+const PAT_MAX := 3.30        # 我慢の最長（秒）
+const PAT_BONUS := 3.20      # 追い客の我慢（少し長め＝拾える猶予を置く）
+const RESCUE := 0.55         # 残り我慢がこれを切ると店番が自分で出す（安全網）
+const KEEPER_CD := 0.28      # 店番が続けて出せる最短間隔
+const IDLE_FORGIVE := 2.20   # 最後のタップからこの秒数で「席を外した」とみなし追い客も救済
+const EXTRA_MAX := 4         # 追い客の上限（尺が伸びすぎないように）
+const SEAT_SEC := 2.00       # 追い客ひとりぶんの「早出しで浮かせた席の時間」
 
 # ── 間（タイミング）。客の一連は「歩く→座る→待つ→食べる→立つ→去る」で切れ目を作らない。
 const SIT_DUR := 0.42        # 席に腰を下ろすまで（ease-out-back で軽く沈む）
@@ -118,6 +138,17 @@ var _turn_total := 0
 var _spawn_total := 1
 var _close := 0.0                # 締めの演出の経過（_end_t 到達後）
 var _wipe := 0.0                 # 締めの布巾の位置 0..1
+# ── 給仕の実績（settle_service へ渡す3つの数）─────────────────────────
+var _per_plate := 0              # 1皿の平均売上。sim の per_plate と同じ源（script の合計÷皿数）
+var _extra_served := 0           # 追い客のうち実際に捌けた人数 → extra
+var _walked := 0                 # 我慢が切れて帰った人数 → walked_out
+var _saved := 0.0                # 早出しで浮かせた席の時間（貯まると追い客が入る）
+var _extra_pend := 0             # 入店待ちの追い客
+var _extra_born := 0             # これまでに入店した追い客
+var _keeper_cd := 0.0            # 店番の手が空くまで
+var _last_tap := -999.0          # 最後にタップした時刻（席を外した判定に使う）
+var _bonus_pop := 0.0            # 追い客が増えた瞬間の強調
+var _lost_pop := 0.0             # 取り逃がした瞬間の強調
 
 static var _glow_t: ImageTexture = null
 static var _vign_t: ImageTexture = null
@@ -214,7 +245,24 @@ func set_data(d: Dictionary) -> void:
 	_served_shown = 0
 	_matched = 0
 	_spawn_cd = 0.28          # 幕開けの静止を短くする（最初の一人が早く暖簾を割る）
-	_interval = clampf(30.0 / maxf(_script.size(), 1.0), 0.55, 1.8)
+	# 入店の間隔は我慢より短くする。ここが我慢より長いと「1人ずつ順番に」になり、
+	# 同時に複数が！にならない＝選択が発生しない。席数（5）が実際の律速になる。
+	_interval = clampf(13.0 / maxf(float(_spawn_total), 1.0), 0.55, 1.05)
+	# 1皿の平均売上。sim.settle_service の per_plate と同じ源から取る
+	# （night.gold == script の gold 合計、night.served == script の皿数）。
+	var sum_g := 0
+	for s in _script:
+		sum_g += int((s as Dictionary).get("gold", 0))
+	_per_plate = int(round(float(sum_g) / maxf(float(_script.size()), 1.0))) if not _script.is_empty() else 0
+	_extra_served = 0
+	_walked = 0
+	_saved = 0.0
+	_extra_pend = 0
+	_extra_born = 0
+	_keeper_cd = 0.0
+	_last_tap = -999.0
+	_bonus_pop = 0.0
+	_lost_pop = 0.0
 	_end_t = 0.0
 	_close = 0.0
 	_wipe = 0.0
@@ -262,7 +310,7 @@ func _finish() -> void:
 	if _done:
 		return
 	_done = true
-	finished.emit(_tips)
+	finished.emit(_tips, _extra_served, _walked)
 
 
 func _process(delta: float) -> void:
@@ -284,11 +332,21 @@ func _process(delta: float) -> void:
 	_digit_pop = maxf(_digit_pop - delta, 0.0)
 	_tip_pop = maxf(_tip_pop - delta, 0.0)
 	_keeper_lunge = maxf(_keeper_lunge - delta * 1.7, 0.0)
+	_bonus_pop = maxf(_bonus_pop - delta, 0.0)
+	_lost_pop = maxf(_lost_pop - delta, 0.0)
 	_frac_disp = _chase(_frac_disp, clampf(float(_served_shown) / maxf(_total, 1.0), 0.0, 1.0), 6.0, delta)
-	# 入店スケジューラ：空席があれば次の客（配膳 or 素材切れ）を入れる
+	# 入店スケジューラ：空席があれば次の客を入れる。
+	# 追い客（早出しで浮いた席に滑り込む客）を優先＝「席が空いた瞬間に次が入る」が見える。
 	if _spawn_cd <= 0.0:
 		var seat := _free_seat()
-		if seat >= 0 and (_next < _script.size() or _turnaway > 0):
+		if seat >= 0 and _extra_pend > 0 and not _script.is_empty():
+			_extra_pend -= 1
+			_extra_born += 1
+			_total += 1                                  # 伝票のスロットがその場で1つ増える
+			_bonus_pop = 0.75
+			_spawn(seat, (_extra_born * 5 + day) % _script.size(), true)
+			_spawn_cd = maxf(_interval * 0.55, 0.42)
+		elif seat >= 0 and (_next < _script.size() or _turnaway > 0):
 			var serving := -1
 			# 素材切れの客は最後にまとめない。まとめると夜が「✕が3回」で終わる。
 			# Bresenham で全体に散らし、最初と最後は必ず配膳の客にする。
@@ -300,30 +358,14 @@ func _process(delta: float) -> void:
 			else:
 				_turnaway -= 1
 				_turn_done += 1
-			_spawn_i += 1
-			_seats[seat] = true
-			# 先頭 regulars 人は常連（連続完走が連れてきた顔なじみ。チップ2倍）
-			var is_reg := serving >= 0 and serving < regulars
-			var sd := (seat * 7 + maxi(serving, 0) * 13 + _turnaway * 5 + day * 3) % 997
-			var x0 := size.x + 54.0
-			var sx := _seat_x(seat)
-			_custs.append({"seat": seat, "x": x0, "x0": x0, "state": "in", "t": 0.0,
-					"dur": clampf((x0 - sx) / WALK_IN, 0.85, 1.95),
-					"serving": serving, "seed": sd, "sit": 0.0,
-					# 位相・歩調・呼吸を一人ずつずらす。全員同位相は「人形の列」に見える。
-					"ph": float(sd % 61) * 0.103, "wt": float(sd % 29) * 0.21,
-					"br": 0.92 + float(sd % 9) * 0.075,
-					"gt": 0.7 + float(sd % 7) * 0.31, "gcur": 0.0, "g": sd % 4, "gseq": sd,
-					"joy": 0.0, "bt": 0.0,
-					"scarf": GOLD if is_reg else SCARF[(_next + _turnaway) % SCARF.size()],
-					"dir": -1.0, "regular": is_reg,
-					"rname": REGULAR_NAMES[serving % REGULAR_NAMES.size()] if is_reg else ""})
+			_spawn(seat, serving, false)
 			_spawn_cd = _interval
 	# 客の状態機械 — in → sit → wait → eat → up → out を途切れさせない
 	var cy := q(size.y * COUNTER_Y)
 	for c in _custs:
 		c["t"] = float(c["t"]) + delta
 		c["joy"] = maxf(float(c.get("joy", 0.0)) - delta, 0.0)
+		c["angry"] = maxf(float(c.get("angry", 0.0)) - delta, 0.0)
 		var seat_x := _seat_x(int(c["seat"]))
 		var ct := float(c["t"])
 		match String(c["state"]):
@@ -351,9 +393,16 @@ func _process(delta: float) -> void:
 					c["bt"] = 0.0
 			"wait":
 				c["bt"] = float(c["bt"]) + delta
+				# 我慢が減る。ゲージはこの値をそのまま映す（切れる瞬間まで黙っていない）。
+				c["pat"] = float(c["pat"]) - delta
 				_tick_gesture(c, delta)
-				if ct >= AUTO_SERVE:
-					_serve(c, false)
+				if float(c["pat"]) <= 0.0:
+					# 基本の客はここで必ず店番が滑り込む＝放置しても取り逃がさない。
+					# 帰るのは「タップで呼び込んだ追い客」を、動いている最中に放った時だけ。
+					if bool(c.get("bonus", false)) and (_t - _last_tap) < IDLE_FORGIVE:
+						_walk_out(c)
+					else:
+						_serve(c, false)
 			"deny":
 				c["bt"] = float(c["bt"]) + delta
 				if ct >= DENY_DUR:
@@ -361,16 +410,23 @@ func _process(delta: float) -> void:
 			"eat":
 				if ct >= EAT_DUR:
 					var s: Dictionary = _script[int(c["serving"])]
-					var g := int(s["gold"])
+					var bns := bool(c.get("bonus", false))
+					# 追い客の皿は1皿ぶんの平均＝sim の extra_gold と同じ勘定にする。
+					var g := _per_plate if bns else int(s["gold"])
+					var mt := (not bns) and bool(s.get("match", false))
+					if bns:
+						_extra_served += 1
+						_bonus_pop = 0.75
 					_gold_shown += g
 					_pop = POP_DUR
 					_served_shown += 1
-					if bool(s.get("match", false)):
+					if mt:
 						_matched += 1
 					_plates.append({"kind": _dish_kind(String(s["dish"])),
-							"match": bool(s.get("match", false)), "t": 0.0})
+							"match": mt, "t": 0.0})
 					_floats.append({"pos": Vector2(seat_x, cy - CUST_H + 12.0),
-							"text": "+%dG" % g, "col": GOLD, "t": 0.0})
+							"text": ("追い客 +%dG" % g) if bns else ("+%dG" % g),
+							"col": GOLD, "t": 0.0})
 					_burst(Vector2(seat_x + 51.0, cy - 18.0), GOLD, 9.0, 33.0, 0.28)
 					_leave(c)
 			"up":
@@ -385,6 +441,7 @@ func _process(delta: float) -> void:
 				c["wt"] = float(c["wt"]) + delta
 				var spd := lerpf(70.0, 430.0, _ei(clampf(ct / 0.8, 0.0, 1.0)))
 				c["x"] = float(c["x"]) + spd * delta * float(c["dir"])
+	_tick_keeper(delta)
 	# 退店しきった客を消す
 	var keep: Array = []
 	for c in _custs:
@@ -410,7 +467,7 @@ func _process(delta: float) -> void:
 		else:
 			bi += 1
 	# 全員はけて配膳も尽きたら、締めの演出をひと幕やってから終了
-	if _custs.is_empty() and _next >= _script.size() and _turnaway <= 0:
+	if _custs.is_empty() and _next >= _script.size() and _turnaway <= 0 and _extra_pend <= 0:
 		_end_t += delta
 		if _end_t >= 0.35:
 			if _close <= 0.0:
@@ -508,16 +565,81 @@ func _free_seat() -> int:
 	return -1
 
 
+func _waiting() -> int:
+	var n := 0
+	for c in _custs:
+		if String(c["state"]) == "wait":
+			n += 1
+	return n
+
+
+## 客をひとり入れる。serving は _script の添字（-1 は素材切れで帰す客）。
+## bonus=true は「早出しで浮いた席へ滑り込んだ追い客」＝タップの上積み。
+func _spawn(seat: int, serving: int, bonus: bool) -> void:
+	_spawn_i += 1
+	_seats[seat] = true
+	# 先頭 regulars 人は常連（連続完走が連れてきた顔なじみ。チップ2倍）
+	var is_reg := (not bonus) and serving >= 0 and serving < regulars
+	var sd := (seat * 7 + maxi(serving, 0) * 13 + _spawn_i * 5 + day * 3) % 997
+	var x0 := size.x + 54.0
+	var sx := _seat_x(seat)
+	# 我慢は客ごとに違う。ここが全員同じだと「どっちを先に出すか」が消える。
+	var pat := PAT_BONUS if bonus else lerpf(PAT_MIN, PAT_MAX, float(sd % 17) / 16.0)
+	_custs.append({"seat": seat, "x": x0, "x0": x0, "state": "in", "t": 0.0,
+			"dur": clampf((x0 - sx) / WALK_IN, 0.85, 1.95),
+			"serving": serving, "seed": sd, "sit": 0.0,
+			# 位相・歩調・呼吸を一人ずつずらす。全員同位相は「人形の列」に見える。
+			"ph": float(sd % 61) * 0.103, "wt": float(sd % 29) * 0.21,
+			"br": 0.92 + float(sd % 9) * 0.075,
+			"gt": 0.7 + float(sd % 7) * 0.31, "gcur": 0.0, "g": sd % 4, "gseq": sd,
+			"joy": 0.0, "bt": 0.0, "angry": 0.0,
+			"pat": pat, "pat0": pat, "bonus": bonus,
+			"scarf": GOLD if is_reg else SCARF[(_spawn_i + seat) % SCARF.size()],
+			"dir": -1.0, "regular": is_reg,
+			"rname": REGULAR_NAMES[maxi(serving, 0) % REGULAR_NAMES.size()] if is_reg else ""})
+
+
+## 自動給仕。店番は「残り我慢がいちばん少ない客」から出す＝プレイヤーと同じ優先順位。
+##
+## 放置しても罰しないのはここで担保している：
+##  - 基本の客は RESCUE（残り0.55秒）で必ず店番が出す。混み合って店番の手が塞がっても、
+##    我慢が0になった時点の分岐（_process の "wait"）で無条件に配膳する。取り逃しは起きない。
+##  - 追い客だけは、プレイヤーが動いている間に限って自力で待つ。最後のタップから
+##    IDLE_FORGIVE 秒が過ぎたら店番が引き受ける＝席を外した人は一皿も失わない。
+func _tick_keeper(delta: float) -> void:
+	_keeper_cd = maxf(_keeper_cd - delta, 0.0)
+	if _keeper_cd > 0.0:
+		return
+	var forgive := (_t - _last_tap) >= IDLE_FORGIVE
+	var best: Dictionary = {}
+	var bp := 1e9
+	for c in _custs:
+		if String(c["state"]) != "wait":
+			continue
+		var p := float(c["pat"])
+		var thr := RESCUE if (forgive or not bool(c.get("bonus", false))) else -1.0
+		if p <= thr and p < bp:
+			bp = p
+			best = c
+	if not best.is_empty():
+		_keeper_cd = KEEPER_CD
+		_serve(best, false)
+
+
 ## 配膳：待ち客に皿を出す。tapped=true はタップ給仕（チップが乗る）。
 func _serve(c: Dictionary, tapped: bool) -> void:
+	if String(c["state"]) != "wait":
+		return
 	c["state"] = "eat"
 	c["t"] = 0.0
 	var seat_x := _seat_x(int(c["seat"]))
 	var cy := q(size.y * COUNTER_Y)
 	var s: Dictionary = _script[int(c["serving"])]
+	# 追い客の皿は「予報的中」の勘定に入れない（_matched と表示を食い違わせない）
+	var hit := bool(s.get("match", false)) and not bool(c.get("bonus", false))
 	_floats.append({"pos": Vector2(seat_x, cy - CUST_H + 30.0),
-			"text": String(s["dish"]) + ("　★予報的中" if bool(s.get("match", false)) else ""),
-			"col": CYAN if bool(s.get("match", false)) else TEXT, "t": 0.0})
+			"text": String(s["dish"]) + ("　★予報的中" if hit else ""),
+			"col": CYAN if hit else TEXT, "t": 0.0})
 	# 吹き出しが消える瞬間を「弾けた」ことにする（ふっと消えると気づかれない）
 	var bub := Vector2(seat_x, cy - CUST_H - 42.0)
 	_burst(bub, GOLD if not tapped else Color(1.0, 0.94, 0.76), 12.0, 66.0, 0.34)
@@ -525,9 +647,21 @@ func _serve(c: Dictionary, tapped: bool) -> void:
 	_keeper_lunge = 1.0
 	_keeper_dir = signf(seat_x - size.x * KEEPER_X)
 	if tapped:
+		_last_tap = _t
+		# 早出しで浮いた席の時間を貯める。SEAT_SEC ぶん貯まるごとに追い客がひとり入る。
+		# 「早く回せば次が入る」を、プレイヤーの操作から直接引き出す。
+		_saved += maxf(float(c.get("pat", 0.0)) - RESCUE, 0.0)
+		while _saved >= SEAT_SEC and _extra_born + _extra_pend < EXTRA_MAX \
+				and _next < _script.size():
+			_saved -= SEAT_SEC
+			_extra_pend += 1
+			_bonus_pop = 0.75
+			_floats.append({"pos": Vector2(size.x - 108.0, cy - CUST_H - 66.0),
+					"text": "追い客がもう一人", "col": GOLD, "t": 0.0})
 		# 常連はチップ2倍——顔なじみは覚えていてくれる
 		var rate := 0.30 if bool(c.get("regular", false)) else 0.15
-		var tip := maxi(int(int(s["gold"]) * rate), 1)
+		var base_g := _per_plate if bool(c.get("bonus", false)) else int(s["gold"])
+		var tip := maxi(int(base_g * rate), 1)
 		_tips += tip
 		_floats.append({"pos": Vector2(seat_x, cy - CUST_H - 6.0),
 				"text": "チップ +%d" % tip, "col": GOLD, "t": 0.0})
@@ -542,6 +676,25 @@ func _serve(c: Dictionary, tapped: bool) -> void:
 			_coins.append({"p": bub, "v": Vector2(cos(a), sin(a)) * sp, "t": 0.0,
 					"tgt": tgt, "r": 6.0 + float(i % 3) * 1.5})
 		tip_tapped.emit()
+
+
+## 我慢が切れて帰る。理由を必ず言葉で出す（黙って消えると「バグ」に見える）。
+## ここへ来るのは追い客だけ——プレイヤーがタップで呼び込み、動いている最中に放った客。
+func _walk_out(c: Dictionary) -> void:
+	var seat_x := _seat_x(int(c["seat"]))
+	var cy := q(size.y * COUNTER_Y)
+	_walked += 1
+	_total = maxi(_total - 1, _served_shown)
+	_gold_shown = maxi(_gold_shown - _per_plate, 0)     # 伝票の数字がその場で落ちる
+	_pop = POP_DUR
+	_lost_pop = 1.0
+	_floats.append({"pos": Vector2(seat_x, cy - CUST_H - 30.0),
+			"text": "待ちきれず帰った", "col": DENY, "t": 0.0})
+	_floats.append({"pos": Vector2(seat_x, cy - CUST_H + 12.0),
+			"text": "-%dG" % _per_plate, "col": DENY, "t": 0.0})
+	_burst(Vector2(seat_x, cy - CUST_H - 42.0), DENY, 12.0, 108.0, 0.46)
+	c["angry"] = 1.5                                    # 去り際まで✕の吹き出しを残す
+	_leave(c)
 
 
 ## 席は「立ち上がり」の開始で空ける。次の客が歩き出せるので流れが途切れない。
@@ -567,16 +720,25 @@ func _gui_input(event: InputEvent) -> void:
 				_finish()
 			accept_event()
 			return
-	# 待ち客のタップ給仕（当たりは頭〜吹き出しを含む広めの矩形）
+	# 待ち客のタップ給仕。同時に複数が！になるので、重なった時は
+	# 「いちばん近い客」を選ぶ（配列の先頭優先だと隣の客が出てしまう）。
 	var cy := q(size.y * COUNTER_Y)
+	var pick: Dictionary = {}
+	var pd := 1e9
 	for c in _custs:
 		if String(c["state"]) != "wait":
 			continue
-		var r := Rect2(float(c["x"]) - 54.0, cy - CUST_H - 84.0, 108.0, CUST_H + 84.0)
+		# 当たりは頭〜吹き出し（我慢ゲージ）まで含める。ゲージを狙って押せること。
+		var r := Rect2(float(c["x"]) - 54.0, cy - CUST_H - 138.0, 108.0, CUST_H + 138.0)
 		if r.has_point(p):
-			_serve(c, true)
-			accept_event()
-			return
+			var d := absf(float(c["x"]) - p.x)
+			if d < pd:
+				pd = d
+				pick = c
+	if not pick.is_empty():
+		_serve(pick, true)
+		accept_event()
+		return
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -648,9 +810,10 @@ func _draw() -> void:
 	# ── 12. 今夜の伝票（下部の死に領域を報酬パネルへ）───────────────
 	_draw_receipt(font, rec)
 
-	# ── 13. ヒント ─────────────────────────────────────────────────
+	# ── 13. ヒント ＋ 席の回転メーター ──────────────────────────────
+	_draw_flow(font, rec.position.y)
 	if _t < 8.0:
-		var hint := "！の客をタップで給仕 — チップが入る"
+		var hint := "！をタップで即・給仕 — チップと追い客が増える（放置でも店番が出す）"
 		var hw := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S)).x
 		var ha := clampf((8.0 - _t) / 1.2, 0.0, 1.0)
 		var hr := Rect2(q((sz.x - hw) * 0.5 - 15.0), rec.position.y - 48.0, q(hw + 30.0), 33.0)
@@ -1053,9 +1216,13 @@ func _draw_counter_props(font: Font, cy: float) -> void:
 			draw_rect(Rect2(q(tc.x - 3.0 + k * 6.0 + swy), tc.y - 21.0 - up * 27.0, 2, 7.0 + up * 4.0),
 					Color(1, 1, 1, (0.20 - k * 0.06) * (1.0 - up) * (1.0 - up * 0.4)))
 		var c: Dictionary = occupied[i]
-		# 席札（常連＝この席の顔なじみ）
-		if bool(c.get("regular", false)):
-			var nm := String(c.get("rname", "常連"))
+		# 席札（常連＝顔なじみ／追い客＝早出しで空いた席に入った客）
+		var nm := ""
+		if bool(c.get("bonus", false)):
+			nm = "追い客"
+		elif bool(c.get("regular", false)):
+			nm = String(c.get("rname", "常連"))
+		if nm != "":
 			var nw := font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.XS)).x
 			var pw := q(nw + 14.0)
 			var pr := Rect2(q(x - pw * 0.5), cy - 18, pw, 15)
@@ -1466,35 +1633,62 @@ func _hair_style(x: float, hcy: float, hr: float, style: int, hair: Color, cloth
 			draw_rect(Rect2(x - hr, fringe, hr * 2.0, hr * 0.52), hair)
 
 
-## 頭上の吹き出し：注文の料理アイコンが入る（デイブの注文表示）。
+## 残りの我慢（0..1）。ゲージも枠の色もここ一箇所から出す＝表示が食い違わない。
+func _pat_frac(c: Dictionary) -> float:
+	return clampf(float(c.get("pat", 1.0)) / maxf(float(c.get("pat0", 1.0)), 0.01), 0.0, 1.0)
+
+
+## 我慢の残りを色にする。金（余裕）→ 橙（そろそろ）→ 赤（切れる）。
+## 切れる瞬間まで金のままだと、プレイヤーは選べない。
+func _pat_col(f: float) -> Color:
+	if f < 0.32:
+		return DENY
+	if f < 0.60:
+		return Color(1.0, 0.62, 0.28)
+	return GOLD
+
+
+## 頭上の吹き出し：注文の料理アイコン＋皿の値段＋残りの我慢ゲージ。
+## この3つが揃って初めて「どっちを先に出すか」が選べる。
 func _draw_bubble(font: Font, c: Dictionary, cy: float) -> void:
 	var st := String(c["state"])
-	if st != "wait" and st != "deny":
+	var angry: float = float(c.get("angry", 0.0))
+	if st != "wait" and st != "deny" and angry <= 0.0:
 		return
+	# 帰っていく客の✕は素材切れと同じ形で出す（去った理由が去り際まで残る）
+	var mode := "wait" if st == "wait" else "deny"
 	var x := q(float(c["x"]))
 	var sp := _cust_spec(c)
 	var ph: float = float(c.get("ph", 0.0))
 	var top := q(cy + 9.0) - float(sp["h"])
-	var bw := 78.0
-	var bh := 66.0
+	var bw := 84.0
+	var bh := 84.0 if mode == "wait" else 60.0
 	# 客ごとに違う周期でふわりと上下する（全部同じだと看板に見える）
 	var float_y: float = round(sin(_t * (2.05 + fmod(ph, 0.6)) + ph * 2.3) * 1.2) * U
 	var by := q(top - bh - 18.0 + float_y)
-	var pulse := 0.5 + 0.5 * sin(_t * (4.4 + fmod(ph, 1.3)) + ph)
-	var accent := GOLD if st == "wait" else DENY
+	var f := _pat_frac(c) if mode == "wait" else 0.0
+	# 切れかけほど速く脈打つ＝視界の端でも「急いでいる客」が拾える
+	var rate := 4.4 + fmod(ph, 1.3) + (1.0 - f) * 9.0
+	var pulse := 0.5 + 0.5 * sin(_t * rate + ph)
+	var accent := _pat_col(f) if mode == "wait" else DENY
 	var bx := clampf(q(x - bw * 0.5), 6.0, size.x - bw - 6.0)
 	var r := Rect2(bx, by, bw, bh)
 	# 出るときは弾んで開く。ぱっと出るとプレイヤーの目が拾えない。
 	# スケール 0 は多角形が潰れて三角形分割に失敗する。最小値を残す。
 	var pin := maxf(_eob(clampf(float(c.get("bt", 1.0)) / 0.24, 0.0, 1.0)), 0.08)
+	if angry > 0.0:
+		pin = maxf(clampf(angry / 1.5, 0.0, 1.0), 0.08)
 	var piv := Vector2(x, by + bh + 15.0)
 	if pin < 0.999:
 		draw_set_transform(piv, 0.0, Vector2(pin, pin))
-		_bubble_body(font, c, st, Rect2(r.position - piv, r.size), Vector2(x, by) - piv, accent, pulse)
+		_bubble_body(font, c, mode, Rect2(r.position - piv, r.size), Vector2(x, by) - piv, accent, pulse)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		return
-	_glow(Vector2(x, by + bh * 0.5), 78.0, accent, 0.14 + 0.12 * pulse)
-	_bubble_body(font, c, st, r, Vector2(x, by), accent, pulse)
+	_glow(Vector2(x, by + bh * 0.5), 84.0, accent, 0.14 + 0.14 * pulse)
+	# 切れる直前は客ごと赤く縁取る。吹き出しの中だけだと視線が下に落ちた時に気づけない。
+	if mode == "wait" and f < 0.32:
+		_glow(Vector2(x, cy - CUST_H * 0.5), 120.0, DENY, 0.10 + 0.18 * pulse)
+	_bubble_body(font, c, mode, r, Vector2(x, by), accent, pulse)
 
 
 ## 吹き出しの中身。ポップイン中は draw_set_transform 下で同じ形を描く。
@@ -1511,15 +1705,47 @@ func _bubble_body(font: Font, c: Dictionary, st: String, r: Rect2, anchor: Vecto
 	_panel(r, Color(0.97, 0.95, 0.92, 0.97), Color(accent.r, accent.g, accent.b, 0.5 + 0.5 * pulse), 10, 2.0)
 	if st == "wait":
 		var s: Dictionary = _script[int(c["serving"])]
+		var bns := bool(c.get("bonus", false))
+		var f := _pat_frac(c)
 		# 器も少し呼吸する（客ごとに位相違い）
-		var dz := 54.0 + sin(_t * 3.1 + float(c.get("ph", 0.0)) * 2.0) * 1.6
-		_dish(Vector2(bx + bw * 0.5, by + bh * 0.62), dz, _dish_kind(String(s["dish"])), true)
-		if bool(s.get("match", false)):
+		var dz := 48.0 + sin(_t * 3.1 + float(c.get("ph", 0.0)) * 2.0) * 1.6
+		_dish(Vector2(bx + bw * 0.5, by + bh * 0.40), dz, _dish_kind(String(s["dish"])), true)
+		if bool(s.get("match", false)) and not bns:
 			_pxcircle(Vector2(bx + bw - 15, by + 15), maxi(int(round((10.0) / U)), 1), Color(0.20, 0.62, 0.78))
 			_sh(font, Vector2(bx + bw - 21, by + 20), "★", int(FS.XS), Color(0.95, 1.0, 1.0))
+		# ① 皿の価値。アイコンだけでは「高い客」が分からず、選ぶ根拠が消える。
+		var gt := "%dG" % (_per_plate if bns else int(s["gold"]))
+		var gw := font.get_string_size(gt, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S)).x
+		draw_string(font, Vector2(bx + (bw - gw) * 0.5, by + bh - 24.0), gt,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S), Color(0.34, 0.22, 0.08))
+		# ② 残りの我慢。減っていくのが常に見えている＝切れる瞬間まで黙っていない。
+		_patience_bar(Rect2(bx + 12.0, by + bh - 18.0, bw - 24.0, 7.0), f)
+		# 「！」は切れかけほど大きく赤くなる（タップの手がかりは常に同じ位置）
+		var eg := 1.0 + (1.0 - f) * 0.9
+		var ex := bx + 12.0
+		var ey := by + 15.0
+		draw_rect(Rect2(ex - 2.0 * eg, ey - 9.0 * eg, 4.0 * eg, 13.0 * eg), accent)
+		draw_rect(Rect2(ex - 2.0 * eg, ey + 6.0 * eg, 4.0 * eg, 4.0 * eg), accent)
 	else:
 		_pxdiag(Vector2(bx + 21, by + 18), Vector2(bx + bw - 21, by + bh - 18), Color(0.75, 0.25, 0.22), 2)
 		_pxdiag(Vector2(bx + bw - 21, by + 18), Vector2(bx + 21, by + bh - 18), Color(0.75, 0.25, 0.22), 2)
+
+
+## 我慢ゲージ。残量そのままの長さ＋4分割の目盛（何割残っているかが一瞬で読める）。
+func _patience_bar(r: Rect2, f: float) -> void:
+	draw_rect(Rect2(r.position + Vector2(0, 1), r.size), Color(0, 0, 0, 0.22))
+	draw_rect(r, Color(0.28, 0.24, 0.21, 0.95))
+	var col := _pat_col(f)
+	if f < 0.32:
+		# 切れる直前は明滅させる。色だけだと画面の端では気づけない。
+		var bl := 0.62 + 0.38 * sin(_t * 17.0)
+		col = Color(col.r, col.g * bl, col.b * bl)
+	var w := maxf(r.size.x * f, 2.0)
+	draw_rect(Rect2(r.position, Vector2(w, r.size.y)), col)
+	draw_rect(Rect2(r.position, Vector2(w, 2.0)), Color(1, 1, 1, 0.42))
+	for k in 3:
+		draw_rect(Rect2(r.position.x + r.size.x * float(k + 1) / 4.0, r.position.y, 1.0, r.size.y),
+				Color(0, 0, 0, 0.30))
 
 
 # ── 店番 ──────────────────────────────────────────────────────────────
@@ -1958,6 +2184,31 @@ func _draw_receipt(font: Font, r: Rect2) -> void:
 	draw_rect(Rect2(stamp.x - 3, stamp.y - 9, 6, 18), seal)
 	draw_rect(Rect2(stamp.x - 9, stamp.y + 6, 18, 3), seal)
 	_sh(font, Vector2(stamp.x - 24.0, stamp.y + 39.0), "夜%d" % day, int(FS.XS), TEXT_DIM)
+	# 上積みの内訳。売上の大きな数字が「なぜ」動いたかを同じ画面で言い切る。
+	var brk_y := gy - 33.0
+	if _walked > 0:
+		var lo := "待ちきれず %d人 −%dG" % [_walked, _walked * _per_plate]
+		var lw := font.get_string_size(lo, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S)).x
+		var lk := 1.0 + 0.22 * _lost_pop
+		var lp := Vector2(stamp.x - 39.0 - lw, brk_y)
+		if _lost_pop > 0.0:
+			_glow(Vector2(lp.x + lw * 0.5, brk_y - 5), 84.0, DENY, 0.30 * _lost_pop)
+		draw_set_transform(lp, 0.0, Vector2(lk, lk))
+		draw_string(font, Vector2(1, 1), lo, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S), Color(0, 0, 0, 0.55))
+		draw_string(font, Vector2.ZERO, lo, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S), DENY)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		brk_y -= 21.0
+	if _extra_served > 0:
+		var ex := "追い客 %d人 +%dG" % [_extra_served, _extra_served * _per_plate]
+		var ew := font.get_string_size(ex, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S)).x
+		var ek := 1.0 + 0.22 * _bonus_pop
+		var ep := Vector2(stamp.x - 39.0 - ew, brk_y)
+		if _bonus_pop > 0.0:
+			_glow(Vector2(ep.x + ew * 0.5, brk_y - 5), 84.0, GOLD, 0.30 * _bonus_pop)
+		draw_set_transform(ep, 0.0, Vector2(ek, ek))
+		draw_string(font, Vector2(1, 1), ex, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S), Color(0, 0, 0, 0.55))
+		draw_string(font, Vector2.ZERO, ex, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.S), GOLD)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	var ts := ("チップ +%dG" % _tips) if _tips > 0 else "チップ　—"
 	var tcol := GOLD if _tips > 0 else TEXT_DIM
 	var tw := font.get_string_size(ts, HORIZONTAL_ALIGNMENT_LEFT, -1, int(FS.M)).x
@@ -1975,6 +2226,26 @@ func _draw_receipt(font: Font, r: Rect2) -> void:
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	# 締めの木札（最後の客が帰ったあと、画面を静止させないための一手）
 	_draw_closing(font, r, Vector2(gp.x + gw * 0.5, gp.y - 18.0))
+
+
+## 席の回転メーター。早出しで浮かせた時間が貯まると追い客がひとり入る——
+## その「あと少し」が見えないと、タップが上積みに繋がっている実感が出ない。
+func _draw_flow(font: Font, rec_top: float) -> void:
+	if _saved <= 0.0 and _extra_born <= 0:
+		return
+	var r := Rect2(q(18.0), q(rec_top - 90.0), q(198.0), 33.0)
+	var lit := clampf(_bonus_pop / 0.75, 0.0, 1.0)
+	_panel(r, Color(0.04, 0.035, 0.06, 0.86), Color(GOLD.r, GOLD.g, GOLD.b, 0.35 + 0.5 * lit), 8, 1.0)
+	_sh(font, Vector2(r.position.x + 10.0, r.position.y + 22.0), "回転", int(FS.XS), TEXT_DIM)
+	var bar := Rect2(r.position.x + 42.0, r.position.y + 13.0, 66.0, 7.0)
+	draw_rect(bar, Color(0, 0, 0, 0.5))
+	var f := clampf(_saved / SEAT_SEC, 0.0, 1.0)
+	draw_rect(Rect2(bar.position, Vector2(maxf(bar.size.x * f, 2.0), bar.size.y)), GOLD)
+	draw_rect(Rect2(bar.position, Vector2(maxf(bar.size.x * f, 2.0), 2.0)), Color(1.0, 0.94, 0.72))
+	if lit > 0.0:
+		_glow(Vector2(bar.position.x + bar.size.x, bar.position.y + 3.0), 42.0 + 42.0 * lit, GOLD, 0.40 * lit)
+	var bt := "追い客 %d人" % _extra_born
+	_sh(font, Vector2(bar.position.x + bar.size.x + 9.0, r.position.y + 22.0), bt, int(FS.XS), GOLD)
 
 
 ## 締め：木札が上から落ちてバウンドし、売上に光の輪が広がる。

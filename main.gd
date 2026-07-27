@@ -349,13 +349,16 @@ func _surface() -> void:
 		"streak": int(sim.state["streak"]),
 	}
 	_last_summary = {}
-	# 翌朝へ進めてから保存（リザルト中にアプリが落ちても状態は常に整合）
-	sim.next_morning()
+	var script: Array = night.get("script", [])
+	# 劇場を上演する夜は「翌朝へ進める」を幕が降りるまで遅らせる。
+	# settle_service は pending_night（皿数・売上）を書き換えるので、
+	# 先に next_morning すると上積みの行き先が消えてしまう。
+	if script.is_empty():
+		sim.next_morning()
 	_refresh_home_data("「お疲れさま。今夜は %dG の売上だったよ」" % int(night.get("gold", 0)))
 	_save()             # 精算・開封・翌朝の確定を保存
 	_sfx("chest_open" if not box_results.is_empty() else "teleport")   # 浮上の音
 	# 皿が出た夜は、精算の前に夜営業シアターを上演（スキップ可・放置でも完走）
-	var script: Array = night.get("script", [])
 	if script.is_empty():
 		_show_result(result_data)
 	else:
@@ -369,13 +372,28 @@ func _surface() -> void:
 		_night_overlay.visible = true
 
 
-## 夜営業の幕が降りた：タップ給仕のチップを実収入に反映して精算へ。
-func _on_night_finished(tips: int) -> void:
+## 夜営業の幕が降りた：給仕の実績（チップ・追い客・取り逃し）を精算へ反映する。
+## close_day の売上は「その夜に出せる上限」で、確定値はここで決まる。
+## 何もしなければ 0/0/0 が渡り、delta も 0＝席を外した人は一切損をしない。
+func _on_night_finished(tips: int, extra: int, walked_out: int) -> void:
 	_night_overlay.visible = false
-	if tips > 0 and sim != null:
-		sim.add_tips(tips)
-		if _pending_result.has("lines"):
-			(_pending_result["lines"] as Array).append("タップ給仕のチップ +%dG" % tips)
+	if sim != null:
+		var r := sim.settle_service(tips, extra, walked_out)
+		var parts: Array[String] = []
+		if int(r["tips"]) > 0:
+			parts.append("タップ給仕 +%dG" % int(r["tips"]))
+		if int(r["extra"]) > 0:
+			parts.append("追い客 %d人 +%dG" % [int(r["extra"]), int(r["extra_gold"])])
+		if int(r["walked_out"]) > 0:
+			parts.append("待ちきれず %d人 −%dG" % [int(r["walked_out"]), int(r["lost_gold"])])
+		if not parts.is_empty() and _pending_result.has("lines"):
+			(_pending_result["lines"] as Array).append("／".join(parts))
+		# 上積み後の売上を精算画面へ（劇場の伝票の数字と食い違わせない）
+		var night: Dictionary = sim.state["pending_night"]
+		if not night.is_empty():
+			_pending_result["gold"] = int(night.get("gold", _pending_result.get("gold", 0)))
+		sim.next_morning()          # 上積みを織り込んでから翌朝へ
+		_refresh_home_data("「お疲れさま。今夜は %dG の売上だったよ」" % int(_pending_result.get("gold", 0)))
 		_save()
 	if not _pending_result.is_empty():
 		_show_result(_pending_result)
