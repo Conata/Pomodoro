@@ -668,9 +668,9 @@ func _build_env_home() -> void:
 	env.ambient_light_energy = 0.5
 	env.glow_enabled = true
 	# 露出対策：閾値を1.0超に上げ「本当に光る面」だけ滲ませる（舞台の白飛び防止）
-	env.glow_intensity = 0.55
-	env.glow_bloom = 0.08
-	env.glow_hdr_threshold = 1.05
+	env.glow_intensity = 0.40
+	env.glow_bloom = 0.04
+	env.glow_hdr_threshold = 1.35
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.10, 0.12, 0.22)
@@ -716,17 +716,26 @@ func _build_props_home() -> void:
 	_add_box(Vector3(0.0, 1.15, -1.2), Vector3(7.2, 0.12, 1.2), Color(0.28, 0.18, 0.12), 0.4)  # 天板
 	# 背後の店内壁（暖色で発光させて「店内の灯り」）
 	_add_box(Vector3(0.0, 1.8, -3.6), Vector3(8.0, 3.6, 0.4), Color(0.18, 0.10, 0.06), 0.6)
-	_emissive_box(Vector3(0.0, 1.7, -3.35), Vector3(6.4, 2.0, 0.1), WARM, 1.2)  # 暖色の店内窓
+	_emissive_box(Vector3(0.0, 1.7, -3.35), Vector3(6.4, 2.0, 0.1), WARM, 0.5)  # 暖色の店内窓
 	# ピンクのネオン看板「黒猫飯店」（カウンター上・店の主役サイン）
+	# 発光は看板の"面"を光らせるだけに留め（強すぎると白飛びして文字が消える）、
+	# 店名は Label3D で面の手前に置く。看板に文字が無いと「作りかけ」に見えるため。
 	const PINK := Color(1.0, 0.32, 0.72)
-	_emissive_box(Vector3(0.0, 3.5, -2.6), Vector3(4.8, 0.9, 0.2), PINK, 3.4)
-	_emissive_box(Vector3(-2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), PINK, 2.8)  # タテ看板
-	_emissive_box(Vector3(2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), NEON_CYAN, 2.6)  # 対のシアン
+	_add_box(Vector3(0.0, 3.5, -2.62), Vector3(4.9, 1.0, 0.22), Color(0.10, 0.03, 0.07), 0.5)  # 看板の枠
+	_emissive_box(Vector3(0.0, 3.5, -2.6), Vector3(4.8, 0.9, 0.2), PINK, 1.15)
+	_sign_text("黒猫飯店", Vector3(0.0, 3.5, -2.46), 0.62, Color(1.0, 0.93, 0.98))
+	_emissive_box(Vector3(-2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), PINK, 1.1)  # タテ看板
+	_sign_text("酒", Vector3(-2.9, 3.32, -2.28), 0.30, Color(1.0, 0.95, 0.99))
+	_sign_text("麺", Vector3(-2.9, 2.72, -2.28), 0.30, Color(1.0, 0.95, 0.99))
+	_emissive_box(Vector3(2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), NEON_CYAN, 1.05)  # 対のシアン
+	_sign_text("点", Vector3(2.9, 3.32, -2.28), 0.30, Color(0.92, 0.99, 1.0))
+	_sign_text("心", Vector3(2.9, 2.72, -2.28), 0.30, Color(0.92, 0.99, 1.0))
 	# 赤提灯を店先に吊るす（中華）
 	for x in [-3.4, -2.0, -0.7, 0.7, 2.0, 3.4]:
-		_emissive_box(Vector3(x, 2.7, -0.4), Vector3(0.42, 0.6, 0.42), NEON_RED, 2.6)
+		_emissive_box(Vector3(x, 2.7, -0.4), Vector3(0.42, 0.6, 0.42), NEON_RED, 1.15)
 	# 「千客万来」の赤い札（黒猫飯店サインの下）
-	_emissive_box(Vector3(0.0, 2.45, -2.5), Vector3(1.7, 0.46, 0.15), NEON_RED, 2.4)
+	_emissive_box(Vector3(0.0, 2.45, -2.5), Vector3(1.7, 0.46, 0.15), NEON_RED, 1.05)
+	_sign_text("千客萬来", Vector3(0.0, 2.45, -2.40), 0.26, Color(1.0, 0.90, 0.72))
 
 	# ── カウンター裏の酒瓶棚（バーらしさ。色とりどりの小瓶＋棚板）──
 	var bottle_cols := [
@@ -739,7 +748,7 @@ func _build_props_home() -> void:
 		var sy := 1.5 + row * 0.56
 		for i in 9:
 			_emissive_box(Vector3(-3.6 + i * 0.9, sy, -3.12), Vector3(0.15, 0.4, 0.12),
-					bottle_cols[i % bottle_cols.size()], 1.4)
+					bottle_cols[i % bottle_cols.size()], 0.85)
 
 	# ── パーティテーブル（光る紫＝編成卓）。VN窓に被らないよう奥めに小さく ──
 	const PURPLE := Color(0.65, 0.3, 1.0)
@@ -761,6 +770,25 @@ func _build_props_home() -> void:
 	_light_shaft(Vector3(0.0, 1.9, -3.0), Vector2(5.0, 3.2), Color(WARM.r, WARM.g, WARM.b, 0.12), 0, -10)
 	_light_shaft(Vector3(-4.2, 2.6, -8.8), Vector2(2.0, 5.0), Color(NEON_MAGENTA.r, NEON_MAGENTA.g, NEON_MAGENTA.b, 0.14), 10, 6)
 	_light_shaft(Vector3(4.2, 2.6, -9.0), Vector2(2.0, 5.0), Color(NEON_CYAN.r, NEON_CYAN.g, NEON_CYAN.b, 0.14), -10, 6)
+
+
+## 看板の文字（3D空間に置く Label3D）。プロジェクトのドット字体を使い、
+## 縁取りを付けてネオンの滲みに負けないようにする。
+func _sign_text(text: String, pos: Vector3, size: float, col: Color) -> void:
+	var l := Label3D.new()
+	l.text = text
+	l.font = load("res://assets/fonts/DotGothic16-Regular.ttf")
+	l.font_size = 96
+	l.pixel_size = size / 96.0
+	l.modulate = col
+	l.outline_size = 14
+	l.outline_modulate = Color(0.08, 0.01, 0.05, 0.92)
+	l.billboard = BaseMaterial3D.BILLBOARD_DISABLED
+	l.shaded = false
+	l.double_sided = false
+	l.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	l.position = pos
+	_sub.add_child(l)
 
 
 ## 紫の炎モンスター1体（暗い球体＋発光コア＋点光源＋接地影）。
