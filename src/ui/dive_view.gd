@@ -4,7 +4,6 @@ extends Control
 ## 深い青のモノクローム、絶え間ない雨、シアンの発光、白の斜めバンド。
 ## スプライトは 0x72 DungeonTilesetII（CC0）を青に沈めて使う。
 
-const FRAME_DIR := "res://assets/third_party/dungeon/frames/"
 const FX_DIR := "res://assets/third_party/effects/"
 const SCALE := 3.0
 const ANIM_FPS := 6.0
@@ -19,6 +18,7 @@ var sim: KuroSim = null
 var pulse := 0.0
 var remaining := -1.0  # 集中の残り秒（main から供給・配信タイマー表示用）
 var _tex_cache := {}
+var _mob_frames := {}   # "<sprite>:<f>" -> 反転済み1コマ Texture2D
 var _fx_active: Array = []
 var _bubble := {}  # {girl, text, t}
 var _dialog: Array = []  # 直近の掛け合いログ {who,text,col}
@@ -123,14 +123,31 @@ func _tex(path: String) -> Texture2D:
 	return _tex_cache[path]
 
 
-func _anim_tex(prefix: String, mode: String) -> Texture2D:
-	if prefix.is_empty():
-		return null
+## 敵スプライトの1コマ（味方と同じ生成スプライト系。64x96 の4コマ横ストリップ）。
+## 左（味方）を向くよう反転済みのテクスチャを作って返す。
+func _mob_frame(sprite_name: String) -> Texture2D:
 	var f := int(pulse * ANIM_FPS) % 4
-	var tex := _tex(FRAME_DIR + "%s_%s_anim_f%d.png" % [prefix, mode, f])
-	if tex == null:
-		tex = _tex(FRAME_DIR + "%s_anim_f%d.png" % [prefix, f])  # necromancer 等
-	return tex
+	var key := "%s:%d" % [sprite_name, f]
+	if _mob_frames.has(key):
+		return _mob_frames[key]
+	var t: Texture2D = null
+	var sheet := _tex("res://assets/generated/sprites/%s/walk_front.png" % sprite_name)
+	if sheet == null:
+		sheet = _tex("res://assets/generated/sprites/mob_drone/walk_front.png")
+	if sheet != null:
+		var img := sheet.get_image()
+		if img != null:
+			img = img.duplicate()
+			if img.is_compressed():
+				img.decompress()
+			img.convert(Image.FORMAT_RGBA8)
+			var fw := int(img.get_width() / 4)
+			var frame := Image.create(fw, img.get_height(), false, Image.FORMAT_RGBA8)
+			frame.blit_rect(img, Rect2i(fw * f, 0, fw, img.get_height()), Vector2i.ZERO)
+			frame.flip_x()
+			t = ImageTexture.create_from_image(frame)
+	_mob_frames[key] = t
+	return t
 
 
 ## 待機中の店先バナー。薄い高さ（~96px）でも成立するモダンなネオン演出：
@@ -212,14 +229,17 @@ func _draw_sprite(tex: Texture2D, foot: Vector2, flip: bool = false, tint: Color
 	draw_texture_rect(tex, rect, false, tint)
 
 
-## 足元の楕円ソフトシャドウ。キャラを地面に「立たせる」ための接地感。
+## 足元の楕円ソフトシャドウ（2層）。楕円の中心は足元のすぐ下（+1px）に置き、
+## 内は濃く小さく／外は薄く広く＝地面に落ちた影の減衰を作る（浮きを消す）。
 func _draw_shadow(cx: float, ground: float, w: float) -> void:
-	var pts := PackedVector2Array()
-	var seg := 20
-	for k in seg:
-		var a := TAU * k / seg
-		pts.append(Vector2(cx + cos(a) * w * 0.5, ground + 5.0 + sin(a) * w * 0.16))
-	draw_colored_polygon(pts, Color(0, 0, 0, 0.30))
+	for layer: Array in [[w * 1.62, 0.25], [w, 0.55]]:
+		var ww: float = layer[0]
+		var pts := PackedVector2Array()
+		var seg := 20
+		for k in seg:
+			var a := TAU * k / seg
+			pts.append(Vector2(cx + cos(a) * ww * 0.5, ground + 1.0 + sin(a) * ww * 0.10))
+		draw_colored_polygon(pts, Color(0, 0, 0, layer[1]))
 
 
 ## 個別フレームスプライト（assets/generated/sprites/<id>/<anim>_f<n>.png）を
@@ -236,7 +256,7 @@ func _get_chibi_anim(id: String) -> ChibiAnim:
 	return _chibi_anims[id]
 
 
-func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool, h: float, flip: bool = false, hit: bool = false, moving: bool = true) -> float:
+func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool, h: float, flip: bool = false, hit: bool = false, moving: bool = true, outline_col: Color = Color(0.0, 0.0, 0.05, 0.72)) -> float:
 	# パラメーターを Animator に渡す（Unity の SetFloat/SetBool に相当）
 	var anim: ChibiAnim = _get_chibi_anim(id)
 	anim.update_params(
@@ -254,7 +274,7 @@ func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool, h: flo
 	if tex == null:
 		tex = _tex("res://assets/generated/sprites/%s/idle_f0.png" % id)
 	if tex == null and id != "yuzuki":
-		return _draw_chibi("yuzuki", foot, in_combat, alive, h, flip, hit, moving)
+		return _draw_chibi("yuzuki", foot, in_combat, alive, h, flip, hit, moving, outline_col)
 	if tex == null:
 		return 0.0
 
@@ -265,9 +285,8 @@ func _draw_chibi(id: String, foot: Vector2, in_combat: bool, alive: bool, h: flo
 	if flip:
 		rect = Rect2(rect.position + Vector2(rect.size.x, 0), Vector2(-rect.size.x, rect.size.y))
 	var tint := Color(1, 1, 1) if alive else Color(0.45, 0.47, 0.58)
-	# ピクセルアート輪郭線（4方向）
+	# ピクセルアート輪郭線（4方向）。敵は赤い輪郭で「敵である」ことを色で伝える。
 	var ofs := maxf(1.0, sc * 0.5)
-	var outline_col := Color(0.0, 0.0, 0.05, 0.72)
 	for ov in [Vector2(ofs, 0), Vector2(-ofs, 0), Vector2(0, ofs), Vector2(0, -ofs)]:
 		draw_texture_rect(tex, Rect2(rect.position + ov, rect.size), false, outline_col)
 	draw_texture_rect(tex, rect, false, tint)
@@ -325,7 +344,8 @@ func _draw_hp(center_x: float, top_y: float, ratio: float, width: float = 34.0) 
 	draw_rect(Rect2(center_x - width * 0.5, top_y, width * r, 4), c)
 
 
-func _draw_fx(ground: float) -> void:
+## FX は「被弾した実体の座標」に付ける（ハードコードのx座標は使わない）。
+func _draw_fx(ground: float, party_x: Array, enemy_x: Array) -> void:
 	for fx in _fx_active:
 		var def: Dictionary = FX_DEFS[fx["kind"]]
 		var tex := _tex(String(def["file"]))
@@ -334,7 +354,13 @@ func _draw_fx(ground: float) -> void:
 		var frame := clampi(int(float(fx["t"]) * float(def["fps"])), 0, int(def["frames"]) - 1)
 		var fsize := int(def["size"])
 		var dsize := fsize * SCALE
-		var x := (size.x - 120.0) if fx["at"] == "enemy" else 100.0
+		var anchors: Array = enemy_x if fx["at"] == "enemy" else party_x
+		var x := (size.x * 0.76) if fx["at"] == "enemy" else (size.x * 0.24)
+		if not anchors.is_empty():
+			var sx := 0.0
+			for v in anchors:
+				sx += float(v)
+			x = sx / anchors.size()
 		draw_texture_rect_region(tex, Rect2(x - dsize * 0.5, ground - dsize, dsize, dsize),
 				Rect2(frame * fsize, 0, fsize, fsize))
 
@@ -356,7 +382,7 @@ func _draw() -> void:
 	var dist := float(sim.state["dist"])
 	var in_combat: bool = sim.state["in_combat"]
 	var door_open := float(run["door_pending"]) > 0.0
-	var ground := sz.y * 0.58           # 立ち絵の足元（モックに合わせ画面中段）
+	var ground := sz.y * 0.44           # 足元を上げて背景（空）に面積を渡す
 	var chibi_h := clampf(sz.y * 0.26, 140.0, 240.0)
 
 	# ====== ワールド層（疑似カメラ：ズーム/緩いパン/被弾シェイク）======
@@ -397,46 +423,40 @@ func _draw() -> void:
 		var moving := not door_open
 		var dw := _draw_chibi(id, foot, in_combat, alive, ch, false, hit, moving)
 		if dw > 0.0:
-			_draw_shadow(x, ground + 2.0, dw * 0.74)
-			if alive:
+			_draw_shadow(x, ground, dw * 0.34)
+			# 頭上HPは被弾時だけ（常設のHPは下部カードに一本化）
+			if alive and hit:
 				_draw_hp(x, foot.y - ch - 12.0, float(sim.state["hp"][id]) / sim.girl_maxhp(id),
 						maxf(36.0, dw * 0.7))
 		else:
-			var tex := _anim_tex(String(KuroData.GIRLS[id]["sprite"]), "run" if alive else "idle")
-			if tex != null:
-				var scl := (ch * 0.9) / tex.get_size().y
-				_draw_shadow(x, ground + 2.0, tex.get_size().x * scl * 0.7)
-				_draw_sprite(tex, foot, false, TINT if alive else Color(0.25, 0.3, 0.45), scl)
-				if alive:
-					_draw_hp(x, foot.y - ch - 12.0, float(sim.state["hp"][id]) / sim.girl_maxhp(id))
-			else:
-				draw_circle(Vector2(x, ground - 14), 12.0, KuroData.GIRLS[id]["color"])
+			draw_circle(Vector2(x, ground - 14), 12.0, KuroData.GIRLS[id]["color"])
 
-	# 敵（右・前景）：通常はスプライト。戦闘中は赤い✕のうずを重ねる（モック準拠）
-	var boss_mob := {}
+	# 敵（右・前景）：味方と同じ生成スプライトを味方の1.35倍で描き、
+	# 足元に赤い接地リング＋赤い輪郭で「敵である」ことを伝える（赤い✕は廃止）。
 	var enemy_cx := sz.x * 0.8
+	var enemy_x: Array = []
 	for i in sim.state["mobs"].size():
 		var m: Dictionary = sim.state["mobs"][i]
 		var x: float = enemy_cx - i * (slot * 0.7) - lunge_enemy
-		var tex2 := _anim_tex(String(m.get("sprite", "")), "idle")
+		enemy_x.append(x)
 		var ratio := clampf(float(m["hp"]) / float(m["max_hp"]), 0.0, 1.0)
-		var tint: Color = Color(1.0, 0.55, 0.6) if m["boss"] else (Color(0.9, 0.75, 1.1) if m["elite"] else TINT)
-		if m["boss"]:
-			boss_mob = m
+		var eh := ch * (2.0 if m["boss"] else 1.35)
+		var tex2 := _mob_frame(String(m.get("sprite", "mob_drone")))
 		if tex2 != null:
-			var escl := clampf((ch * 0.62) / tex2.get_size().y, SCALE, 16.0)
-			if m["boss"]:
-				escl *= 1.3
-			_draw_shadow(x, ground + 2.0, tex2.get_size().x * escl * 0.7)
-			_draw_sprite(tex2, Vector2(x, ground), true, tint, escl)
-			_draw_hp(x, ground - tex2.get_size().y * escl - 10.0, ratio, 48.0 if m["boss"] else 34.0)
+			var escl := eh / tex2.get_size().y
+			var edw := tex2.get_size().x * escl
+			_draw_shadow(x, ground, edw * 0.34)
+			_draw_enemy_ring(Vector2(x, ground), edw * 0.30)
+			var er := Rect2(x - edw * 0.5, ground - eh, edw, eh)
+			var eo := maxf(1.0, escl * 0.55)
+			for ov in [Vector2(eo, 0), Vector2(-eo, 0), Vector2(0, eo), Vector2(0, -eo)]:
+				draw_texture_rect(tex2, Rect2(er.position + ov, er.size), false, Color(0.8, 0.1, 0.15, 0.85))
+			draw_texture_rect(tex2, er, false, Color(1, 1, 1))
+			_draw_hp(x, ground - eh - 10.0, ratio, 48.0 if m["boss"] else 34.0)
 		else:
-			draw_circle(Vector2(x, ground - 14), 16.0 if m["boss"] else 10.0, tint)
-	if in_combat:
-		var rr := chibi_h * (0.78 if not boss_mob.is_empty() else 0.5)
-		_draw_redx(Vector2(enemy_cx, ground - ch * 0.45), rr, not boss_mob.is_empty())
+			draw_circle(Vector2(x, ground - 14), 16.0 if m["boss"] else 10.0, TINT)
 
-	_draw_fx(ground)
+	_draw_fx(ground, party_x, enemy_x)
 
 	# セリフ吹き出し（頭上・ワールド層）
 	if not _bubble.is_empty():
@@ -466,7 +486,8 @@ func _draw_explore_bg(sz: Vector2, biome: Dictionary, dist: float) -> void:
 		var drift := sin(pulse * 0.15) * 8.0  # 緩い縦ドリフト＝生命感
 		draw_texture_rect(tex, Rect2((sz.x - dw) * 0.5, (sz.y - dh) * 0.5 + drift, dw, dh), false)
 		draw_rect(Rect2(0, 0, sz.x, sz.y), Color(0.03, 0.03, 0.07, 0.42))
-		draw_rect(Rect2(0, sz.y * 0.6, sz.x, sz.y * 0.4), Color(0.01, 0.01, 0.03, 0.42))
+		# ※下半分を沈める暗幕は廃止（画面の下半分を殺していた）。
+		_draw_lightshaft(sz)
 		return
 	# フォールバック：従来のプロシージャル都市（視差スクロール）
 	var bg: Color = biome["color"]
@@ -480,19 +501,42 @@ func _draw_explore_bg(sz: Vector2, biome: Dictionary, dist: float) -> void:
 
 ## 地面プラットフォーム（タイル状のレール）。キャラを「乗せる」接地感。
 func _draw_ground(sz: Vector2, ground: float, biome: Dictionary) -> void:
-	var plat_h := 8.0
+	var plat_h := sz.y * 0.06
 	var base_col: Color = biome["color"]
-	# 台座の塗り（床面）
-	draw_rect(Rect2(0, ground, sz.x, plat_h), Color(base_col.r * 0.3 + 0.06, base_col.g * 0.3 + 0.04, base_col.b * 0.3 + 0.12))
-	# タイル境界線（等間隔の縦スリット）
-	var tile_w := 28.0
-	for k in ceili(sz.x / tile_w) + 1:
-		var tx := fposmod(float(k) * tile_w - fposmod(pulse * 30.0, tile_w), sz.x + tile_w)
-		draw_rect(Rect2(tx, ground, 1.5, plat_h), Color(base_col.r * 0.6 + 0.1, base_col.g * 0.6 + 0.08, base_col.b * 0.6 + 0.22, 0.7))
-	# 上辺のハイライト
-	draw_rect(Rect2(0, ground, sz.x, 2.0), Color(base_col.r * 0.9 + 0.3, base_col.g * 0.9 + 0.35, base_col.b * 0.9 + 0.6, 0.75))
-	# 台座の影（床面すぐ下）
-	draw_rect(Rect2(0, ground + plat_h, sz.x, 6.0), Color(0, 0, 0, 0.22))
+	var far_c := Color(base_col.r * 0.3 + 0.08, base_col.g * 0.3 + 0.06, base_col.b * 0.3 + 0.14)
+	var near_c := Color(base_col.r * 0.5 + 0.20, base_col.g * 0.5 + 0.18, base_col.b * 0.5 + 0.26)
+	# 床（奥＝暗く、手前＝明るく。下端まで塗って正体不明の黒帯を作らない）
+	draw_polygon(
+			PackedVector2Array([Vector2(0, ground), Vector2(sz.x, ground),
+					Vector2(sz.x, sz.y), Vector2(0, sz.y)]),
+			PackedColorArray([far_c, far_c, near_c, near_c]))
+	# 透視ライン（下ほど間隔が広がる）
+	var depth := sz.y - ground
+	for i in range(1, 9):
+		var k := float(i) / 9.0
+		draw_rect(Rect2(0, ground + depth * pow(k, 1.7), sz.x, 1.0),
+				Color(0.62, 0.52, 0.95, 0.05 + 0.10 * k))
+	# 上辺のハイライト（接地のアンカー）
+	draw_rect(Rect2(0, ground - 2.0, sz.x, 2.0), Color(base_col.r * 0.9 + 0.3, base_col.g * 0.9 + 0.35, base_col.b * 0.9 + 0.6, 0.75))
+	draw_rect(Rect2(0, ground, sz.x, 1.0), Color(0, 0, 0, 0.5))
+	# 手前の濡れた路面の反射（ネオンが伸びる）
+	for r: Array in [[0.22, Color(1.0, 0.42, 0.78)], [0.55, Color(0.40, 0.95, 1.0)],
+			[0.84, Color(1.0, 0.62, 0.30)]]:
+		var rx := sz.x * float(r[0])
+		var c: Color = r[1]
+		for j in 6:
+			var w := 9.0 + j * 5.0
+			draw_rect(Rect2(rx - w * 0.5 + sin(pulse * 1.3 + j) * 3.0,
+					ground + depth * (0.14 + j * 0.12), w, 3.0),
+					Color(c.r, c.g, c.b, 0.17 * (1.0 - j / 7.0)))
+	# ネオン管の芯（画面で一番明るい点を短く置く）
+	for k in 5:
+		draw_rect(Rect2(fposmod(sz.x * (0.08 + k * 0.21) - dist_scroll(), sz.x), ground - 3.0, 14.0, 2.0),
+				Color(0.95, 1.0, 1.0))
+
+
+func dist_scroll() -> float:
+	return float(sim.state["dist"]) * 14.0 if sim != null else 0.0
 
 
 ## 扉決断中のイベントカード演出（3枚フロート）。
@@ -573,15 +617,15 @@ func _draw_damage_numbers(font: Font) -> void:
 				HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(col.r, col.g, col.b, alpha))
 
 
-## 敵遭遇のサイン：赤く脈動する✕のうず（ボスは大きく＋外周リング）。
-func _draw_redx(center: Vector2, r: float, big: bool) -> void:
+## 敵の足元の赤い接地リング（脈動）。「敵はここに立っている」を最短で伝える。
+func _draw_enemy_ring(feet: Vector2, rx: float) -> void:
 	var p := 0.5 + 0.5 * sin(pulse * 3.0)
-	draw_circle(center, r * (1.15 + 0.06 * p), Color(0.95, 0.15, 0.2, 0.10 + 0.06 * p))
-	draw_circle(center, r * 0.8, Color(0.7, 0.05, 0.12, 0.16))
-	var a := r * 0.62
-	var w := maxf(4.0, r * 0.12)
-	var col := Color(1.0, 0.25, 0.3, 0.85 + 0.15 * p)
-	draw_line(center + Vector2(-a, -a), center + Vector2(a, a), col, w)
-	draw_line(center + Vector2(-a, a), center + Vector2(a, -a), col, w)
-	if big:
-		draw_arc(center, r, 0.0, TAU, 48, Color(1.0, 0.3, 0.35, 0.5), 2.0)
+	var k := 1.0 + 0.07 * p
+	var col := Color(1.0, 0.22, 0.26, 0.34 + 0.24 * p)
+	for scale: float in [1.0, 0.62]:
+		var pts := PackedVector2Array()
+		for i in 21:
+			var a := TAU * i / 20.0
+			pts.append(feet + Vector2(0, 1) + Vector2(cos(a) * rx * k * scale,
+					sin(a) * rx * k * scale * 0.30))
+		draw_polyline(pts, Color(col.r, col.g, col.b, col.a * (1.0 if scale > 0.9 else 0.6)), 2.0)

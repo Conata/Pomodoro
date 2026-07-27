@@ -5,23 +5,41 @@ extends Control
 ## 右＝敵がスライドイン、下＝石畳の帯、奥＝ネオン都市のパララックス。
 ## 頭上にHPミニバー＋スキルCDピップ。main.gd が毎フレーム set_view() で駆動する。
 
-const GROUND_Y := 0.70      # 地面ラインの画面比
-const BAND_H := 118.0       # 石畳帯の高さ
+const GROUND_Y := 0.80      # 地面ラインの画面比（キャラを画面下寄りに＝背景に空間を渡す）
+const FOOT_UI_H := 132.0    # 下部カードUIの高さ（床はここまで伸ばして黒地を作らない）
 const BG_SCALE := 1.6       # 都市パララックスの拡大率（空の余白を埋める）
-const PARTY_X0 := 132.0     # 隊列先頭のx
-const PARTY_GAP := 58.0     # 隊列間隔
-const ENEMY_X0 := 0.66      # 敵スロット先頭（画面比）
-const ENEMY_GAP := 62.0
-const GIRL_H := 84.0        # 味方の表示身長(px)
-const GIRL_PIX_H := 32      # 味方スプライトのピクセル化高さ（敵ドットと画素密度を揃える）
-const MOB_H := 78.0         # 雑魚の表示身長(px)
-const BOSS_H := 148.0       # ボスの表示身長(px)
+const PARTY_X0 := 84.0      # 隊列先頭のx
+const PARTY_GAP := 66.0     # 隊列間隔
+const ENEMY_X0 := 0.64      # 敵スロット先頭（画面比）
+const ENEMY_GAP := 90.0
+const GIRL_H := 112.0       # 味方の表示身長(px)
+const GIRL_PIX_H := 64      # 味方スプライトのピクセル化高さ（敵ドットと画素密度を揃える）
+const MOB_H := 158.0        # 雑魚の表示身長(px)＝味方の約1.4倍
+const BOSS_H := 264.0       # ボスの表示身長(px)
+const MOB_DIR := "res://assets/generated/sprites/"   # 敵も味方と同じ生成スプライト系
+const MOB_FRAMES := 4       # walk_front.png は 4 コマの横ストリップ
 
 const PINK := Color(1.0, 0.36, 0.72)
 const CYAN := Color(0.35, 0.92, 1.0)
 const PURPLE := Color(0.66, 0.4, 1.0)
 const GOLD := Color(1.0, 0.82, 0.4)
 const HP_COL := Color(0.45, 0.9, 0.5)
+const ENEMY_LINE := Color(0.80, 0.10, 0.15, 0.85)   # 敵だけの輪郭色
+const ALLY_LINE := Color(0.02, 0.02, 0.06, 0.85)
+const NEON_CORE := Color(0.95, 1.0, 1.0)            # 画面で一番明るい点（ネオン管の芯）
+
+# 背景の看板を実在の語に置き換える（city_mid.png に焼かれた「実在しない漢字」を覆う）。
+# rect は city_mid.png（720x260）のソース座標＝焼かれた看板の実測位置。
+const SIGNS := [
+	{"r": Rect2(228, 66, 94, 42), "t": "深層", "c": Color(0.40, 0.95, 1.0), "v": false},
+	{"r": Rect2(130, 80, 86, 28), "t": "営業中", "c": Color(1.0, 0.42, 0.78), "v": false},
+	{"r": Rect2(484, 22, 162, 52), "t": "二十四時", "c": Color(1.0, 0.62, 0.30), "v": false},
+	{"r": Rect2(46, 18, 28, 90), "t": "麺処", "c": Color(1.0, 0.35, 0.42), "v": true},
+	{"r": Rect2(330, 30, 24, 78), "t": "電脳", "c": Color(0.55, 0.65, 1.0), "v": true},
+	{"r": Rect2(454, 16, 24, 84), "t": "黒猫", "c": Color(1.0, 0.85, 0.35), "v": true},
+	{"r": Rect2(670, 54, 50, 26), "t": "酒場", "c": Color(0.45, 1.0, 0.80), "v": false},
+	{"r": Rect2(0, 66, 22, 28), "t": "湯", "c": Color(1.0, 0.72, 0.35), "v": false},
+]
 
 # set_view() で main.gd から毎フレーム
 var dist := 0.0
@@ -46,6 +64,7 @@ var _enemy_pos: Array = []   # 直近フレームの敵足元
 var _floaters: Array = []    # {txt, col, side, slot, t0, jx}
 var _slashes: Array = []     # 敵への斬撃 {slot, t0}
 var _hurt_t := -9.9          # 盾役の被弾時刻（赤フラッシュ＋ノックバック）
+var _party_hurt: Array = []  # 味方ごとの被弾時刻（頭上HPは被弾後0.8秒だけ出す）
 var _bursts: Array = []      # スキルバースト {kind, t0}
 var _striker := -1           # 直近で「殴った」味方（踏み込み演出）
 var _strike_t := -9.9
@@ -214,6 +233,9 @@ func add_events(events: Array) -> void:
 					_floaters.append({"txt": "-%d" % val, "col": Color(1.0, 0.42, 0.45), "side": "party",
 							"slot": _tank_index(), "t0": _t, "jx": randf_range(-10.0, 10.0)})
 					_hurt_t = _t
+					var ti := _tank_index()
+					if ti >= 0 and ti < _party_hurt.size():
+						_party_hurt[ti] = _t
 				while _floaters.size() > 14:
 					_floaters.pop_front()
 			"fx":
@@ -257,8 +279,9 @@ func _tex(path: String) -> Texture2D:
 	return _tex_cache[path]
 
 
-## 味方チビをタスクバーヒーロー密度へ落とす：縮小→α2値化→ニアレスト拡大。
-## 高精細チビ(144x192)と16-32pxの敵ドットの解像度ミスマッチを消し、画面の画素を統一する。
+## 味方チビをドット密度へ落とす：縮小→α2値化→ニアレスト拡大。
+## 敵（64x96 の生成ドット）と 1テクセルあたりの画素数を揃えるのが目的。
+## GIRL_PIX_H=64 / GIRL_H=98 → 1.53px/テクセル、敵は 138/96 → 1.44px/テクセルで揃う。
 func _pix_tex(path: String) -> Texture2D:
 	if _pix_cache.has(path):
 		return _pix_cache[path]
@@ -279,35 +302,127 @@ func _pix_tex(path: String) -> Texture2D:
 					var c := img.get_pixel(x, y)
 					c.a = 1.0 if c.a > 0.42 else 0.0
 					img.set_pixel(x, y, c)
+			_strip_matte(img)
+			var pads := _scan_pads(img, 0, w)
+			# 壊れたフレーム（地が焼かれて抜けなかった／絵が数pxしか無い）は使わない。
+			# null を返すと呼び出し側が idle_f0 にフォールバックする。
+			var opq := 0
+			for y in img.get_height():
+				for x in w:
+					if img.get_pixel(x, y).a > 0.5:
+						opq += 1
+			if float(opq) / float(maxi(w * img.get_height(), 1)) > 0.88 \
+					or pads.x + pads.y > 0.62:
+				_pix_cache[path] = null
+				return null
+			_pad_cache[path] = pads
 			t = ImageTexture.create_from_image(img)
 	_pix_cache[path] = t
 	return t
 
 
 var _white_cache: Dictionary = {}
-var _top_frac_cache: Dictionary = {}  # sprite_name -> 透明ヘッドルーム比（バー/数字の吸着用）
-var _enemy_top: Array = []            # 敵スロットの見た目の頭y（used_rect補正済み）
+var _pad_cache: Dictionary = {}       # key -> Vector2(上余白率, 下余白率)
+var _mob_frames: Dictionary = {}      # "<sprite>:<f>" -> 反転済み1コマ Texture2D
+var _enemy_top: Array = []            # 敵スロットの見た目の頭y
 
 
-## スプライトの「実際に絵がある領域」の上端比率（idle f0 で代表）。
-func _top_frac(sprite_name: String) -> float:
-	if _top_frac_cache.has(sprite_name):
-		return _top_frac_cache[sprite_name]
-	var frac := 0.0
-	var tex := _mob_tex(sprite_name, "idle")
-	if tex != null:
-		var img := tex.get_image()
-		if img != null:
-			img = img.duplicate()
-			if img.is_compressed():
-				img.decompress()
-			var used := img.get_used_rect()
-			if used.size.y > 0:
-				frac = float(used.position.y) / float(img.get_height())
-	_top_frac_cache[sprite_name] = frac
-	return frac
+## 一部の生成フレーム（mil の *_f0 など）は背景（マゼンタ/白）が不透明で焼き込まれており、
+## そのまま描くとキャラの後ろに色板が出る。外周リングの支配色を「地」とみなし、
+## 縁から連結した同色だけを抜く（キャラ内部の同系色は残る）。
+func _strip_matte(img: Image) -> void:
+	var w := img.get_width()
+	var h := img.get_height()
+	if w < 6 or h < 6:
+		return
+	# 不透明領域のバウンディングボックスを求める
+	var x0 := w
+	var y0 := h
+	var x1 := -1
+	var y1 := -1
+	for y in h:
+		for x in w:
+			if img.get_pixel(x, y).a > 0.5:
+				x0 = mini(x0, x)
+				y0 = mini(y0, y)
+				x1 = maxi(x1, x)
+				y1 = maxi(y1, y)
+	if x1 - x0 < 4 or y1 - y0 < 4:
+		return
+	# 「地」は矩形なので、bbox の4隅が同色なら焼き込み背景と判定する。
+	# （キャラのシルエットなら隅は透明か色がばらけるので誤爆しない）
+	var corners := [Vector2i(x0 + 1, y0 + 1), Vector2i(x1 - 1, y0 + 1),
+			Vector2i(x0 + 1, y1 - 1), Vector2i(x1 - 1, y1 - 1)]
+	var counts := {}
+	var seeds := {}
+	for p: Vector2i in corners:
+		var c := img.get_pixel(p.x, p.y)
+		if c.a < 0.5:
+			continue
+		var k := "%d_%d_%d" % [int(c.r * 12), int(c.g * 12), int(c.b * 12)]
+		counts[k] = int(counts.get(k, 0)) + 1
+		seeds[k] = c
+	var best := ""
+	var bestn := 0
+	for k in counts:
+		if int(counts[k]) > bestn:
+			bestn = int(counts[k])
+			best = k
+	if best == "" or bestn < 3:
+		return
+	var seed: Color = seeds[best]
+	var seen := PackedByteArray()
+	seen.resize(w * h)
+	# 画像の縁から（透明部分を通って）地の矩形へ到達し、連結した同色だけを抜く
+	var q: Array[Vector2i] = []
+	for x in w:
+		q.append(Vector2i(x, 0))
+		q.append(Vector2i(x, h - 1))
+	for y in h:
+		q.append(Vector2i(0, y))
+		q.append(Vector2i(w - 1, y))
+	var i := 0
+	while i < q.size():
+		var p: Vector2i = q[i]
+		i += 1
+		if p.x < 0 or p.y < 0 or p.x >= w or p.y >= h:
+			continue
+		var key := p.y * w + p.x
+		if seen[key] != 0:
+			continue
+		var c := img.get_pixel(p.x, p.y)
+		if c.a > 0.5 and absf(c.r - seed.r) + absf(c.g - seed.g) + absf(c.b - seed.b) > 0.28:
+			continue
+		seen[key] = 1
+		img.set_pixel(p.x, p.y, Color(c.r, c.g, c.b, 0.0))
+		q.append(Vector2i(p.x + 1, p.y))
+		q.append(Vector2i(p.x - 1, p.y))
+		q.append(Vector2i(p.x, p.y + 1))
+		q.append(Vector2i(p.x, p.y - 1))
 
-## ヒットフラッシュ用の白シルエット（α>0 を白に）。小さな敵ドットなので安価。
+
+## 画像の x0..x1 列を走査し (上の透明率, 下の透明率) を返す。
+## 下の透明率でスプライトを押し下げると靴底が床に着く（浮きの根治）。
+func _scan_pads(img: Image, x0: int, x1: int) -> Vector2:
+	var h := img.get_height()
+	var top := -1
+	var bot := -1
+	for y in h:
+		var solid := false
+		for x in range(x0, x1):
+			if img.get_pixel(x, y).a > 0.35:
+				solid = true
+				break
+		if solid:
+			if top < 0:
+				top = y
+			bot = y
+	if top < 0:
+		return Vector2.ZERO
+	return Vector2(float(top) / float(h), float(h - 1 - bot) / float(h))
+
+
+## ヒットフラッシュ／輪郭用の白シルエット（α>0 を白に）。
 func _white_tex(path_key: String, src: Texture2D) -> Texture2D:
 	if _white_cache.has(path_key):
 		return _white_cache[path_key]
@@ -328,35 +443,76 @@ func _white_tex(path_key: String, src: Texture2D) -> Texture2D:
 	return t
 
 
-## 敵テクスチャ（idle/run 4コマ・dungeon frames）。
-func _mob_tex(sprite_name: String, anim: String, fps := 6.0) -> Texture2D:
-	var f := int(_t * fps) % 4
-	var tex := _tex("res://assets/third_party/dungeon/frames/%s_%s_anim_f%d.png" % [sprite_name, anim, f])
-	if tex == null:
-		tex = _tex("res://assets/third_party/dungeon/frames/%s_anim_f%d.png" % [sprite_name, f])
-	if tex == null:
-		tex = _tex("res://assets/third_party/dungeon/frames/goblin_%s_anim_f%d.png" % [anim, f])
-	return tex
+## 敵スプライトの1コマ。味方と同じ生成スプライト系
+## （assets/generated/sprites/<id>/walk_front.png ＝ 64x96 の4コマ横ストリップ）だけを見る。
+## dungeon/frames の 16x16 ドットはフォールバックも含めて完全に廃止。
+## 左（味方）を向くよう反転済みのテクスチャを作って返す
+## （draw_texture_rect_region は負の幅で反転せず位置がずれるため、画像側で反転する）。
+func _mob_frame(sprite_name: String, f: int) -> Texture2D:
+	var key := "%s:%d" % [sprite_name, f]
+	if _mob_frames.has(key):
+		return _mob_frames[key]
+	var t: Texture2D = null
+	var sheet := _tex(MOB_DIR + "%s/walk_front.png" % sprite_name)
+	if sheet == null:
+		sheet = _tex(MOB_DIR + "mob_drone/walk_front.png")
+	if sheet != null:
+		var img := sheet.get_image()
+		if img != null:
+			img = img.duplicate()
+			if img.is_compressed():
+				img.decompress()
+			img.convert(Image.FORMAT_RGBA8)
+			var fw := int(img.get_width() / MOB_FRAMES)
+			var fh := img.get_height()
+			var frame := Image.create(fw, fh, false, Image.FORMAT_RGBA8)
+			frame.blit_rect(img, Rect2i(fw * clampi(f, 0, MOB_FRAMES - 1), 0, fw, fh), Vector2i.ZERO)
+			frame.flip_x()
+			_pad_cache[key] = _scan_pads(frame, 0, fw)
+			t = ImageTexture.create_from_image(frame)
+	_mob_frames[key] = t
+	return t
 
 
-## 高さ target_h で足元(feet)基準に描く。flip=true で左向き。
-func _draw_actor(tex: Texture2D, feet: Vector2, target_h: float, flip := false, tint := Color(1, 1, 1)) -> Rect2:
+func _mob_key(sprite_name: String, fps := 6.0) -> String:
+	return "%s:%d" % [sprite_name, int(_t * fps) % MOB_FRAMES]
+
+
+## 「絵の高さ」が target_h になるよう足元(feet)基準で描く。pads で接地を補正し、
+## outline が不透明ならシルエットの4方向オフセットで輪郭を付ける（敵は赤輪郭）。
+## 戻り値は絵が実際にある矩形＝頭上UIの吸着先。
+func _draw_actor(tex: Texture2D, feet: Vector2, target_h: float, pads: Vector2,
+		tint := Color(1, 1, 1), outline := Color(0, 0, 0, 0), sil: Texture2D = null) -> Rect2:
 	if tex == null:
 		return Rect2(feet, Vector2.ZERO)
 	var ts := tex.get_size()
-	var s := target_h / maxf(ts.y, 1.0)
+	var solid := maxf(1.0 - pads.x - pads.y, 0.05)
+	var full_h := target_h / solid
+	var s := full_h / maxf(ts.y, 1.0)
 	var w := ts.x * s
-	var r := Rect2(feet.x - w * 0.5, feet.y - target_h, w, target_h)
-	if flip:
-		draw_texture_rect(tex, Rect2(r.position.x + w, r.position.y, -w, target_h), false, tint)
-	else:
-		draw_texture_rect(tex, r, false, tint)
-	return r
+	var top := feet.y - full_h + full_h * pads.y
+	var r := Rect2(snappedf(feet.x - w * 0.5, 1.0), snappedf(top, 1.0), w, full_h)
+	if outline.a > 0.0:
+		var o := maxf(1.0, s * 0.55)
+		var ot: Texture2D = sil if sil != null else tex
+		for ov: Vector2 in [Vector2(o, 0), Vector2(-o, 0), Vector2(0, o), Vector2(0, -o)]:
+			draw_texture_rect(ot, Rect2(r.position + ov, r.size), false, outline)
+	draw_texture_rect(tex, r, false, tint)
+	return Rect2(r.position.x, r.position.y + full_h * pads.x, r.size.x, target_h)
+
+
+## 描画幅（フレーム全体）を先に知りたいとき用。
+func _actor_w(tex: Texture2D, target_h: float, pads: Vector2) -> float:
+	if tex == null:
+		return 0.0
+	var ts := tex.get_size()
+	var solid := maxf(1.0 - pads.x - pads.y, 0.05)
+	return ts.x * (target_h / solid) / maxf(ts.y, 1.0)
 
 
 func _draw() -> void:
 	var sz := size
-	var gy := sz.y * GROUND_Y
+	var gy := snappedf(sz.y * GROUND_Y, 2.0)
 	var font := get_theme_default_font()
 	# シェイク（以降の全描画に効く）
 	if _shake > 0.004:
@@ -364,11 +520,57 @@ func _draw() -> void:
 
 	_draw_sky(sz, gy)
 	_draw_ground(sz, gy)
-	_draw_portal(Vector2(64, gy), font)
+	_draw_portal(Vector2(58, gy), font)
 	_draw_goal(sz, gy)
+
+	# ===== 敵（右からスライドイン・左向き・被弾で白フラッシュ＋ノックバック）=====
+	# 味方より先に描く＝敵が奥、味方が手前。敵は味方の約1.4倍で構図を支配する。
+	_enemy_pos.resize(mobs.size())
+	_enemy_top.resize(mobs.size())
+	_knock.resize(maxi(mobs.size(), _knock.size()))
+	if in_combat:
+		# 敵の列は右端からはみ出さないよう、数に応じて間隔を詰める
+		var egap := minf(ENEMY_GAP, (sz.x * 0.34) / maxf(mobs.size() - 1.0, 1.0))
+		for i in mobs.size():
+			var m: Dictionary = mobs[i]
+			var boss: bool = bool(m.get("boss", false))
+			var slot_x := sz.x * (ENEMY_X0 - 0.04) + i * egap + (26.0 if boss else 0.0)
+			if i < _enemy_x.size():
+				_enemy_x[i] = lerpf(float(_enemy_x[i]), slot_x, 0.18)
+			var ex := float(_enemy_x[i]) if i < _enemy_x.size() else slot_x
+			var arriving := absf(ex - slot_x) > 8.0
+			var lunge := 0.0 if arriving else maxf(0.0, sin(_t * 4.2 + i * 1.7)) * 9.0
+			var kn := float(_knock[i]) if _knock[i] != null else 0.0
+			if kn > 0.05:
+				_knock[i] = kn * 0.82   # ノックバックの減衰
+			var feet := Vector2(ex - lunge + kn, gy + (0.0 if boss else (i % 2) * 8.0))
+			_enemy_pos[i] = feet
+			var h := BOSS_H if boss else MOB_H
+			var sprite_name := String(m.get("sprite", "mob_drone"))
+			var key := _mob_key(sprite_name, 9.0 if arriving else 5.0)
+			var tex := _mob_frame(sprite_name, int(key.get_slice(":", 1)))
+			var pads: Vector2 = _pad_cache.get(key, Vector2.ZERO)
+			var sil := _white_tex(key, tex)
+			var dw := _actor_w(tex, h, pads)
+			_blob_shadow(feet, dw)
+			_enemy_ring(feet, dw * 0.30, boss)
+			var r := _draw_actor(tex, feet, h, pads, Color(1, 1, 1), ENEMY_LINE, sil)
+			# 直近で斬られた敵は白くフラッシュ
+			for sl in _slashes:
+				if int(sl["slot"]) == i and _t - float(sl["t0"]) < 0.12:
+					if sil != null:
+						_draw_actor(sil, feet, h, pads, Color(1, 1, 1, 0.85))
+					break
+			var hp0: float = float(_mob_hp0[i]) if i < _mob_hp0.size() else float(m["hp"])
+			_enemy_top[i] = r.position.y
+			_draw_enemy_hp(font, Vector2(feet.x, r.position.y - 10.0), 62.0 if boss else 46.0,
+					float(m["hp"]) / maxf(hp0, 1.0), int(m["hp"]), boss)
+	else:
+		_draw_incoming(sz, gy)
 
 	# ===== 隊列（左→右へ行進。戦闘中は停止・殴り手が踏み込む）=====
 	_party_pos.resize(party.size())
+	_party_hurt.resize(party.size())
 	var strike_k := clampf(1.0 - (_t - _strike_t) / 0.30, 0.0, 1.0)   # 踏み込みの残量
 	var hurt_k := clampf(1.0 - (_t - _hurt_t) / 0.22, 0.0, 1.0)       # 被弾フラッシュの残量
 	for i in party.size():
@@ -379,66 +581,42 @@ func _draw() -> void:
 		if i == _striker and strike_k > 0.0:
 			lunge += sin(strike_k * PI) * 34.0   # 殴り手の鋭い踏み込み（行って戻る）
 		var knock_back := (sin(hurt_k * PI) * 10.0) if (i == _tank_index() and hurt_k > 0.0) else 0.0
-		var feet := Vector2(PARTY_X0 + i * PARTY_GAP + lunge - knock_back, gy - bob)
+		# 後列ほど奥（上・小さい）／前列ほど手前（下・大きい）＝隊列に奥行きを作る
+		var depth := float(i) / maxf(party.size() - 1.0, 1.0)
+		var feet := Vector2(PARTY_X0 + i * PARTY_GAP + lunge - knock_back,
+				gy - bob + 10.0 * depth)
+		var hh := GIRL_H * (0.93 + 0.10 * depth)
 		_party_pos[i] = feet
 		var dead: bool = float(p["hp"]) <= 0.0
-		var tex: Texture2D = null
+		var path := "res://assets/generated/sprites/%s/idle_f0.png" % id
 		if _anims.has(id):
-			tex = _pix_tex((_anims[id] as ChibiAnim).current_path())
+			path = (_anims[id] as ChibiAnim).current_path()
+		var tex := _pix_tex(path)
 		if tex == null:
-			tex = _pix_tex("res://assets/generated/sprites/%s/idle_f0.png" % id)
+			path = "res://assets/generated/sprites/%s/idle_f0.png" % id
+			tex = _pix_tex(path)
+		var pads: Vector2 = _pad_cache.get(path, Vector2.ZERO)
 		var tint := Color(1, 1, 1)
 		if dead:
 			tint = Color(0.5, 0.5, 0.58)
 		elif i == _tank_index() and hurt_k > 0.0:
 			tint = Color(1.0, 1.0 - hurt_k * 0.62, 1.0 - hurt_k * 0.62)   # 被弾の赤フラッシュ
-		# 接地影
-		_blob_shadow(feet, 20.0)
-		var r := _draw_actor(tex, feet, GIRL_H, false, tint)
-		if not dead:
-			_draw_head_ui(Vector2(feet.x, r.position.y - 8.0), 36.0,
+		var dw := _actor_w(tex, hh, pads)
+		_blob_shadow(feet, dw)
+		var r := _draw_actor(tex, feet, hh, pads, tint, ALLY_LINE, _white_tex(path, tex))
+		# 頭上HPは被弾後0.8秒だけ（常設は下部カードに集約）
+		var ht := float(_party_hurt[i]) if _party_hurt[i] != null else -9.9
+		var age := _t - ht
+		if not dead and age < 0.8:
+			_draw_head_ui(Vector2(feet.x, r.position.y - 8.0), 40.0,
 					float(p["hp"]) / maxf(float(p["mhp"]), 1.0), HP_COL,
+					clampf(1.0 - age / 0.8, 0.0, 1.0))
+		if not dead and in_combat:
+			_draw_pips(Vector2(feet.x, r.position.y - 14.0),
 					int(p.get("ready", 0)), int(p.get("slots", 0)))
 
-	# ===== 敵（右からスライドイン・左向き・被弾で白フラッシュ＋ノックバック）=====
-	_enemy_pos.resize(mobs.size())
-	_enemy_top.resize(mobs.size())
-	_knock.resize(maxi(mobs.size(), _knock.size()))
-	if in_combat:
-		for i in mobs.size():
-			var m: Dictionary = mobs[i]
-			var boss: bool = bool(m.get("boss", false))
-			var slot_x := sz.x * ENEMY_X0 + i * ENEMY_GAP + (26.0 if boss else 0.0)
-			if i < _enemy_x.size():
-				_enemy_x[i] = lerpf(float(_enemy_x[i]), slot_x, 0.10)
-			var ex := float(_enemy_x[i]) if i < _enemy_x.size() else slot_x
-			var arriving := absf(ex - slot_x) > 8.0
-			var lunge := 0.0 if arriving else maxf(0.0, sin(_t * 4.2 + i * 1.7)) * 9.0
-			var kn := float(_knock[i]) if _knock[i] != null else 0.0
-			if kn > 0.05:
-				_knock[i] = kn * 0.82   # ノックバックの減衰
-			var feet := Vector2(ex - lunge + kn, gy)
-			_enemy_pos[i] = feet
-			var h := BOSS_H if boss else MOB_H
-			_blob_shadow(feet, 26.0 if boss else 16.0)
-			var sprite_name := String(m.get("sprite", "goblin"))
-			var tex := _mob_tex(sprite_name, "run" if arriving else "idle")
-			var r := _draw_actor(tex, feet, h, true)
-			# 直近で斬られた敵は白くフラッシュ
-			for sl in _slashes:
-				if int(sl["slot"]) == i and _t - float(sl["t0"]) < 0.12:
-					var wt := _white_tex(sprite_name, tex)
-					if wt != null:
-						_draw_actor(wt, feet, h, true, Color(1, 1, 1, 0.85))
-					break
-			var hp0: float = float(_mob_hp0[i]) if i < _mob_hp0.size() else float(m["hp"])
-			# 透明ヘッドルームを除いた「見た目の頭」にバーを吸着
-			var head_y := r.position.y + r.size.y * _top_frac(sprite_name)
-			_enemy_top[i] = head_y
-			_draw_head_ui(Vector2(feet.x, head_y - 8.0), 46.0 if boss else 32.0,
-					float(m["hp"]) / maxf(hp0, 1.0), Color(1.0, 0.42, 0.4), 0, 0)
-
 	_draw_combat_fx(sz, gy, font)
+	_draw_foreground(sz, gy)
 	_draw_bubble(sz, gy, font)
 
 	if _shake > 0.004:
@@ -528,8 +706,17 @@ func _draw_combat_fx(sz: Vector2, gy: float, font: Font) -> void:
 			continue
 		var kind := String(_bursts[i]["kind"])
 		var a := 1.0 - k
+		# 実体アンカー：敵/味方の実座標に付ける（ハードコード座標は使わない）
 		var ec := Vector2(sz.x * ENEMY_X0 + ENEMY_GAP, gy - MOB_H * 0.55)
+		if not _enemy_pos.is_empty() and _enemy_pos[0] != null:
+			var mid := _enemy_pos.size() / 2
+			ec = (_enemy_pos[mid] as Vector2) + Vector2(0, -MOB_H * 0.55)
 		var pc := Vector2(PARTY_X0 + PARTY_GAP * 2.0, gy - GIRL_H * 0.5)
+		if not _party_pos.is_empty() and _party_pos[0] != null:
+			var sx := 0.0
+			for pp in _party_pos:
+				sx += (pp as Vector2).x
+			pc = Vector2(sx / _party_pos.size(), gy - GIRL_H * 0.5)
 		match kind:
 			"explosion":
 				draw_arc(ec, 18.0 + 52.0 * k, 0, TAU, 24, Color(1.0, 0.62, 0.3, a), 4.0)
@@ -585,57 +772,292 @@ func _draw_combat_fx(sz: Vector2, gy: float, font: Font) -> void:
 		i += 1
 
 
-## 空とネオン都市のパララックス（dist でスクロール・戦闘中は自然停止）。
+## 空とネオン都市のパララックス。真っ黒な平面を作らないのが最優先：
+## 縦グラデ → 星 → 月と光芒 → 遠景スカイライン → 中景の商店街（実在の看板）→ 粒子。
 func _draw_sky(sz: Vector2, gy: float) -> void:
-	# 空の縦グラデ（深い紺→地平の紫）
-	draw_rect(Rect2(0, 0, sz.x, gy), Color(0.03, 0.03, 0.08))
-	var pts := PackedVector2Array([Vector2(0, gy - 260), Vector2(sz.x, gy - 260), Vector2(sz.x, gy), Vector2(0, gy)])
-	draw_polygon(pts, PackedColorArray([Color(0.03, 0.03, 0.08, 0.0), Color(0.03, 0.03, 0.08, 0.0),
-			Color(0.12, 0.05, 0.16, 1.0), Color(0.12, 0.05, 0.16, 1.0)]))
-	# 星（決定論・ゆっくり瞬く）
-	for i in 46:
+	var top_c := Color(0.09, 0.04, 0.18)
+	var hor_c := Color(0.26, 0.08, 0.30)
+	draw_polygon(
+			PackedVector2Array([Vector2(0, 0), Vector2(sz.x, 0), Vector2(sz.x, gy), Vector2(0, gy)]),
+			PackedColorArray([top_c, top_c, hor_c, hor_c]))
+	# 星（決定論・ゆっくり瞬く）。数個だけ白まで振り切って最明部の候補を作る。
+	for i in 64:
 		var rx := fposmod(sin(i * 91.7) * 43758.5453, 1.0)
 		var ry := fposmod(sin(i * 41.3) * 24634.6345, 1.0)
 		var tw := 0.35 + 0.3 * sin(_t * (0.8 + rx * 1.6) + i)
-		draw_circle(Vector2(rx * sz.x, ry * (gy - BG_SCALE * 300.0)), 1.2 + rx, Color(0.8, 0.85, 1.0, tw * 0.5))
-	# 月（薄い暈）
-	Kit.spot(self, Vector2(sz.x * 0.78, gy - BG_SCALE * 330.0), 90.0, Color(0.7, 0.8, 1.0), 0.10)
-	draw_circle(Vector2(sz.x * 0.78, gy - BG_SCALE * 330.0), 26.0, Color(0.85, 0.9, 1.0, 0.22))
-	# パララックス（都市シルエットを拡大タイル）
-	_draw_layer("res://assets/generated/bg/city_far.png", sz, gy, 0.35, Color(0.5, 0.45, 0.7, 0.55))
-	_draw_layer("res://assets/generated/bg/city_mid.png", sz, gy, 1.0, Color(0.65, 0.55, 0.85, 0.8))
+		var sp := Vector2(snappedf(rx * sz.x, 2.0), snappedf(ry * gy * 0.60, 2.0))
+		_octagon(sp, 1.0 + rx * 1.4, Color(0.80, 0.86, 1.0, tw * 0.55))
+		if i % 13 == 0:
+			_octagon(sp, 1.6, Color(NEON_CORE.r, NEON_CORE.g, NEON_CORE.b, tw))
+	# 靄の帯（空を無地にしない）
+	for i in 3:
+		var hy := gy * (0.30 + i * 0.14)
+		var hh := 26.0 + i * 10.0
+		draw_polygon(
+				PackedVector2Array([Vector2(0, hy), Vector2(sz.x, hy),
+						Vector2(sz.x, hy + hh), Vector2(0, hy + hh)]),
+				PackedColorArray([Color(0.42, 0.20, 0.52, 0.0), Color(0.42, 0.20, 0.52, 0.0),
+						Color(0.42, 0.20, 0.52, 0.10 + i * 0.03), Color(0.42, 0.20, 0.52, 0.10 + i * 0.03)]))
+	# 月（青い月光）＋暈＋光芒。芯は画面で一番明るい点。
+	var moon := Vector2(snappedf(sz.x * 0.74, 2.0), snappedf(gy * 0.155, 2.0))
+	_glow(moon, 140.0, Color(0.52, 0.70, 1.0), 0.13)
+	_disc(moon, 30.0, Color(0.58, 0.70, 1.0, 0.40))
+	_disc(moon, 24.0, Color(0.86, 0.92, 1.0, 0.90))
+	_disc(moon, 9.0, NEON_CORE)
+	_draw_shafts(sz, gy, moon)
+	# 飛行体（点滅灯）が2機ゆっくり流れる＝空が「生きている」
+	for i in 2:
+		var ax := fposmod(_t * (9.0 + i * 5.0) + i * 460.0, sz.x + 120.0) - 60.0
+		var ay := gy * (0.10 + i * 0.09)
+		draw_rect(Rect2(snappedf(ax, 2.0), snappedf(ay, 2.0), 5.0, 2.0), Color(0.70, 0.78, 1.0, 0.5))
+		if fposmod(_t * 1.4 + i, 1.0) < 0.45:
+			draw_rect(Rect2(snappedf(ax, 2.0), snappedf(ay, 2.0), 2.0, 2.0), Color(1.0, 0.35, 0.35, 0.9))
+	# 最遠景（プロシージャルの塔列）：空の空白を埋め、レイヤーの層を1枚増やす
+	_draw_far_towers(sz, gy * 0.30, gy * 0.54)
+	# 遠景スカイライン（上端は空へ溶かす）
+	_draw_layer("res://assets/generated/bg/city_far.png", sz, gy - 150.0, 1.50, 0.30,
+			Color(0.60, 0.52, 0.86, 0.92), false, 0.0, Color(0.078, 0.062, 0.33, 0.98))
+	# 中景の商店街（画像上端の黒帯 18px は捨てる。架空漢字の看板は実在の語で上書き）
+	_draw_layer("res://assets/generated/bg/city_mid.png", sz, gy + 6.0, 1.30, 1.0,
+			Color(0.82, 0.70, 1.00, 1.0), true, 18.0, Color(0.20, 0.10, 0.34, 0.85))
+	# 地平のハードエッジを 44px のグラデで溶かす
+	draw_polygon(
+			PackedVector2Array([Vector2(0, gy - 44), Vector2(sz.x, gy - 44),
+					Vector2(sz.x, gy + 4), Vector2(0, gy + 4)]),
+			PackedColorArray([Color(0.30, 0.10, 0.34, 0.0), Color(0.30, 0.10, 0.34, 0.0),
+					Color(0.30, 0.10, 0.34, 0.50), Color(0.30, 0.10, 0.34, 0.50)]))
+	_draw_motes(sz, gy)
 
 
-func _draw_layer(path: String, sz: Vector2, gy: float, speed: float, tint: Color) -> void:
+## 月からの光芒（夜でも真っ黒にしないための主光源）。
+## 上を濃く下を0にした頂点カラーの四角形＝ハードエッジの出ない安価な光の柱。
+func _draw_shafts(sz: Vector2, gy: float, moon: Vector2) -> void:
+	var a := 0.055 + 0.020 * sin(_t * 0.7)
+	var col := Color(0.58, 0.82, 1.0)
+	for s: Array in [[moon.x, 20.0, 150.0, 1.0], [moon.x - 78.0, 10.0, 96.0, 0.7],
+			[sz.x * 0.17, 12.0, 150.0, 0.55]]:
+		var x0: float = s[0]
+		var tw: float = s[1]
+		var bw: float = s[2]
+		var k: float = s[3]
+		var top := moon.y if x0 > sz.x * 0.3 else -20.0
+		draw_polygon(
+				PackedVector2Array([Vector2(x0 - tw, top), Vector2(x0 + tw, top),
+						Vector2(x0 + bw, gy), Vector2(x0 - bw * 0.5, gy)]),
+				PackedColorArray([Color(col.r, col.g, col.b, a * k), Color(col.r, col.g, col.b, a * k),
+						Color(col.r, col.g, col.b, 0.0), Color(col.r, col.g, col.b, 0.0)]))
+
+
+## 最遠景の塔列（決定論・ごく薄く）。city_far より奥にもう一層置いて空を埋める。
+func _draw_far_towers(sz: Vector2, top_y: float, base_y: float) -> void:
+	var scroll := fposmod(dist * 1.6, 96.0)
+	for k in range(-1, int(sz.x / 48.0) + 2):
+		var rx := fposmod(sin(k * 71.3) * 43758.5453, 1.0)
+		var ry := fposmod(sin(k * 13.9) * 24634.6345, 1.0)
+		var x := snappedf(k * 48.0 - scroll, 2.0)
+		var w := snappedf(22.0 + rx * 22.0, 2.0)
+		var h := (base_y - top_y) * (0.35 + ry * 0.65)
+		var y := snappedf(base_y - h, 2.0)
+		draw_rect(Rect2(x, y, w, h), Color(0.14, 0.07, 0.27, 0.92))
+		draw_rect(Rect2(x, y, w, 2.0), Color(0.26, 0.14, 0.44, 0.9))
+		# アンテナと赤い航空障害灯（無地の塊にしない）
+		if rx > 0.62:
+			draw_rect(Rect2(x + w * 0.5, y - 16.0, 2.0, 16.0), Color(0.22, 0.12, 0.38, 0.9))
+			draw_rect(Rect2(x + w * 0.5 - 1.0, y - 18.0, 4.0, 3.0),
+					Color(1.0, 0.28, 0.30, 0.35 + 0.45 * maxf(0.0, sin(_t * 1.6 + k))))
+		# 窓明かり（数点だけ・ゆっくり明滅）
+		for j in 5:
+			var wy := y + 8.0 + j * (h / 6.0)
+			if wy > base_y - 6.0:
+				break
+			var lit := fposmod(sin(k * 7.7 + j * 3.1) * 999.0, 1.0)
+			if lit > 0.45:
+				draw_rect(Rect2(x + 4.0 + fposmod(lit * 31.0, maxf(w - 10.0, 2.0)), wy, 3.0, 3.0),
+						Color(1.0, 0.80, 0.55, 0.28 + 0.22 * sin(_t * 0.6 + k + j)))
+
+
+## 舞う粒子。25分眺める画面に「動いている空気」を足す。
+func _draw_motes(sz: Vector2, gy: float) -> void:
+	for i in 34:
+		var rx := fposmod(sin(i * 12.9898) * 43758.5453, 1.0)
+		var rz := fposmod(sin(i * 78.233) * 12345.6789, 1.0)
+		var px := fposmod(rx * sz.x + sin(_t * 0.3 + i) * 24.0, sz.x)
+		var py := fposmod(gy + 40.0 - (_t * (6.0 + rz * 16.0) + rz * 900.0), gy + 60.0) - 20.0
+		_octagon(Vector2(px, py), 1.0 + rz * 2.2, Color(0.72, 0.86, 1.0, 0.10 + rz * 0.28))
+
+
+## パララックス層。src_top で画像上端の無地帯を切り捨て、seam で継ぎ目を空へ溶かす
+## （層の境界に「正体不明のハードエッジ」を残さない）。
+func _draw_layer(path: String, sz: Vector2, bottom_y: float, scale: float, speed: float,
+		tint: Color, with_signs := false, src_top := 0.0, seam := Color(0, 0, 0, 0)) -> void:
 	var tex := _tex(path)
 	if tex == null:
 		return
-	var ts := tex.get_size() * BG_SCALE
+	var src := Rect2(0, src_top, tex.get_size().x, tex.get_size().y - src_top)
+	var ts := src.size * scale
 	var scroll := fposmod(dist * 14.0 * speed, ts.x)
-	var y := gy - ts.y
+	var y := snappedf(bottom_y - ts.y, 1.0)
 	var x := -scroll
 	while x < sz.x:
-		draw_texture_rect(tex, Rect2(x, y, ts.x, ts.y), false, tint)
+		draw_texture_rect_region(tex, Rect2(snappedf(x, 1.0), y, ts.x, ts.y), src, tint)
+		if with_signs:
+			_draw_signs(Vector2(x, y - src_top * scale), scale)
 		x += ts.x
+	if seam.a > 0.0:
+		draw_polygon(
+				PackedVector2Array([Vector2(0, y - 52.0), Vector2(sz.x, y - 52.0),
+						Vector2(sz.x, y + 2.0), Vector2(0, y + 2.0)]),
+				PackedColorArray([Color(seam.r, seam.g, seam.b, 0.0), Color(seam.r, seam.g, seam.b, 0.0),
+						seam, seam]))
 
 
-## 石畳の帯（決定論ノイズで丸石を敷く）＋ネオンの縁。
+## city_mid.png に焼かれた「実在しない漢字」の看板を、実在の語のネオン看板で覆う。
+func _draw_signs(origin: Vector2, scale: float) -> void:
+	var font := get_theme_default_font()
+	for s: Dictionary in SIGNS:
+		var sr: Rect2 = s["r"]
+		var r := Rect2(snappedf(origin.x + sr.position.x * scale, 1.0),
+				snappedf(origin.y + sr.position.y * scale, 1.0), sr.size.x * scale, sr.size.y * scale)
+		if r.position.x > size.x + 8.0 or r.position.x + r.size.x < -8.0:
+			continue
+		var col: Color = s["c"]
+		_glow(r.get_center(), maxf(r.size.x, r.size.y) * 1.15, col, 0.13)
+		draw_rect(r, Color(0.05, 0.03, 0.09, 0.98))
+		draw_rect(r, Color(col.r, col.g, col.b, 0.85), false, 2.0)
+		var txt := String(s["t"])
+		if bool(s["v"]):
+			var fs := int(clampf(r.size.x * 0.80, 9.0, 40.0))
+			var n := txt.length()
+			for k in n:
+				var ch := txt[k]
+				var cw := font.get_string_size(ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+				draw_string(font, Vector2(r.position.x + (r.size.x - cw) * 0.5,
+						r.position.y + r.size.y * (k + 0.86) / float(n)), ch,
+						HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+		else:
+			var fs := int(clampf(minf(r.size.y * 0.70,
+					r.size.x / maxf(txt.length(), 1) * 1.02), 9.0, 40.0))
+			var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+			draw_string(font, Vector2(r.position.x + (r.size.x - tw) * 0.5,
+					r.position.y + (r.size.y + fs * 0.70) * 0.5), txt,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+		# ネオン管の芯（8〜16px の白）
+		draw_rect(Rect2(r.position.x + 3.0, r.position.y + 3.0,
+				minf(14.0, maxf(r.size.x - 6.0, 4.0)), 2.0), NEON_CORE)
+
+
+## 床。奥＝暗い紫、手前＝濡れたアスファルト。画面下端まで届かせて
+## 「正体不明の灰色のもや」と「純黒の帯」を作らない。
 func _draw_ground(sz: Vector2, gy: float) -> void:
-	draw_rect(Rect2(0, gy, sz.x, BAND_H), Color(0.07, 0.07, 0.11))
-	draw_rect(Rect2(0, gy + BAND_H, sz.x, sz.y - gy - BAND_H), Color(0.04, 0.04, 0.07))
-	var scroll := dist * 14.0
-	var cols := int(sz.x / 34.0) + 3
-	for row in 3:
-		var ry := gy + 14.0 + row * 40.0
-		for c in cols:
-			var wx := c * 34.0 + fposmod(-scroll, 34.0) - 34.0 + (17.0 if row % 2 == 1 else 0.0)
-			var seed_i := int(floor((c * 34.0 + scroll) / 34.0)) * 3 + row
-			var rr := fposmod(sin(seed_i * 127.1) * 43758.5453, 1.0)
-			var tone := 0.10 + rr * 0.05
-			_ellipse(Vector2(wx, ry), Vector2(19.0, 13.0), Color(tone, tone, tone + 0.045))
-	# ネオンの縁（上辺）
-	draw_rect(Rect2(0, gy - 2.0, sz.x, 2.5), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.55))
-	Kit.spot(self, Vector2(sz.x * 0.5, gy), sz.x * 0.6, PURPLE, 0.05)
+	var bottom := sz.y
+	var depth := bottom - gy
+	draw_polygon(
+			PackedVector2Array([Vector2(0, gy), Vector2(sz.x, gy), Vector2(sz.x, bottom), Vector2(0, bottom)]),
+			PackedColorArray([Color(0.13, 0.09, 0.19), Color(0.13, 0.09, 0.19),
+					Color(0.27, 0.23, 0.35), Color(0.27, 0.23, 0.35)]))
+	# 透視ライン（下ほど間隔が広がる）
+	for i in range(1, 10):
+		var k := float(i) / 10.0
+		draw_rect(Rect2(0, snappedf(gy + depth * pow(k, 1.75), 1.0), sz.x, 1.0),
+				Color(0.62, 0.52, 0.95, 0.05 + 0.11 * k))
+	# 縦の目地（消失点へ収束・進行でスクロール）
+	var vp := sz.x * 0.5
+	var scroll := fposmod(dist * 14.0, 120.0)
+	for k in range(-6, 9):
+		var dx := float(k) * 120.0 - scroll
+		draw_line(Vector2(snappedf(vp + dx * 0.30, 1.0), gy),
+				Vector2(snappedf(vp + dx * 1.60, 1.0), bottom), Color(0.60, 0.50, 0.92, 0.07), 1.0)
+	# 手前の濡れた路面の反射（ネオンが伸びる）
+	for r: Dictionary in [
+			{"x": 0.20, "c": Color(1.0, 0.42, 0.78)},
+			{"x": 0.53, "c": Color(0.40, 0.95, 1.0)},
+			{"x": 0.84, "c": Color(1.0, 0.62, 0.30)}]:
+		var rx := sz.x * float(r["x"])
+		var c: Color = r["c"]
+		for j in 8:
+			var yy := gy + depth * (0.14 + j * 0.105)
+			var w := 9.0 + j * 5.0
+			draw_rect(Rect2(snappedf(rx - w * 0.5 + sin(_t * 1.3 + j * 0.9) * 3.5, 1.0),
+					snappedf(yy, 1.0), w, 3.0), Color(c.r, c.g, c.b, 0.17 * (1.0 - j / 9.0)))
+	# 隊列の足元にステージ光（近景のコントラストアンカー）
+	var stage_x := PARTY_X0 + PARTY_GAP * 2.0
+	for i in 5:
+		var k := float(5 - i) / 5.0
+		_ellipse(Vector2(stage_x, gy + 10.0), Vector2(200.0 * k, 52.0 * k),
+				Color(0.85, 0.80, 1.0, 0.020))
+	# 接地ライン（床の上端）＝コントラストのアンカー
+	_glow(Vector2(sz.x * 0.5, gy), sz.x * 0.55, PURPLE, 0.05)
+	draw_rect(Rect2(0, gy - 2.0, sz.x, 2.0), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.60))
+	draw_rect(Rect2(0, gy, sz.x, 1.0), Color(0.04, 0.02, 0.07, 0.8))
+	for k in 5:
+		draw_rect(Rect2(snappedf(fposmod(sz.x * (0.08 + k * 0.21) - dist * 14.0, sz.x), 2.0),
+				gy - 3.0, 14.0, 2.0), NEON_CORE)
+
+
+## 近景レイヤー（キャラの手前）。手前を明るくし、ぼけた大粒と軽いビネットを足す。
+func _draw_foreground(sz: Vector2, gy: float) -> void:
+	var depth := sz.y - gy
+	draw_polygon(
+			PackedVector2Array([Vector2(0, gy + depth * 0.42), Vector2(sz.x, gy + depth * 0.42),
+					Vector2(sz.x, sz.y), Vector2(0, sz.y)]),
+			PackedColorArray([Color(0.78, 0.70, 1.0, 0.0), Color(0.78, 0.70, 1.0, 0.0),
+					Color(0.78, 0.70, 1.0, 0.10), Color(0.78, 0.70, 1.0, 0.10)]))
+	for i in 9:
+		var rz := fposmod(sin(i * 33.77) * 9871.23, 1.0)
+		var px := fposmod(rz * sz.x + _t * (10.0 + rz * 18.0), sz.x + 40.0) - 20.0
+		var py := gy - 130.0 + fposmod(_t * (14.0 + rz * 20.0) + rz * 400.0, depth + 130.0)
+		_octagon(Vector2(px, py), 2.5 + rz * 3.5, Color(0.80, 0.90, 1.0, 0.07 + rz * 0.08))
+	for i in 3:
+		var w := 26.0 * (3 - i)
+		draw_rect(Rect2(0, 0, w, sz.y), Color(0.02, 0.01, 0.05, 0.05))
+		draw_rect(Rect2(sz.x - w, 0, w, sz.y), Color(0.02, 0.01, 0.05, 0.05))
+
+
+## 非戦闘中でも右奥に「近づいてくる影」を置く。右半分を空にせず次の交戦を予告する。
+func _draw_incoming(sz: Vector2, gy: float) -> void:
+	var names := ["mob_spider", "mob_drone", "mob_slime"]
+	for i in 3:
+		var k := fposmod(_t / (13.0 + i * 5.0) + i * 0.37, 1.0)   # 0=遠い 1=近い
+		var nm: String = names[i]
+		var key := _mob_key(nm, 4.0 + i)
+		var tex := _mob_frame(nm, int(key.get_slice(":", 1)))
+		var pads: Vector2 = _pad_cache.get(key, Vector2.ZERO)
+		var h := MOB_H * (0.34 + k * 0.42)
+		var feet := Vector2(sz.x * (1.02 - k * 0.28), gy - 14.0 + k * 12.0 + i * 2.0)
+		var a := 0.35 + k * 0.40
+		_blob_shadow(feet, _actor_w(tex, h, pads) * 0.6)
+		_draw_actor(tex, feet, h, pads, Color(0.30, 0.13, 0.30, a))
+		# 赤い眼だけ闇に光る（次の交戦の予告）
+		_octagon(Vector2(feet.x, feet.y - h * 0.62), 1.6 + k * 1.6,
+				Color(1.0, 0.25, 0.28, 0.35 + k * 0.5))
+
+
+## draw_circle の代わり（ドット絵に馴染む8角形）。
+func _octagon(c: Vector2, r: float, col: Color) -> void:
+	if r <= 0.25:
+		return
+	var pts := PackedVector2Array()
+	for i in 8:
+		var a := TAU * (i + 0.5) / 8.0
+		pts.append(c + Vector2(cos(a) * r, sin(a) * r))
+	draw_colored_polygon(pts, col)
+
+
+## 円（月・光点用）。draw_circle より辺数を抑えつつ、8角形ほど角張らせない。
+func _disc(c: Vector2, r: float, col: Color) -> void:
+	if r <= 0.25:
+		return
+	var pts := PackedVector2Array()
+	for i in 16:
+		var a := TAU * i / 16.0
+		pts.append(c + Vector2(cos(a) * r, sin(a) * r))
+	draw_colored_polygon(pts, col)
+
+
+## 柔らかい発光（同心円の入れ子）。テクスチャ不要で決定論的。
+func _glow(c: Vector2, r: float, col: Color, a: float) -> void:
+	for i in 7:
+		_disc(c, r * float(7 - i) / 7.0, Color(col.r, col.g, col.b, a * 0.26))
 
 
 func _ellipse(c: Vector2, r: Vector2, col: Color) -> void:
@@ -646,19 +1068,45 @@ func _ellipse(c: Vector2, r: Vector2, col: Color) -> void:
 	draw_colored_polygon(pts, col)
 
 
-func _blob_shadow(feet: Vector2, r: float) -> void:
-	_ellipse(feet + Vector2(0, 3), Vector2(r, r * 0.32), Color(0, 0, 0, 0.35))
+func _ellipse_ring(c: Vector2, r: Vector2, col: Color, w := 2.0) -> void:
+	var pts := PackedVector2Array()
+	for i in 21:
+		var a := TAU * i / 20.0
+		pts.append(c + Vector2(cos(a) * r.x, sin(a) * r.y))
+	draw_polyline(pts, col, w)
+
+
+## 接地影（2層）。内が濃く小さく、外が薄く広い＝地面に落ちた影の減衰。
+## w は描画フレーム幅。楕円は足元のすぐ下（+1px）に置き、浮きを作らない。
+func _blob_shadow(feet: Vector2, w: float) -> void:
+	if w <= 1.0:
+		return
+	_ellipse(feet + Vector2(0, 1), Vector2(w * 0.55 * 0.5, w * 0.55 * 0.14), Color(0, 0, 0, 0.25))
+	_ellipse(feet + Vector2(0, 1), Vector2(w * 0.34 * 0.5, w * 0.34 * 0.16), Color(0, 0, 0, 0.55))
+
+
+## 敵の足元の赤い接地リング（脈動）。「敵はここに立っている」を最短で伝える。
+func _enemy_ring(feet: Vector2, rx: float, boss: bool) -> void:
+	var p := 0.5 + 0.5 * sin(_t * 3.0)
+	var k := 1.0 + 0.07 * p
+	var base := Color(1.0, 0.22, 0.26, (0.34 + 0.24 * p) * (1.25 if boss else 1.0))
+	_ellipse(feet + Vector2(0, 1), Vector2(rx * k, rx * k * 0.30),
+			Color(base.r, base.g, base.b, base.a * 0.22))
+	_ellipse_ring(feet + Vector2(0, 1), Vector2(rx * k, rx * k * 0.30), base, 2.0)
+	_ellipse_ring(feet + Vector2(0, 1), Vector2(rx * k * 0.62, rx * k * 0.62 * 0.30),
+			Color(base.r, base.g, base.b, base.a * 0.6), 1.5)
 
 
 ## 接続ポータル（左端・青い渦）＋ステージ章票＋獲得ゴールド。
 func _draw_portal(base: Vector2, font: Font) -> void:
-	var c := base + Vector2(0, -52.0)
-	Kit.spot(self, c, 66.0, CYAN, 0.18)
+	var c := base + Vector2(0, -58.0)
+	_glow(c, 90.0, CYAN, 0.16)
 	var pr := 30.0 + 2.5 * sin(_t * 2.4)
 	draw_arc(c, pr, _t * 1.8, _t * 1.8 + TAU * 0.8, 30, Color(0.35, 0.75, 1.0), 4.0)
 	draw_arc(c, pr * 0.62, -_t * 2.6, -_t * 2.6 + TAU * 0.66, 24, CYAN, 3.0)
-	draw_circle(c, pr * 0.34, Color(0.5, 0.85, 1.0, 0.9))
-	_blob_shadow(base, 20.0)
+	_octagon(c, pr * 0.34, Color(0.5, 0.85, 1.0, 0.9))
+	_octagon(c, pr * 0.16, NEON_CORE)   # ネオンの芯
+	_blob_shadow(base, 46.0)
 	# 章票 幕-番号（タスクバーヒーロー表記）＋難易度
 	var fl := int(dist / KuroData.FLOOR_LEN)
 	var dd: Dictionary = KuroData.DIFFICULTIES[clampi(difficulty, 0, KuroData.DIFFICULTIES.size() - 1)]
@@ -667,17 +1115,18 @@ func _draw_portal(base: Vector2, font: Font) -> void:
 	if difficulty > 0:
 		chip += "  %s" % String(dd["name"])
 	var cw := font.get_string_size(chip, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 24
-	var cr := Rect2(c.x - cw * 0.5, c.y - 96.0, cw, 30.0)
-	Kit.panel(self, cr, Color(0.05, 0.05, 0.09, 0.9), Color(dcol.r, dcol.g, dcol.b, 0.55), 15.0, 1.0)
-	draw_string(font, Vector2(cr.position.x + 12, cr.position.y + 21), chip,
+	var cr := Rect2(snappedf(c.x - cw * 0.5, 2.0), snappedf(c.y - 96.0, 2.0), snappedf(cw, 2.0), 28.0)
+	draw_rect(cr, Color(0.04, 0.04, 0.08, 0.92))
+	draw_rect(cr, Color(dcol.r, dcol.g, dcol.b, 0.65), false, 1.0)
+	draw_string(font, Vector2(cr.position.x + 12, cr.position.y + 20), chip,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.92, 0.94, 1.0))
 	# 獲得ゴールド（章票の右）
 	if gold_gain > 0:
 		var gtxt := "%d" % gold_gain
-		var gx := cr.position.x + cw + 12.0
-		draw_circle(Vector2(gx + 7, cr.position.y + 15), 7.0, GOLD)
-		draw_circle(Vector2(gx + 7, cr.position.y + 15), 4.5, Color(1.0, 0.92, 0.6))
-		draw_string(font, Vector2(gx + 18, cr.position.y + 21), gtxt,
+		var gx := cr.position.x + cr.size.x + 12.0
+		_octagon(Vector2(gx + 7, cr.position.y + 14), 7.0, GOLD)
+		_octagon(Vector2(gx + 7, cr.position.y + 14), 4.0, Color(1.0, 0.92, 0.6))
+		draw_string(font, Vector2(gx + 18, cr.position.y + 20), gtxt,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 15, GOLD)
 
 
@@ -692,27 +1141,53 @@ func _draw_goal(sz: Vector2, gy: float) -> void:
 	var c := Vector2(gx, gy - 64.0)
 	var near_boss := prog > 0.92
 	var col := Color(1.0, 0.4, 0.45) if near_boss else PURPLE
-	Kit.spot(self, c, 80.0, col, 0.2)
+	_glow(c, 110.0, col, 0.18)
 	var pr := 36.0 + 3.0 * sin(_t * (3.5 if near_boss else 1.8))
 	draw_arc(c, pr, -_t * 1.4, -_t * 1.4 + TAU * 0.82, 30, col, 4.0)
-	draw_circle(c, pr * 0.3, Color(col.r, col.g, col.b, 0.8))
-	_blob_shadow(Vector2(gx, gy), 22.0)
+	_octagon(c, pr * 0.30, Color(col.r, col.g, col.b, 0.8))
+	_octagon(c, pr * 0.13, NEON_CORE)
+	_blob_shadow(Vector2(gx, gy), 48.0)
 
 
-## 頭上UI：HPミニバー＋スキルCDピップ（点灯=撃てる）。
-func _draw_head_ui(top: Vector2, w: float, hp_ratio: float, col: Color, ready: int, slots: int) -> void:
-	var r := Rect2(top.x - w * 0.5, top.y - 5.0, w, 5.0)
-	draw_rect(Rect2(r.position - Vector2(1, 1), r.size + Vector2(2, 2)), Color(0, 0, 0, 0.6))
+## 味方の頭上HP。常設せず、被弾直後の 0.8 秒だけフェードで出す
+## （常設のHP/SPは下部カードに一本化）。
+func _draw_head_ui(top: Vector2, w: float, hp_ratio: float, col: Color, a: float) -> void:
+	if a <= 0.02:
+		return
+	var r := Rect2(snappedf(top.x - w * 0.5, 2.0), snappedf(top.y - 6.0, 2.0), w, 6.0)
+	draw_rect(Rect2(r.position - Vector2(2, 2), r.size + Vector2(4, 4)), Color(0.02, 0.01, 0.03, 0.8 * a))
 	var ratio := clampf(hp_ratio, 0.0, 1.0)
 	var bar_col := col if ratio > 0.3 else Color(1.0, 0.42, 0.4)
-	draw_rect(Rect2(r.position, Vector2(r.size.x * ratio, r.size.y)), bar_col)
-	# スキルピップ（味方のみ・装備枠ぶん並べ、撃てる数だけ点灯）
-	if slots > 0:
-		var px := top.x - (slots * 12.0 - 4.0) * 0.5
-		for i in slots:
-			var lit := i < ready
-			var pc := Vector2(px + i * 12.0 + 4.0, top.y - 14.0)
-			draw_circle(pc, 5.0, Color(0, 0, 0, 0.6))
-			draw_circle(pc, 4.0, GOLD if lit else Color(0.35, 0.36, 0.42))
-			if lit:
-				draw_circle(pc, 2.0, Color(1.0, 0.95, 0.75))
+	draw_rect(Rect2(r.position, Vector2(r.size.x * ratio, r.size.y)),
+			Color(bar_col.r, bar_col.g, bar_col.b, a))
+
+
+## 敵の頭上HP：黒下地＋1px外枠＋数値。ネオン背景でも輪郭が消えない。
+func _draw_enemy_hp(font: Font, top: Vector2, w: float, ratio: float, hp: int, boss: bool) -> void:
+	var h := 8.0 if boss else 6.0
+	var r := Rect2(snappedf(top.x - w * 0.5, 2.0), snappedf(top.y - h, 2.0), snappedf(w, 2.0), h)
+	draw_rect(Rect2(r.position - Vector2(2, 2), r.size + Vector2(4, 4)), Color(0.02, 0.01, 0.03, 0.88))
+	draw_rect(Rect2(r.position - Vector2(1, 1), r.size + Vector2(2, 2)), Color(1, 1, 1, 0.28), false, 1.0)
+	var k := clampf(ratio, 0.0, 1.0)
+	draw_rect(r, Color(0.20, 0.03, 0.06))
+	draw_rect(Rect2(r.position, Vector2(r.size.x * k, r.size.y)), Color(0.95, 0.25, 0.28))
+	draw_rect(Rect2(r.position, Vector2(r.size.x * k, 1.0)), Color(1.0, 0.78, 0.78, 0.85))
+	var txt := str(maxi(hp, 0))
+	var fs := 13 if boss else 12
+	var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var tp := Vector2(snappedf(r.position.x + (r.size.x - tw) * 0.5, 2.0), r.position.y - 5.0)
+	draw_string(font, tp + Vector2(1, 1), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.85))
+	draw_string(font, tp, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1.0, 0.82, 0.82))
+
+
+## スキルCDピップ（点灯=撃てる）。戦闘中だけ頭上に小さく出す。
+func _draw_pips(top: Vector2, ready: int, slots: int) -> void:
+	if slots <= 0:
+		return
+	var px := top.x - (slots * 11.0 - 3.0) * 0.5
+	for i in slots:
+		var pc := Vector2(snappedf(px + i * 11.0 + 3.0, 2.0), snappedf(top.y, 2.0))
+		_octagon(pc, 4.5, Color(0.02, 0.01, 0.04, 0.75))
+		_octagon(pc, 3.2, GOLD if i < ready else Color(0.32, 0.33, 0.40))
+		if i < ready:
+			_octagon(pc, 1.4, NEON_CORE)

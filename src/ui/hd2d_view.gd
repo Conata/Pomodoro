@@ -848,21 +848,21 @@ func _build_props_home() -> void:
 	# 店名は Label3D で面の手前に置く。看板に文字が無いと「作りかけ」に見えるため。
 	const PINK := Color(1.0, 0.32, 0.72)
 	_add_box(Vector3(0.0, 3.5, -2.62), Vector3(4.9, 1.0, 0.22), Color(0.10, 0.03, 0.07), 0.5)  # 看板の枠
-	_emissive_box(Vector3(0.0, 3.5, -2.6), Vector3(4.8, 0.9, 0.2), PINK, 1.6)
-	_sign_text("黒猫飯店", Vector3(0.0, 3.5, -2.46), 0.62, Color(1.0, 0.93, 0.98))
-	_emissive_box(Vector3(-2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), PINK, 1.1)  # タテ看板
-	_sign_text("酒", Vector3(-2.9, 3.32, -2.28), 0.30, Color(1.0, 0.95, 0.99))
-	_sign_text("麺", Vector3(-2.9, 2.72, -2.28), 0.30, Color(1.0, 0.95, 0.99))
-	_emissive_box(Vector3(2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), NEON_CYAN, 1.05)  # 対のシアン
-	_sign_text("点", Vector3(2.9, 3.32, -2.28), 0.30, Color(0.92, 0.99, 1.0))
-	_sign_text("心", Vector3(2.9, 2.72, -2.28), 0.30, Color(0.92, 0.99, 1.0))
+	_emissive_box(Vector3(0.0, 3.5, -2.6), Vector3(4.8, 0.9, 0.2), PINK, 0.55)
+	_sign_text("黒猫飯店", Vector3(0.0, 3.5, -2.46), 0.62, Color(2.4, 1.9, 2.3))
+	_emissive_box(Vector3(-2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), PINK, 0.5)  # タテ看板
+	_sign_text("酒", Vector3(-2.9, 3.32, -2.28), 0.30, Color(2.2, 1.8, 2.2))
+	_sign_text("麺", Vector3(-2.9, 2.72, -2.28), 0.30, Color(2.2, 1.8, 2.2))
+	_emissive_box(Vector3(2.9, 3.0, -2.4), Vector3(0.42, 1.7, 0.18), NEON_CYAN, 0.5)  # 対のシアン
+	_sign_text("点", Vector3(2.9, 3.32, -2.28), 0.30, Color(1.7, 2.3, 2.4))
+	_sign_text("心", Vector3(2.9, 2.72, -2.28), 0.30, Color(1.7, 2.3, 2.4))
 	# 赤提灯を店先に吊るす（中華）。箱ではなく紡錘形＋上下の黒い口金＋吊り紐で「提灯の形」にし、
 	# 中心に白に近い芯を仕込む（画面で最も明るい点を意図的に作る＝夜の絵の基準点）。
 	for x in [-3.4, -2.0, -0.7, 0.7, 2.0, 3.4]:
 		_add_lantern(Vector3(x, 2.7, -0.4), NEON_RED)
 	# 「千客万来」の赤い札（黒猫飯店サインの下）
-	_emissive_box(Vector3(0.0, 2.45, -2.5), Vector3(1.7, 0.46, 0.15), NEON_RED, 1.05)
-	_sign_text("千客萬来", Vector3(0.0, 2.45, -2.40), 0.26, Color(1.0, 0.90, 0.72))
+	_emissive_box(Vector3(0.0, 2.45, -2.5), Vector3(1.7, 0.46, 0.15), NEON_RED, 0.45)
+	_sign_text("千客萬来", Vector3(0.0, 2.45, -2.40), 0.26, Color(2.2, 1.9, 1.4))
 
 	# ── カウンター裏の酒瓶棚（バーらしさ。色とりどりの小瓶＋棚板）──
 	var bottle_cols := [

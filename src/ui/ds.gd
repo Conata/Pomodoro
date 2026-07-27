@@ -21,13 +21,16 @@ const ACCENT_DIM := Color("e6a15a80")
 const WARM := Color("e6a15a")        # 店番・看板の暖色
 const DANGER := Color("e05a5a")      # 切断・撤退
 const SUCCESS := Color("6fd37d")     # 収穫・廃材
+const INK := Color("0a0812")         # 黒い板（見出しの地・反転面の文字）
+const PAPER := Color("fbfaff")       # 白抜き（板の上の文字）
 
-# ── 型（5段。見出し≒2×本文。これ以上増やさない） ──────────────────────
-const T_MICRO := 14
-const T_BODY := 19
+# ── 型（5段。DotGothic16 は16pxグリッド設計＝16の倍数だけを使う） ─────────
+# 10〜15px は禁止（ドットが溶ける）。本文16／小見出し24／見出し32／数値48。
+const T_MICRO := 16
+const T_BODY := 16
 const T_SUB := 24
-const T_HEAD := 38
-const T_DISPLAY := 54
+const T_HEAD := 32
+const T_DISPLAY := 48
 
 # ── 間隔（8px基準。場当たりを排す） ──────────────────────────────────
 const SP_1 := 4
@@ -40,6 +43,13 @@ const SP_5 := 24
 const R_SM := 4
 const R_MD := 8
 const R_LG := 12
+
+
+## 面の反転（選択＝ベタ板＋暗色の文字）で使う、地の上に置く文字色。
+## as_primary() と同じ反転パターンを _draw 系の描画からも引けるようにする。
+static func on(bg: Color) -> Color:
+	var lum := bg.r * 0.299 + bg.g * 0.587 + bg.b * 0.114
+	return INK if lum > 0.42 else PAPER
 
 
 static func _sb(bg: Color, border: Color, radius: int, pad: int, bw := 1) -> StyleBoxFlat:

@@ -149,8 +149,11 @@ func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) ->
 	Kit.panel(self, rect, bg, border, radius, bw)
 
 
+## 文字。ドロップシャドウ（1,1のにじみ）ではなく暗色アウトラインで抜く。
+## 反転面の暗色文字（識別色のベタ板の上）にはアウトラインを掛けない＝滲ませない。
 func _txt(font: Font, pos: Vector2, s: String, size: int, col: Color, ha := HORIZONTAL_ALIGNMENT_LEFT, w := -1.0) -> void:
-	draw_string(font, pos + Vector2(1, 1), s, ha, w, size, Color(0, 0, 0, 0.6))
+	if col.r * 0.299 + col.g * 0.587 + col.b * 0.114 > 0.3:
+		draw_string_outline(font, pos, s, ha, w, size, 3, Color(0.02, 0.02, 0.04, 0.92))
 	draw_string(font, pos, s, ha, w, size, col)
 
 
@@ -166,18 +169,32 @@ func _icon(path: String) -> Texture2D:
 
 
 ## アイコンを rect 内にアスペクト維持で描く。存在すれば true（呼び出し側の文字fallback判定用）。
-func _draw_icon(path: String, rect: Rect2, modulate := Color(1, 1, 1, 1)) -> bool:
-	var tex := _icon(path)
+## plated=true で共通の暗い丸皿バックプレートを敷き、不透明な生成アイコンは地色を抜く
+## （白地の正方形が画面の最明部になる事故を止める）。
+func _draw_icon(path: String, rect: Rect2, modulate := Color(1, 1, 1, 1), plated := false) -> bool:
+	var tex := Kit.cutout_tex(path) if plated else _icon(path)
 	if tex == null:
 		return false
 	var ts := tex.get_size()
 	if ts.x <= 0.0 or ts.y <= 0.0:
 		return false
+	if plated:
+		Kit.plate(self, rect.get_center(), maxf(rect.size.x, rect.size.y) * 0.62,
+				Color(modulate.r, modulate.g, modulate.b, 0.5))
 	var scale := minf(rect.size.x / ts.x, rect.size.y / ts.y)
 	var dst := ts * scale
 	var pos := rect.position + (rect.size - dst) * 0.5
 	draw_texture_rect(tex, Rect2(pos, dst), false, modulate)
 	return true
+
+
+## 小さな操作チップ（識別色の輪郭＋本文）。斜めの板で統一する。
+func _chip(font: Font, r: Rect2, label: String, col: Color, id: String) -> void:
+	Kit.slab(self, r, Color(col.r * 0.22, col.g * 0.18, col.b * 0.26, 0.95), 8.0)
+	Kit.slab_edge(self, r, Color(col.r, col.g, col.b, 0.85), 8.0, 1.5)
+	_txt(font, Vector2(r.position.x + (r.size.x - _tw(font, label, DS.T_BODY)) * 0.5 + 4.0,
+			r.position.y + r.size.y * 0.5 + 6.0), label, DS.T_BODY, DS.TEXT)
+	_hit(r, id)
 
 
 ## ラベル付きボタン。enabled=false は灰色＆非ヒット。
@@ -204,7 +221,7 @@ func _draw() -> void:
 		# 潜航中の寄り道：背景絵は敷かず暗幕だけ＝下で戦い続けるステージが透ける
 		draw_rect(Rect2(Vector2.ZERO, sz), Color(0.02, 0.02, 0.05, 0.84))
 	else:
-		Kit.backdrop(self, sz, String(PANEL_BG_ART.get(panel, "")), accent, 0.72)
+		Kit.backdrop(self, sz, String(PANEL_BG_ART.get(panel, "")), accent, 0.64)
 
 	_draw_header(font, sz)
 	# パネル切替トランジション：内容が下から浮き上がり、暗幕が明ける
@@ -231,8 +248,9 @@ func _draw() -> void:
 
 
 func _draw_header(font: Font, sz: Vector2) -> void:
-	draw_rect(Rect2(0, 0, sz.x, HEADER_H), Color(0.02, 0.02, 0.05, 0.96))
-	draw_rect(Rect2(0, HEADER_H, sz.x, 1.5), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.5))
+	draw_rect(Rect2(0, 0, sz.x, HEADER_H), Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.97))
+	Kit.hatch(self, Rect2(0, 0, sz.x, HEADER_H), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.07), 26.0, 9.0)
+	draw_rect(Rect2(0, HEADER_H - 3.0, sz.x, 3.0), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.85))
 	# 戻る（潜航中＝編成の寄り道なら「潜航へ復帰」。残り時間はアンカーから実時間で計算）
 	var title_x := 120.0
 	if sim != null and bool(sim.state["run"]["active"]):
@@ -240,20 +258,28 @@ func _draw_header(font: Font, sz: Vector2) -> void:
 		var remain := maxf(float(run["duration"]) \
 				- (Time.get_unix_time_from_system() - float(run["anchor"])), 0.0)
 		var lbl := "▼ %d:%02d 潜航へ" % [int(remain / 60.0), int(remain) % 60]
-		var bw := _tw(font, lbl, 15) + 26
+		var bw := _tw(font, lbl, DS.T_BODY) + 26
 		var pulse := 0.5 + 0.5 * sin(_t * 3.0)
-		_btn(font, Rect2(12, 22, bw, 40), lbl, GOLD.lerp(Color(1.0, 0.55, 0.4), pulse), "resume_dive", true, 15)
+		_btn(font, Rect2(12, 22, bw, 40), lbl, GOLD.lerp(Color(1.0, 0.55, 0.4), pulse), "resume_dive", true, DS.T_BODY)
 		title_x = 12.0 + bw + 16.0
 	else:
-		_btn(font, Rect2(12, 22, 92, 40), "← 店へ", CYAN, "home", true, 15)
+		_btn(font, Rect2(12, 22, 104, 40), "← 店へ", PURPLE, "home", true, DS.T_BODY)
 	# タイトル
-	_txt(font, Vector2(title_x, 38), String(PANEL_TITLES.get(panel, "")), 18, TEXT)
-	# 日数・所持金・欠片
+	_txt(font, Vector2(title_x, 40), String(PANEL_TITLES.get(panel, "")), DS.T_SUB, DS.PAPER)
+	# 日数・所持金・欠片（ラベルは小さく灰、数値は白。有彩色を増やさない）
 	if sim != null:
 		var s: Dictionary = sim.state
-		var info := "Day %d    金 %d    欠片 %d" % [int(s["day"]), int(s["gold"]), int(s["shards"])]
-		var w := _tw(font, info, 15)
-		_txt(font, Vector2(sz.x - w - 14, 62), info, 15, GOLD)
+		var pairs := [["DAY", "%d" % int(s["day"])], ["金", "%d" % int(s["gold"])],
+				["欠片", "%d" % int(s["shards"])]]
+		var total := 0.0
+		for p in pairs:
+			total += _tw(font, String(p[0]), DS.T_MICRO) + 6.0 + _tw(font, String(p[1]), DS.T_SUB) + 20.0
+		var hx := sz.x - 16.0 - total + 20.0
+		for p in pairs:
+			_txt(font, Vector2(hx, 68), String(p[0]), DS.T_MICRO, DS.TEXT_MUTE)
+			hx += _tw(font, String(p[0]), DS.T_MICRO) + 6.0
+			_txt(font, Vector2(hx, 68), String(p[1]), DS.T_SUB, DS.PAPER)
+			hx += _tw(font, String(p[1]), DS.T_SUB) + 20.0
 
 
 # ── 深層マップ（ステージ制・タスクバーヒーロー準拠）──────────────────────────
@@ -263,8 +289,8 @@ func _draw_map(font: Font, sz: Vector2) -> void:
 	var diff := int(sim.state.get("difficulty", 0))
 
 	# 難易度セレクタ（4段。前難易度で第1幕突破が解放条件）
-	Kit.header(self, font, Vector2(16, y + 4), "難易度", GOLD, sz.x - 32)
-	y += 14
+	Kit.header(self, font, Vector2(16, y), "難易度", GOLD, sz.x - 32)
+	y += 48
 	var dw := (sz.x - 24 - 8 * 3) / 4.0
 	for d in KuroData.DIFFICULTIES.size():
 		var dd: Dictionary = KuroData.DIFFICULTIES[d]
@@ -294,13 +320,13 @@ func _draw_map(font: Font, sz: Vector2) -> void:
 	var sel := int(sim.state.get("stage_sel", -1))
 	if sel < 0 or sel > frontier:
 		sel = frontier
-	Kit.header(self, font, Vector2(16, y + 4), "ステージ（クリア済みは周回できる）", CYAN, sz.x - 32)
-	y += 14
+	Kit.header(self, font, Vector2(16, y), "ステージ", CYAN, sz.x - 32, DS.T_SUB, "クリア済みは周回できる")
+	y += 48
 	var first := maxi(0, frontier - 3)
 	if first > 0:
 		_txt(font, Vector2(24, y + 14), "… %d-1 までクリア済み" % (int(first / float(KuroData.ACT_LEN)) + 1), 12, TEXT_DIM)
 		y += 24
-	for fl in range(first, frontier + 3):
+	for fl in range(first, frontier + 2):
 		var r := Rect2(12, y, sz.x - 24, 52)
 		var unlocked: bool = fl <= frontier
 		var is_cleared := fl <= cleared
@@ -542,85 +568,312 @@ func _draw_market(font: Font, sz: Vector2) -> void:
 
 # ── 経営 ─────────────────────────────────────────────────────────────────────
 
+## 素材1個の原価。闇市の「素材箱（乾・肉・海 +2ずつ）」100G ÷ 6個 から引く。
+const MAT_COST := 17
+const PAD := 16.0
+
+
 func _draw_management(font: Font, sz: Vector2) -> void:
-	var y := HEADER_H + 14.0
 	var s: Dictionary = sim.state
 	var m: Dictionary = s["morning"]
+	var ac := PURPLE                       # この画面の支配色（他の有彩色は出さない）
+	var w := sz.x - PAD * 2.0
+	var top := HEADER_H
+	var bot := sz.y - FOOTER_H
+	# 斜めの地紋：無情報の平面を作らない
+	Kit.hatch(self, Rect2(0, top, sz.x, bot - top), Color(ac.r, ac.g, ac.b, 0.055), 26.0, 9.0)
 
-	# 今夜の見込み
-	_panel(Rect2(12, y, sz.x - 24, 56), Color(0.06, 0.06, 0.1, 0.92), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.4), 10)
-	_txt(font, Vector2(24, y + 24), "今夜の予報『%s』   看板 %d   客見込み 約%d人" % [
-			String(s["forecast"]), sim.sign_total(), 8 + sim.sign_total()], 14, TEXT)
-	_txt(font, Vector2(24, y + 44), "店番の仕込みと献立で、浮上後の三行精算が変わる。", 12, TEXT_DIM)
-	y += 70
+	var fc: Dictionary = sim.forecast_night()
+	var taste := String(s["forecast"])
+	var tcol: Color = KuroData.TASTE_COLORS.get(taste, ac)
 
-	# 店番選択
-	_txt(font, Vector2(16, y), "店番（その夜の営業性能を決める）", 15, GOLD)
-	y += 16
+	# ① 今夜の予報 ------------------------------------------------------- 96..192
+	_mg_forecast(font, Rect2(PAD, top + 12.0, w, 96.0), taste, tcol, fc)
+
+	# ② 店番 -------------------------------------------------------------
+	Kit.header(self, font, Vector2(PAD, 216.0), "店番", ac, w + 26.0, DS.T_HEAD, "この夜の売上を決める")
+	_mg_keepers(font, Rect2(PAD, 272.0, w, 128.0), m)
+	# 選択店番のシナジー（識別色の帯に反転で）
+	var kg: Dictionary = KuroData.GIRLS[m["keeper"]]
+	var syn := Rect2(PAD, 408.0, w, 32.0)
+	Kit.slab(self, syn, Color(ac.r, ac.g, ac.b, 0.92), 8.0)
+	_txt(font, Vector2(syn.position.x + 20.0, syn.position.y + 23.0),
+			"%s ／ %s ＝ %s" % [String(kg["name"]), String(kg["synergy"]), String(kg["synergy_desc"])],
+			DS.T_BODY, DS.on(ac))
+
+	# ③ 扉の方針 ---------------------------------------------------------
+	Kit.header(self, font, Vector2(PAD, 448.0), "扉", ac, w + 26.0, DS.T_HEAD, "潜航中の扉をどう扱うか")
+	_chip(font, Rect2(sz.x - PAD - 168.0, 456.0, 168.0, 32.0), "改装ツリー ▸", ac, "_panel:renov")
+	var door_open: bool = String(m["door"]) == "open"
+	_mg_segment(font, Rect2(PAD, 504.0, w, 56.0), "踏み込む", "見送る", door_open, "door", ac)
+
+	# ④ 献立デッキ -------------------------------------------------------
+	var menu: Array = m["menu"]
+	Kit.header(self, font, Vector2(PAD, 568.0), "献立", ac, w + 26.0, DS.T_HEAD,
+			"%d/%d 皿　タップで出し入れ" % [menu.size(), sim.menu_limit()])
+	var settle_top := bot - 316.0                       # 906
+	_mg_deck(font, Rect2(PAD, 624.0, w, settle_top - 640.0), s, menu, taste)
+
+	# ⑤ 今夜の三行精算（この画面の結論。画面最大の文字はここ）-------------
+	_mg_settle(font, Rect2(PAD, settle_top, w, 308.0), fc, door_open)
+
+
+## 予報の帯：傾いた黒板に、味の一文字を反転面で叩き込む。
+func _mg_forecast(font: Font, r: Rect2, taste: String, tcol: Color, fc: Dictionary) -> void:
+	var ac := PURPLE
+	Kit.slab(self, Rect2(r.position.x + 8.0, r.position.y + 8.0, r.size.x - 8.0, r.size.y),
+			Color(ac.r, ac.g, ac.b, 0.85), 12.0)
+	Kit.slab(self, r, Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.97), 12.0)
+	# 味の一文字（反転面）
+	var g := Rect2(r.position.x + 20.0, r.position.y + 16.0, 64.0, 64.0)
+	Kit.slab(self, g, tcol, 8.0)
+	_txt(font, Vector2(g.position.x + (g.size.x - _tw(font, taste, DS.T_DISPLAY)) * 0.5 + 4.0,
+			g.position.y + 52.0), taste, DS.T_DISPLAY, DS.INK)
+	var tx := r.position.x + 104.0
+	_txt(font, Vector2(tx, r.position.y + 34.0), "今夜の予報", DS.T_MICRO, Color(tcol.r, tcol.g, tcol.b, 0.95))
+	_txt(font, Vector2(tx, r.position.y + 68.0), "『%s』が高く売れる" % taste, DS.T_SUB, DS.PAPER)
+	# 数値は等幅で大きく（白のみ）
+	var x1 := r.end.x - 232.0
+	_txt(font, Vector2(x1, r.position.y + 34.0), "看板", DS.T_MICRO, DS.TEXT_2)
+	_txt(font, Vector2(x1, r.position.y + 68.0), "%d" % sim.sign_total(), DS.T_SUB, DS.PAPER)
+	var x2 := r.end.x - 128.0
+	_txt(font, Vector2(x2, r.position.y + 34.0), "客見込み", DS.T_MICRO, DS.TEXT_2)
+	_txt(font, Vector2(x2, r.position.y + 68.0), "%d人" % int(fc["customers"]), DS.T_SUB, DS.PAPER)
+
+
+## 店番6枚。選択＝面の反転（識別色のベタ＋暗色の文字）。最良適性は緑＋24px＋バッジ。
+func _mg_keepers(font: Font, area: Rect2, m: Dictionary) -> void:
+	var ac := PURPLE
 	var ids: Array = KuroData.GIRL_ORDER
 	var n := ids.size()
 	var gap := 8.0
-	var cw := (sz.x - 24 - gap * (n - 1)) / float(n)
+	var cw := (area.size.x - gap * (n - 1)) / float(n)
+	var best := 0.0
+	for id in ids:
+		best = maxf(best, float(KuroData.GIRLS[id]["keeper_apt"]))
 	for i in n:
 		var id: String = ids[i]
 		var g: Dictionary = KuroData.GIRLS[id]
-		var r := Rect2(12 + i * (cw + gap), y, cw, 50)
+		var r := Rect2(area.position.x + i * (cw + gap), area.position.y, cw, area.size.y)
 		var active: bool = id == m["keeper"]
-		var col: Color = g["color"]
-		_panel(r, Color(col.r * 0.16, col.g * 0.16, col.b * 0.2, 0.95),
-				col if active else Color(col.r, col.g, col.b, 0.3), 8, 2.0 if active else 1.0)
-		var nm := String(g["name"])
-		var apt := "適性%.0f%%" % (float(g["keeper_apt"]) * 100)
-		var drew := _draw_icon("res://assets/generated/face/%s/neutral_open.png" % id,
-				Rect2(r.position.x + 4, r.position.y + 13, 24, 24), Color(1, 1, 1, 1.0 if active else 0.8))
-		if drew:
-			_txt(font, Vector2(r.position.x + 30, r.position.y + 22), nm, 12, TEXT if active else TEXT_DIM)
-			_txt(font, Vector2(r.position.x + 30, r.position.y + 40), apt, 10, GOLD if active else TEXT_DIM)
+		var apt := float(g["keeper_apt"])
+		var is_best := apt >= best - 0.001
+		if active:
+			Kit.slab(self, Rect2(r.position.x + 5.0, r.position.y + 6.0, r.size.x - 5.0, r.size.y),
+					Color(0, 0, 0, 0.72), 8.0)
+			Kit.slab(self, r, ac, 8.0)
 		else:
-			_txt(font, Vector2(r.position.x + (cw - _tw(font, nm, 13)) * 0.5, r.position.y + 22), nm, 13, TEXT if active else TEXT_DIM)
-			_txt(font, Vector2(r.position.x + (cw - _tw(font, apt, 10)) * 0.5, r.position.y + 40), apt, 10, GOLD if active else TEXT_DIM)
+			Kit.slab(self, r, Color(0.03, 0.028, 0.05, 0.92), 8.0)
+			Kit.slab_edge(self, r, Color(1, 1, 1, 0.16), 8.0, 1.0)
+		var fg := DS.on(ac) if active else DS.TEXT
+		var cx := r.position.x + cw * 0.5 + 2.0
+		var iy := r.position.y + (34.0 if is_best else 26.0)
+		_draw_icon("res://assets/generated/face/%s/neutral_open.png" % id,
+				Rect2(cx - 22.0, iy - 22.0, 44.0, 44.0),
+				Color(1, 1, 1, 1.0 if active else 0.85), true)
+		var nm := String(g["name"])
+		_txt(font, Vector2(cx - _tw(font, nm, DS.T_BODY) * 0.5, r.position.y + 82.0), nm, DS.T_BODY, fg)
+		# 適性：最良は SUCCESS＋24px、他は本文
+		var vs := DS.T_SUB if is_best else DS.T_BODY
+		var vc := fg
+		if is_best:
+			vc = DS.on(ac) if active else DS.SUCCESS
+		var vt := "%d%%" % int(apt * 100.0)
+		_txt(font, Vector2(cx - _tw(font, vt, vs) * 0.5, r.position.y + 108.0), vt, vs, vc)
+		# 適性の横バー（数字だけでなく量でも比べられるように）
+		Kit.bar(self, Rect2(r.position.x + 10.0, r.position.y + 114.0, cw - 20.0, 6.0),
+				clampf((apt - 0.6) / 0.9, 0.05, 1.0),
+				(DS.INK if active else DS.SUCCESS) if is_best else
+				(Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.8) if active else Color(ac.r, ac.g, ac.b, 0.9)))
+		# 最良適性は帯で宣言する（バッジは小さすぎて読めない）
+		if is_best:
+			var br := Rect2(r.position.x + 1.0, r.position.y + 1.0, cw - 2.0, 22.0)
+			Kit.slab(self, br, DS.SUCCESS, 6.0)
+			_txt(font, Vector2(br.position.x + (br.size.x - _tw(font, "最適", DS.T_MICRO)) * 0.5 + 3.0,
+					br.position.y + 17.0), "最適", DS.T_MICRO, DS.INK)
 		_hit(r, "keeper:" + id)
-	# 選択店番のシナジー
-	var kg: Dictionary = KuroData.GIRLS[m["keeper"]]
-	y += 58
-	_txt(font, Vector2(16, y), "→ %s：%s（%s）" % [String(kg["name"]), String(kg["synergy"]), String(kg["synergy_desc"])], 13, CYAN)
-	y += 24
 
-	# 扉方針
-	_txt(font, Vector2(16, y), "扉の方針", 15, GOLD)
-	var door_open: bool = String(m["door"]) == "open"
-	_btn(font, Rect2(140, y - 18, 110, 32), "開ける" if door_open else "見送る", PURPLE if door_open else TEXT_DIM, "door", true, 14)
-	_btn(font, Rect2(264, y - 18, 132, 32), "改装ツリー", CYAN, "_panel:renov", true, 14)
-	y += 26
 
-	# 献立デッキ
-	var menu: Array = m["menu"]
-	_txt(font, Vector2(16, y), "献立デッキ（%d/%d）— タップで出し入れ" % [menu.size(), sim.menu_limit()], 15, GOLD)
-	y += 18
+## 全幅の2択セグメント（選択側だけが面の反転）。
+func _mg_segment(font: Font, r: Rect2, a: String, b: String, first: bool, id: String, ac: Color) -> void:
+	var half := r.size.x * 0.5
+	var labels := [a, b]
+	for i in 2:
+		var cell := Rect2(r.position.x + i * half, r.position.y, half - (4.0 if i == 0 else 0.0), r.size.y)
+		var on := (i == 0) == first
+		if on:
+			Kit.slab(self, Rect2(cell.position.x + 5.0, cell.position.y + 6.0, cell.size.x - 5.0, cell.size.y),
+					Color(0, 0, 0, 0.72), 10.0)
+			Kit.slab(self, cell, ac, 10.0)
+		else:
+			Kit.slab(self, cell, Color(0.03, 0.028, 0.05, 0.88), 10.0)
+			Kit.slab_edge(self, cell, Color(1, 1, 1, 0.14), 10.0, 1.0)
+		var lbl := String(labels[i])
+		var col := DS.on(ac) if on else DS.TEXT_2
+		_txt(font, Vector2(cell.position.x + (cell.size.x - _tw(font, lbl, DS.T_SUB)) * 0.5,
+				cell.position.y + r.size.y * 0.5 + 9.0), lbl, DS.T_SUB, col)
+	_hit(r, id)
+
+
+## 献立カード（縦型：丸皿アイコン＋料理名＋メタ行）。左端4pxの縦帯＝味。
+func _mg_deck(font: Font, area: Rect2, s: Dictionary, menu: Array, taste: String) -> void:
+	var ac := PURPLE
 	var owned: Array = []
 	for rid in KuroData.RECIPES:
 		if int(s["recipes"].get(rid, 0)) > 0:
 			owned.append(rid)
-	var perrow := 3
-	var rcw := (sz.x - 24 - 8 * (perrow - 1)) / float(perrow)
-	for i in owned.size():
+	if owned.is_empty():
+		_txt(font, Vector2(area.position.x + 8.0, area.position.y + 32.0), "レシピがまだ無い。", DS.T_BODY, DS.TEXT_2)
+		return
+	# 品数に応じて列を決め、端数の行は幅を伸ばして埋める（右側に穴を作らない）
+	var per := 2 if owned.size() <= 4 else 3
+	var gap := 10.0
+	var cw := (area.size.x - gap * (per - 1)) / float(per)
+	var rows := int(ceil(owned.size() / float(per)))
+	var ch := clampf((area.size.y - gap * (rows - 1)) / float(rows), 76.0, 140.0)
+	var max_rows := maxi(int((area.size.y + gap) / (76.0 + gap)), 1)
+	var shown := owned.size()
+	if rows > max_rows:
+		rows = max_rows
+		shown = rows * per
+		ch = clampf((area.size.y - gap * (rows - 1)) / float(rows), 76.0, 140.0)
+	var tall := ch >= 112.0
+	var total := mini(shown, owned.size())
+	var last_row := int((total - 1) / per)
+	var last_n := total - last_row * per
+	var last_cw := (area.size.x - gap * (last_n - 1)) / float(last_n)
+	for i in total:
 		var rid: String = owned[i]
 		var rec: Dictionary = KuroData.RECIPES[rid]
-		var rx := 12 + (i % perrow) * (rcw + 8)
-		var ry := y + int(i / perrow) * 50
-		var r := Rect2(rx, ry, rcw, 44)
+		var row := int(i / per)
+		# 端数の行はカードを伸ばして幅いっぱいに（無情報の平面を残さない）
+		var this_w := cw if row < last_row else last_cw
+		var r := Rect2(area.position.x + (i % per) * (this_w + gap),
+				area.position.y + row * (ch + gap), this_w, ch)
 		var on: bool = rid in menu
-		var tcol: Color = KuroData.TASTE_COLORS[rec["taste"]]
-		_panel(r, Color(0.07, 0.07, 0.1, 0.95) if not on else Color(tcol.r * 0.2, tcol.g * 0.18, tcol.b * 0.2, 0.95),
-				tcol if on else Color(0.4, 0.4, 0.46, 0.6), 8, 2.0 if on else 1.0)
+		var rc: Color = KuroData.TASTE_COLORS[rec["taste"]]
+		var hit: bool = String(rec["taste"]) == taste
+		if on:
+			Kit.slab(self, Rect2(r.position.x + 5.0, r.position.y + 6.0, r.size.x - 5.0, r.size.y),
+					Color(0, 0, 0, 0.72), 8.0)
+			Kit.slab(self, r, ac, 8.0)
+		else:
+			Kit.slab(self, r, Color(0.03, 0.028, 0.05, 0.92), 8.0)
+			Kit.slab_edge(self, r, Color(1, 1, 1, 0.16), 8.0, 1.0)
+		# 味は枠線ではなく左端の縦帯へ（予報と同じ色＝結びつき）
+		Kit.slab(self, Rect2(r.position.x + 4.0, r.position.y + 4.0, 16.0, r.size.y - 8.0), DS.INK, 4.0)
+		Kit.slab(self, Rect2(r.position.x + 7.0, r.position.y + 7.0, 10.0, r.size.y - 14.0),
+				Color(rc.r, rc.g, rc.b, 1.0 if hit else 0.45), 3.0)
+		var fg := DS.on(ac) if on else DS.TEXT
+		var sub := DS.on(ac) if on else DS.TEXT_2
+		var nm := String(rec["name"])
 		var star := int(s["recipes"].get(rid, 1))
-		# 料理アイコン
-		var has_food := _draw_icon("res://assets/generated/food/%s.png" % rid, Rect2(rx + 6, ry + 6, 32, 32),
-				Color(1, 1, 1, 1.0 if on else 0.7))
-		var ftx := rx + (44.0 if has_food else 8.0)
-		_txt(font, Vector2(ftx, ry + 20), String(rec["name"]), 13, TEXT if on else TEXT_DIM)
-		_txt(font, Vector2(ftx, ry + 37), "%s ☆%d  %dG" % [String(rec["taste"]), star, int(rec["base"])], 10, tcol if on else TEXT_DIM)
+		var meta := "☆%d　%dG" % [star, int(rec["base"])]
+		var path := "res://assets/generated/food/%s.png" % rid
+		var mid := r.position.x + 20.0 + (this_w - 20.0) * 0.5
+		if cw >= 280.0:      # 行ごとに型を変えない（列幅で一律に決める）
+			# 幅広：皿を左に、名とメタを中、単価を右端に（数値は等幅で大きく）
+			var iy := r.position.y + ch * 0.5
+			_draw_icon(path, Rect2(r.position.x + 34.0, iy - 36.0, 72.0, 72.0),
+					Color(1, 1, 1, 1.0 if on else 0.8), true)
+			_txt(font, Vector2(r.position.x + 126.0, iy + 2.0), nm, DS.T_SUB, fg)
+			_txt(font, Vector2(r.position.x + 126.0, iy + 28.0),
+					"%s ・ ☆%d" % [String(rec["taste"]), star], DS.T_MICRO, sub)
+			var pv := "%dG" % int(rec["base"])
+			_txt(font, Vector2(r.end.x - _tw(font, pv, DS.T_SUB) - 20.0, iy + 10.0), pv, DS.T_SUB, fg)
+		elif tall:
+			_draw_icon(path, Rect2(mid - 30.0, r.position.y + 12.0, 60.0, 60.0),
+					Color(1, 1, 1, 1.0 if on else 0.8), true)
+			_txt(font, Vector2(mid - _tw(font, nm, DS.T_SUB) * 0.5, r.position.y + 102.0), nm, DS.T_SUB, fg)
+			_txt(font, Vector2(mid - _tw(font, meta, DS.T_MICRO) * 0.5, r.position.y + 126.0),
+					meta, DS.T_MICRO, sub)
+		else:
+			_draw_icon(path, Rect2(r.position.x + 28.0, r.position.y + (ch - 40.0) * 0.5, 40.0, 40.0),
+					Color(1, 1, 1, 1.0 if on else 0.8), true)
+			_txt(font, Vector2(r.position.x + 76.0, r.position.y + ch * 0.5), nm, DS.T_BODY, fg)
+			_txt(font, Vector2(r.position.x + 76.0, r.position.y + ch * 0.5 + 20.0), meta, DS.T_MICRO, sub)
+		if hit:
+			var br := Rect2(r.end.x - 54.0, r.position.y + 4.0, 48.0, 20.0)
+			Kit.slab(self, br, rc, 5.0)
+			_txt(font, Vector2(br.position.x + 8.0, br.position.y + 16.0), "予報", DS.T_MICRO, DS.INK)
 		_hit(r, "menu:" + rid)
+	if shown < owned.size():
+		_txt(font, Vector2(area.position.x + 4.0, area.end.y + 14.0),
+				"…他 %d 品" % (owned.size() - shown), DS.T_MICRO, DS.TEXT_2)
+
+
+## 今夜の三行精算（見込み）。この画面の結論を、画面最大の文字で置く。
+func _mg_settle(font: Font, r: Rect2, fc: Dictionary, door_open: bool) -> void:
+	var ac := PURPLE
+	var served := int(fc["served"])
+	var revenue := int(fc["gold"])
+	var cost := served * MAT_COST
+	var profit := revenue - cost
+	# 見出しの黒板
+	var head := Rect2(r.position.x, r.position.y, r.size.x, 48.0)
+	Kit.slab(self, Rect2(head.position.x + 7.0, head.position.y + 6.0, head.size.x - 7.0, head.size.y),
+			Color(ac.r, ac.g, ac.b, 0.5), 10.0)
+	Kit.slab(self, head, Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.97), 10.0)
+	Kit.slab(self, Rect2(head.position.x + 8.0, head.position.y, 9.0, head.size.y), ac, 10.0)
+	_txt(font, Vector2(head.position.x + 30.0, head.position.y + 34.0), "今夜の三行精算", DS.T_HEAD, DS.PAPER)
+	var note := "見込み"
+	_txt(font, Vector2(head.end.x - _tw(font, note, DS.T_MICRO) - 20.0, head.position.y + 32.0),
+			note, DS.T_MICRO, Color(ac.r, ac.g, ac.b, 0.95))
+	# 面
+	var body := Rect2(r.position.x, r.position.y + 48.0, r.size.x, r.size.y - 48.0)
+	Kit.slab(self, body, Color(0.03, 0.028, 0.05, 0.92), 10.0)
+	Kit.hatch(self, body.grow(-6.0), Color(ac.r, ac.g, ac.b, 0.05), 22.0, 7.0)
+	var x := body.position.x + 24.0
+	# 一行目：客と皿
+	var y1 := body.position.y + 44.0
+	_txt(font, Vector2(x, y1), "客", DS.T_MICRO, DS.TEXT_2)
+	_txt(font, Vector2(x + 28.0, y1), "%d" % int(fc["customers"]), DS.T_SUB, DS.PAPER)
+	_txt(font, Vector2(x + 28.0 + _tw(font, "%d" % int(fc["customers"]), DS.T_SUB) + 4.0, y1), "人", DS.T_MICRO, DS.TEXT_2)
+	var x2 := x + 148.0
+	_txt(font, Vector2(x2, y1), "出す皿", DS.T_MICRO, DS.TEXT_2)
+	_txt(font, Vector2(x2 + 76.0, y1), "%d" % served, DS.T_SUB, DS.PAPER)
+	_txt(font, Vector2(x2 + 76.0 + _tw(font, "%d" % served, DS.T_SUB) + 4.0, y1), "皿", DS.T_MICRO, DS.TEXT_2)
+	var x3 := body.end.x - 148.0
+	_txt(font, Vector2(x3, y1), "仕込み", DS.T_MICRO, DS.TEXT_2)
+	_txt(font, Vector2(x3 + 76.0, y1), "%d" % int(fc["prep"]), DS.T_SUB, DS.TEXT)
+	# 二行目：売上と原価
+	var y2 := y1 + 40.0
+	_txt(font, Vector2(x, y2), "売上", DS.T_MICRO, DS.TEXT_2)
+	_txt(font, Vector2(x + 52.0, y2), "+%dG" % revenue, DS.T_SUB, DS.PAPER)
+	_txt(font, Vector2(x2, y2), "原価", DS.T_MICRO, DS.TEXT_2)
+	_txt(font, Vector2(x2 + 52.0, y2), "-%dG" % cost, DS.T_SUB, DS.DANGER)
+	_txt(font, Vector2(x3, y2), "単価", DS.T_MICRO, DS.TEXT_2)
+	_txt(font, Vector2(x3 + 52.0, y2), "%dG" % (int(revenue / float(maxi(served, 1)))), DS.T_SUB, DS.TEXT)
+	# 三行目：純益（面の反転・画面最大）
+	var pcol := ac if profit >= 0 else DS.DANGER
+	var slab := Rect2(body.position.x + 8.0, y2 + 22.0, body.size.x - 16.0, 88.0)
+	Kit.slab(self, Rect2(slab.position.x + 7.0, slab.position.y + 7.0, slab.size.x - 7.0, slab.size.y),
+			Color(0, 0, 0, 0.75), 12.0)
+	Kit.slab(self, slab, pcol, 12.0)
+	var pink := DS.on(pcol)
+	_txt(font, Vector2(slab.position.x + 26.0, slab.position.y + 42.0), "純益", DS.T_SUB, pink)
+	_txt(font, Vector2(slab.position.x + 26.0, slab.position.y + 70.0),
+			"浮上したら手元に残る", DS.T_MICRO, Color(pink.r, pink.g, pink.b, 0.8))
+	var pv := "%s%dG" % ["+" if profit >= 0 else "-", absi(profit)]
+	_txt(font, Vector2(slab.end.x - _tw(font, pv, DS.T_DISPLAY) - 32.0, slab.position.y + 62.0),
+			pv, DS.T_DISPLAY, pink)
+	# 補足2行（素材切れ・扉の方針）
+	var ny := slab.end.y + 26.0
+	var short_n := int(fc["short"])
+	var out: Array = fc["out"]
+	var names: Array = []
+	for ing in out:
+		names.append(String(KuroData.ING_NAMES.get(ing, ing)))
+	if short_n > 0:
+		_txt(font, Vector2(x, ny), "▲ 素材切れで %d 皿を売り逃す（%s）" % [
+				short_n, "・".join(names) if not names.is_empty() else "在庫不足"], DS.T_MICRO, DS.DANGER)
+	elif not names.is_empty():
+		_txt(font, Vector2(x, ny), "● 今夜で %s を使い切る。明日の仕入れが要る。" % "・".join(names),
+				DS.T_MICRO, DS.TEXT_2)
+	else:
+		_txt(font, Vector2(x, ny), "● 素材は足りている。仕込みも客数に届く。", DS.T_MICRO, DS.SUCCESS)
+	_txt(font, Vector2(x, ny + 24.0), ("● 扉：踏み込む＝箱50% / 素材+3〜5が30% / 罠20%"
+			if door_open else "● 扉：見送る＝取り分は増えないが、誰も削られない"), DS.T_MICRO, DS.TEXT_2)
 
 
 # ── 工房（Cube: 装備加工）────────────────────────────────────────────────────
@@ -828,16 +1081,17 @@ func _draw_footer(font: Font, sz: Vector2) -> void:
 		var gcol := col if active else Color(TEXT_DIM.r, TEXT_DIM.g, TEXT_DIM.b, 0.9)
 		var cx := x0 + cw * 0.5
 		var glyph := String(e["icon"])
-		_txt(font, Vector2(cx - _tw(font, glyph, 22) * 0.5, fy + 28), glyph, 22, gcol)
+		_txt(font, Vector2(cx - _tw(font, glyph, DS.T_SUB) * 0.5, fy + 30), glyph, DS.T_SUB, gcol)
 		var label := String(e["label"])
-		_txt(font, Vector2(cx - _tw(font, label, 11) * 0.5, fy + 48), label, 11, gcol)
+		_txt(font, Vector2(cx - _tw(font, label, DS.T_MICRO) * 0.5, fy + 50), label, DS.T_MICRO, gcol)
 
 
 func _draw_toast(font: Font, sz: Vector2) -> void:
 	if _toast_t <= 0.0 or _toast == "":
 		return
 	var a := clampf(_toast_t / 0.6, 0.0, 1.0)
-	var w := _tw(font, _toast, 15) + 36
-	var r := Rect2((sz.x - w) * 0.5, sz.y - FOOTER_H - 56, w, 38)
-	_panel(r, Color(0.08, 0.06, 0.12, 0.92 * a), Color(PINK.r, PINK.g, PINK.b, 0.7 * a), 10)
-	_txt(font, Vector2(r.position.x + 18, r.position.y + 24), _toast, 15, Color(TEXT.r, TEXT.g, TEXT.b, a))
+	var w := _tw(font, _toast, DS.T_BODY) + 40
+	var r := Rect2((sz.x - w) * 0.5, sz.y - FOOTER_H - 60, w, 40)
+	Kit.slab(self, r, Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.95 * a), 10.0)
+	Kit.slab_edge(self, r, Color(PINK.r, PINK.g, PINK.b, 0.8 * a), 10.0, 2.0)
+	_txt(font, Vector2(r.position.x + 22, r.position.y + 27), _toast, DS.T_BODY, Color(TEXT.r, TEXT.g, TEXT.b, a))
