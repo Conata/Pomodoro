@@ -476,6 +476,87 @@ func _bar(rect: Rect2, frac: float, col: Color) -> void:
 	Kit.bar(self, rect, frac, col)
 
 
+# ── 画面の骨格（6画面で同じ段・同じ送り・同じ結び方）──────────────────────
+# 経営（_draw_management）の密度を基準にする。どの画面も
+#   ①見出し＝T_HEAD の黒板（送り 56）
+#   ②本文＝面のある帯／カード
+#   ③下端に「結論ブロック」を固定し、間の一覧を可変で伸ばす
+# の3点で組む。これを守る限り、画面の縦が空くことはない。
+const SEC_ADV := 56.0     # 見出し板（T_HEAD+16=48）＋下の余白 8
+const CONC_HEAD := 48.0   # 結論ブロックの黒板の高さ
+
+
+## セクション見出し。全画面で同じ段（T_HEAD）・同じ幅・同じ送り。
+## 戻り値＝本文の開始 y。
+func _sec(font: Font, y: float, w: float, label: String, accent: Color, note := "") -> float:
+	Kit.header(self, font, Vector2(M, y), label, accent, w, DS.T_HEAD, note)
+	return y + SEC_ADV
+
+
+## 結論ブロックの見出し（傾いた黒板＋識別色の柱）。経営の「今夜の三行精算」と同じ形。
+## 戻り値＝本文（面）の矩形。
+func _conc(font: Font, r: Rect2, title: String, note: String, ac: Color) -> Rect2:
+	var head := Rect2(r.position.x, r.position.y, r.size.x, CONC_HEAD)
+	Kit.slab(self, Rect2(head.position.x + 7.0, head.position.y + 6.0, head.size.x - 7.0, head.size.y),
+			Color(ac.r, ac.g, ac.b, 0.5), 10.0)
+	Kit.slab(self, head, Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.97), 10.0)
+	Kit.slab(self, Rect2(head.position.x + 8.0, head.position.y, 9.0, head.size.y), ac, 10.0)
+	_txt(font, Vector2(head.position.x + 30.0, head.position.y + 34.0), title, DS.T_HEAD, DS.PAPER)
+	if note != "":
+		_txt(font, Vector2(head.end.x - _tw(font, note, DS.T_MICRO) - 20.0, head.position.y + 32.0),
+				note, DS.T_MICRO, Color(ac.r, ac.g, ac.b, 0.95))
+	var body := Rect2(r.position.x, r.position.y + CONC_HEAD, r.size.x, r.size.y - CONC_HEAD)
+	Kit.slab(self, body, Color(0.03, 0.028, 0.05, 0.92), 10.0)
+	Kit.hatch(self, body.grow(-6.0), Color(ac.r, ac.g, ac.b, 0.05), 22.0, 7.0)
+	return body
+
+
+## 結論ブロックの一行（ラベル小・数値 T_SUB・単位小）。戻り値＝次の x。
+func _stat(font: Font, pos: Vector2, label: String, key: String, v: float, unit: String,
+		col := DS.PAPER, lw := 0.0) -> float:
+	_txt(font, pos, label, DS.T_MICRO, DS.TEXT_2)
+	var x := pos.x + (lw if lw > 0.0 else _tw(font, label, DS.T_MICRO) + 10.0)
+	var w := _num(font, Vector2(x, pos.y), key, v, DS.T_SUB, col, DS.SUCCESS, DS.DANGER, "", false)
+	x += w + 4.0
+	if unit != "":
+		_txt(font, Vector2(x, pos.y), unit, DS.T_MICRO, DS.TEXT_2)
+		x += _tw(font, unit, DS.T_MICRO)
+	return x
+
+
+## 状態の一行（結論ブロックの帯）。緑＝順調／赤＝危険／識別色＝ただの注記。
+func _strip(font: Font, r: Rect2, text: String, col: Color) -> void:
+	Kit.slab(self, r, Color(col.r * 0.20, col.g * 0.18, col.b * 0.22, 0.95), 8.0)
+	Kit.slab_edge(self, r, Color(col.r, col.g, col.b, 0.7), 8.0, 1.5)
+	draw_circle(Vector2(r.position.x + 22.0, r.position.y + r.size.y * 0.5), 5.0, col)
+	_txt(font, Vector2(r.position.x + 38.0, r.position.y + r.size.y * 0.5 + 6.0), text, DS.T_MICRO, col)
+
+
+## 2択のセグメント（左右で別々の id を送る版）。工房の 倉庫／バッグ に使う。
+func _segment2(font: Font, r: Rect2, a: String, b: String, first: bool,
+		id_a: String, id_b: String, ac: Color) -> void:
+	var half := r.size.x * 0.5
+	var labels := [a, b]
+	var ids := [id_a, id_b]
+	for i in 2:
+		var cell := Rect2(r.position.x + i * half, r.position.y, half - (4.0 if i == 0 else 0.0), r.size.y)
+		var on := (i == 0) == first
+		var pv := _begin_sink(cell)
+		if on:
+			Kit.slab(self, Rect2(cell.position.x + 5.0, cell.position.y + 6.0, cell.size.x - 5.0, cell.size.y),
+					Color(0, 0, 0, 0.72), 10.0)
+			Kit.slab(self, cell, ac, 10.0)
+		else:
+			Kit.slab(self, cell, Color(0.03, 0.028, 0.05, 0.88), 10.0)
+			Kit.slab_edge(self, cell, Color(1, 1, 1, 0.14), 10.0, 1.0)
+		var lbl := String(labels[i])
+		_txt(font, Vector2(cell.position.x + (cell.size.x - _tw(font, lbl, DS.T_SUB)) * 0.5,
+				cell.position.y + r.size.y * 0.5 + 9.0), lbl, DS.T_SUB, DS.on(ac) if on else DS.TEXT_2)
+		_end_sink(pv)
+		if not on:
+			_hit(cell, String(ids[i]))
+
+
 func _draw() -> void:
 	var sz := size
 	var font := get_theme_default_font()
@@ -604,8 +685,7 @@ func _draw_map(font: Font, sz: Vector2) -> void:
 
 	_stag()
 	# 難易度セレクタ（4段。前難易度で第1幕突破が解放条件）
-	Kit.header(self, font, Vector2(M, y), "難易度", GOLD, sz.x - M * 2)
-	y += 52
+	y = _sec(font, y, sz.x - M * 2.0, "難易度", GOLD)
 	var dw := (sz.x - M * 2 - DS.SP_2 * 3) / 4.0
 	for d in KuroData.DIFFICULTIES.size():
 		var dd: Dictionary = KuroData.DIFFICULTIES[d]
@@ -638,8 +718,7 @@ func _draw_map(font: Font, sz: Vector2) -> void:
 	var sel := int(sim.state.get("stage_sel", -1))
 	if sel < 0 or sel > frontier:
 		sel = frontier
-	Kit.header(self, font, Vector2(M, y), "ステージ", CYAN, sz.x - M * 2, DS.T_SUB, "クリア済みは周回できる")
-	y += 52
+	y = _sec(font, y, sz.x - M * 2.0, "ステージ", CYAN, "クリア済みは周回できる")
 	var first := maxi(0, frontier - 3)
 	if first > 0:
 		_txt(font, Vector2(M + DS.SP_2, y + 16), "… %d-1 までクリア済み" % (int(first / float(KuroData.ACT_LEN)) + 1),
@@ -714,12 +793,19 @@ func _draw_map(font: Font, sz: Vector2) -> void:
 
 func _draw_member(font: Font, sz: Vector2) -> void:
 	var ids: Array = KuroData.GIRL_ORDER
-	var y := HEADER_H + float(M)
+	var ac := PINK                     # この画面の識別色（他の有彩色は状態色だけ）
+	var w := sz.x - M * 2.0
+	var top := HEADER_H
+	var bot := sz.y - FOOTER_H
+	# 斜めの地紋：経営と同じく、無情報の平面を作らない
+	Kit.hatch(self, Rect2(0, top, sz.x, bot - top), Color(ac.r, ac.g, ac.b, 0.05), 26.0, 9.0)
+	var y := top + 12.0
+
 	_stag()
-	# 6人チップ
+	# ① 6人チップ ---------------------------------------------------------
 	var n := ids.size()
 	var gap := float(DS.SP_2)
-	var cw := (sz.x - M * 2 - gap * (n - 1)) / float(n)
+	var cw := (w - gap * (n - 1)) / float(n)
 	# 「選ぶ」にも固有のモーションを持たせる：選択の帯は隣の子へ滑って、少し行き過ぎて座る。
 	# 枠の色も移動中は前の子と混ざる＝どこからどこへ移ったかが見える。
 	var si := maxi(ids.find(_sel_girl), 0)
@@ -730,7 +816,7 @@ func _draw_member(font: Font, sz: Vector2) -> void:
 	for i in n:
 		var id: String = ids[i]
 		var g0: Dictionary = KuroData.GIRLS[id]
-		var r := Rect2(M + i * (cw + gap), y, cw, 70)
+		var r := Rect2(M + i * (cw + gap), y, cw, 76.0)
 		var col: Color = g0["color"]
 		var near := clampf(1.0 - absf(sx - r.position.x) / (cw + gap), 0.0, 1.0)
 		var active := near > 0.5
@@ -739,122 +825,250 @@ func _draw_member(font: Font, sz: Vector2) -> void:
 				Color(col.r, col.g, col.b, 0.35).lerp(col, Kit.out_cubic(near)), 1.0 + near)
 		# 顔アイコン（無ければ名前のみ）
 		var drew := _draw_icon("res://assets/generated/face/%s/neutral_open.png" % id,
-				Rect2(r.position.x + (cw - 36) * 0.5, r.position.y + 4, 36, 36),
+				Rect2(r.position.x + (cw - 40.0) * 0.5, r.position.y + 6.0, 40.0, 40.0),
 				Color(1, 1, 1, 1.0 if active else 0.8))
 		var nm := String(g0["name"])
-		var ny := r.position.y + (60.0 if drew else 42.0)
+		var ny := r.position.y + (66.0 if drew else 46.0)
 		_txt(font, Vector2(r.position.x + (cw - _tw(font, nm, DS.T_MICRO)) * 0.5 + 2.0, ny), nm,
 				DS.T_MICRO, TEXT if active else TEXT_DIM)
 		_end_sink(pv)
 		_hit(r, "_selg:" + id)
 	var sstretch := (1.0 - Kit.out_cubic(float(sl["k"]))) * cw * 0.5
-	draw_rect(Rect2(sx - sstretch * 0.5, y, cw + sstretch, 3), scol)
-	y += 82
+	draw_rect(Rect2(sx - sstretch * 0.5, y, cw + sstretch, 3.0), scol)
+	y += 88.0
+
+	var gid := _sel_girl
+	_stag()
+	# ② 詳細カード -------------------------------------------------------
+	_mb_card(font, Rect2(M, y, w, 180.0), gid, ac)
+	y += 192.0
 
 	_stag()
-	# 選択中の子の詳細カード。切替は瞬間差し替えではなく、動いた向きから滑り込ませる
-	# （帯だけが動いて中身が黙って入れ替わる、をやめる）。
-	var gid := _sel_girl
+	# ③ 装備3枠（今まで画面に無かった事実。工房への導線も兼ねる）---------
+	y = _sec(font, y, w, "装備", ac, "タップで工房へ")
+	_mb_gear(font, Rect2(M, y, w, 92.0), gid)
+	y += 108.0
+
+	# ⑥ 下端固定：編成の見立て（この画面の結論。経営の三行精算と同じ置き方）
+	var conc_h := 160.0
+	var conc_top := bot - 12.0 - conc_h
+
+	# ④⑤ は残りを行数で分け合う＝どの子を選んでも画面の縦を使い切る
+	var eq: Array = sim.state["girls"][gid]["skills_eq"]
+	var known: Array = sim.known_skills(gid)
+	var nodes: Array = KuroData.GIRL_TREES.get(gid, [])
+	var srow := maxi(int((known.size() + 1) / 2), 1)
+	var tn := maxi(nodes.size(), 1)
+	var region := maxf(conc_top - 16.0 - y - SEC_ADV * 2.0 - 16.0, 220.0)
+	var h1 := region * float(srow) / float(srow + tn)
+	var h2 := region - h1
+
+	_stag()
+	# ④ スキル（装備枠）--------------------------------------------------
+	y = _sec(font, y, w, "スキル", ac, "装備 %d/%d　タップで着脱" % [eq.size(), sim.skill_slots()])
+	var half := (w - DS.SP_2) * 0.5
+	var srh := (h1 - float(DS.SP_2) * (srow - 1)) / float(srow)
+	var odd_last := known.size() % 2 == 1
+	for i in known.size():
+		var sid: String = known[i]
+		var def: Dictionary = KuroData.SKILL_DB[sid]
+		# 端数の1枚は幅いっぱいに伸ばす（右側に無情報の平面を残さない）
+		var cwid := w if (odd_last and i == known.size() - 1) else half
+		var r := Rect2(M + (i % 2) * (half + DS.SP_2), y + int(i / 2) * (srh + DS.SP_2), cwid, srh)
+		var on: bool = sid in eq
+		var pv := _begin_sink(r)
+		_panel(r, Color(0.08, 0.08, 0.12, 0.95), ac if on else Color(0.4, 0.42, 0.5, 0.6),
+				2.0 if on else 1.0)
+		# スキルアイコン（doctor/nurse 等は未用意 → テキストのみ）
+		var has_icon := _draw_icon("res://assets/generated/skill/%s.png" % sid,
+				Rect2(r.position.x + 12.0, r.position.y + (srh - 36.0) * 0.5, 36.0, 36.0),
+				Color(1, 1, 1, 1.0 if on else 0.7))
+		var stx := r.position.x + (58.0 if has_icon else 18.0)
+		_txt(font, Vector2(stx, r.position.y + srh * 0.5 - 2.0), String(def["name"]), DS.T_BODY,
+				TEXT if on else TEXT_DIM)
+		_txt(font, Vector2(stx, r.position.y + srh * 0.5 + 22.0),
+				"CD%.0fs　%s" % [float(def["cd"]), ("装備中" if on else "タップで装備")],
+				DS.T_MICRO, ac if on else TEXT_DIM)
+		_end_sink(pv)
+		_hit(r, "skill:%s:%s" % [gid, sid])
+	if known.is_empty():
+		var er := Rect2(M, y, w, h1)
+		_panel(er, Color(0.05, 0.05, 0.08, 0.86), Color(0.4, 0.42, 0.5, 0.4))
+		_txt(font, Vector2(er.position.x + 24.0, er.position.y + er.size.y * 0.5 + 6.0),
+				"まだ技を覚えていない。育成で解放する。", DS.T_BODY, TEXT_DIM)
+	y += h1 + 16.0
+
+	_stag()
+	# ⑤ 育成ツリー（記憶の欠片）------------------------------------------
+	y = _sec(font, y, w, "育成", ac, "記憶の欠片 %d 個で解放" % int(sim.state["shards"]))
+	var owned: Array = sim.state["girls"][gid].get("tree", [])
+	var trh := (h2 - float(DS.SP_2) * (tn - 1)) / float(tn)
+	for i in nodes.size():
+		var node: Dictionary = nodes[i]
+		var nid := String(node["id"])
+		var r := Rect2(M, y + i * (trh + DS.SP_2), w, trh)
+		var is_owned: bool = nid in owned
+		var avail: bool = sim.tree_available(gid, nid)
+		var border := GREEN if is_owned else (ac if avail else Color(0.35, 0.35, 0.4, 0.5))
+		_panel(r, Color(0.07, 0.07, 0.1, 0.9), border)
+		# 左端の縦帯＝その段の状態（解放済／今買える／まだ）
+		Kit.slab(self, Rect2(r.position.x + 6.0, r.position.y + 6.0, 8.0, r.size.y - 12.0),
+				Color(border.r, border.g, border.b, 0.95 if (is_owned or avail) else 0.4), 3.0)
+		var mid := r.position.y + r.size.y * 0.5
+		_txt(font, Vector2(r.position.x + 28.0, mid - 2.0), String(node["name"]), DS.T_BODY,
+				TEXT if (is_owned or avail) else TEXT_DIM)
+		_txt(font, Vector2(r.position.x + 28.0, mid + 22.0), _effect_label(node["effect"]),
+				DS.T_MICRO, TEXT_DIM)
+		var cost := int(node["cost"])
+		if is_owned:
+			_txt(font, Vector2(r.end.x - _tw(font, "解放済", DS.T_MICRO) - 24.0, mid + 6.0), "解放済",
+					DS.T_MICRO, GREEN)
+		elif avail:
+			_btn(font, Rect2(r.end.x - 132.0, mid - 21.0, 120.0, 42.0), "欠片%d" % cost, ac,
+					"tree:%s:%s" % [gid, nid], int(sim.state["shards"]) >= cost)
+		else:
+			var req := int(node.get("req_aff", 0))
+			var why := "♥%d必要" % req if sim.aff(gid) < req else "前の段が未解放"
+			_txt(font, Vector2(r.end.x - _tw(font, why, DS.T_MICRO) - 24.0, mid - 2.0), why,
+					DS.T_MICRO, Color(0.6, 0.6, 0.66))
+			_txt(font, Vector2(r.end.x - _tw(font, "欠片%d" % cost, DS.T_MICRO) - 24.0, mid + 22.0),
+					"欠片%d" % cost, DS.T_MICRO, TEXT_DIM)
+
+	_stag()
+	_mb_ledger(font, Rect2(M, conc_top, w, conc_h), gid, ac)
+
+
+## メンバー詳細カード。切替は瞬間差し替えではなく、動いた向きから滑り込ませる
+## （帯だけが動いて中身が黙って入れ替わる、をやめる）。
+func _mb_card(font: Font, card: Rect2, gid: String, ac: Color) -> void:
 	var g: Dictionary = KuroData.GIRLS[gid]
+	var col: Color = g["color"]
+	var y := card.position.y
 	var mk := Kit.out_quart((_t - _selg_t) / SELG_DUR)
-	var card := Rect2(M, y, sz.x - M * 2, 150)
-	_panel(card, Color(0.06, 0.06, 0.1, 0.92), Color(g["color"].r, g["color"].g, g["color"].b, 0.5))
+	_panel(card, Color(0.06, 0.06, 0.1, 0.92), Color(col.r, col.g, col.b, 0.5))
 	if mk < 1.0:
 		Kit.set_xf(self, _xf_now + Vector2((1.0 - mk) * 46.0 * _selg_dir, 0.0))
 	# 立ち絵（左・無ければテキストだけ左寄せ）
-	var has_portrait := _draw_icon("res://assets/portraits/%s.png" % gid, Rect2(card.position.x + 14, y + 8, 88, 134))
-	var tx := card.position.x + (116.0 if has_portrait else 24.0)
-	_txt(font, Vector2(tx, y + 46), String(g["name"]), DS.T_HEAD, g["color"])
-	_txt(font, Vector2(tx, y + 72), String(g["role"]), DS.T_MICRO, TEXT_DIM)
+	var has_portrait := _draw_icon("res://assets/portraits/%s.png" % gid,
+			Rect2(card.position.x + 14.0, y + 8.0, 92.0, 164.0))
+	var tx := card.position.x + (120.0 if has_portrait else 24.0)
+	_txt(font, Vector2(tx, y + 48.0), String(g["name"]), DS.T_HEAD, col)
+	_txt(font, Vector2(tx, y + 74.0), String(g["role"]), DS.T_MICRO, TEXT_DIM)
 	# ステータス（装備を替えたら、その場で数字が動いて差分が流れる）
-	_txt(font, Vector2(tx, y + 108), "攻", DS.T_MICRO, TEXT_DIM)
-	_num(font, Vector2(tx + 36, y + 108), "atk_" + gid, float(int(sim.girl_atk(gid))), DS.T_SUB,
+	_txt(font, Vector2(tx, y + 118.0), "攻", DS.T_MICRO, TEXT_DIM)
+	_num(font, Vector2(tx + 36.0, y + 118.0), "atk_" + gid, float(int(sim.girl_atk(gid))), DS.T_SUB,
 			Color(1.0, 0.6, 0.45))
-	_txt(font, Vector2(tx + 132, y + 108), "HP", DS.T_MICRO, TEXT_DIM)
-	_num(font, Vector2(tx + 176, y + 108), "hp_" + gid, float(int(sim.girl_maxhp(gid))), DS.T_SUB, GREEN)
+	_txt(font, Vector2(tx + 132.0, y + 118.0), "HP", DS.T_MICRO, TEXT_DIM)
+	_num(font, Vector2(tx + 176.0, y + 118.0), "hp_" + gid, float(int(sim.girl_maxhp(gid))), DS.T_SUB, GREEN)
 	# 好感度バー
-	_txt(font, Vector2(tx, y + 138), "♥", DS.T_MICRO, PINK)
-	var bar_w := card.end.x - 96.0 - (tx + 28.0)
-	_bar(Rect2(tx + 28, y + 124, bar_w, 16), sim.aff(gid) / 100.0, PINK)
-	var aw := _num(font, Vector2(card.end.x - 92.0, y + 138), "aff_" + gid, float(sim.aff(gid)),
-			DS.T_BODY, PINK)
-	_txt(font, Vector2(card.end.x - 92.0 + aw, y + 138), "/100", DS.T_MICRO, TEXT_DIM)
+	_txt(font, Vector2(tx, y + 158.0), "♥", DS.T_MICRO, ac)
+	var bar_w := card.end.x - 100.0 - (tx + 28.0)
+	_bar(Rect2(tx + 28.0, y + 143.0, bar_w, 18.0), sim.aff(gid) / 100.0, ac)
+	var aw := _num(font, Vector2(card.end.x - 96.0, y + 158.0), "aff_" + gid, float(sim.aff(gid)),
+			DS.T_BODY, ac)
+	_txt(font, Vector2(card.end.x - 96.0 + aw, y + 158.0), "/100", DS.T_MICRO, TEXT_DIM)
+	# 右上：今夜の役どころ（店番は1人だけ＝ここが賭けの起点）
+	var is_keeper := String(sim.state["morning"]["keeper"]) == gid
+	var role := "今夜 店番" if is_keeper else "今夜 潜航"
+	var br := Rect2(card.end.x - 20.0 - (_tw(font, role, DS.T_MICRO) + 26.0), y + 22.0,
+			_tw(font, role, DS.T_MICRO) + 26.0, 28.0)
+	if is_keeper:
+		Kit.slab(self, br, ac, 6.0)
+		_txt(font, Vector2(br.position.x + 14.0, br.position.y + 20.0), role, DS.T_MICRO, DS.INK)
+	else:
+		Kit.slab_edge(self, br, Color(1, 1, 1, 0.28), 6.0, 1.0)
+		_txt(font, Vector2(br.position.x + 14.0, br.position.y + 20.0), role, DS.T_MICRO, TEXT_DIM)
 	# 店番シナジー（右上）
 	var syn := "店番 %s" % String(g["synergy"])
-	_txt(font, Vector2(card.end.x - _tw(font, syn, DS.T_MICRO) - 20.0, y + 46), syn, DS.T_MICRO, GOLD)
+	_txt(font, Vector2(card.end.x - _tw(font, syn, DS.T_MICRO) - 20.0, y + 74.0), syn, DS.T_MICRO, GOLD)
 	var sdesc := String(g["synergy_desc"])
-	_txt(font, Vector2(card.end.x - _tw(font, sdesc, DS.T_MICRO) - 20.0, y + 72), sdesc, DS.T_MICRO, TEXT_DIM)
+	_txt(font, Vector2(card.end.x - _tw(font, sdesc, DS.T_MICRO) - 20.0, y + 98.0), sdesc, DS.T_MICRO, TEXT_DIM)
+	# 次に開くもの（好感度と育成が噛んでいることを1行で言う）
+	var nxt := _mb_next(gid)
+	if nxt != "":
+		_txt(font, Vector2(card.end.x - _tw(font, nxt, DS.T_MICRO) - 20.0, y + 122.0), nxt,
+				DS.T_MICRO, Color(0.62, 0.62, 0.7))
 	# 切替中の暗幕（面の色で伏せて、滑りながら現れる）
 	if mk < 1.0:
 		Kit.set_xf(self, _xf_now)
 		Kit.slab(self, card.grow(-2.0), Color(0.06, 0.06, 0.1, (1.0 - mk) * 0.98), DS.skew(card.size.y))
-	y += 162
 
-	_stag()
-	# スキル（装備枠）
-	var slots: int = sim.skill_slots()
-	var eq: Array = sim.state["girls"][gid]["skills_eq"]
-	Kit.header(self, font, Vector2(M, y), "スキル", CYAN, sz.x - M * 2, DS.T_SUB,
-			"装備 %d/%d　タップで着脱" % [eq.size(), slots])
-	y += 52
-	var known: Array = sim.known_skills(gid)
-	var col2 := 0
-	var half := (sz.x - M * 2 - DS.SP_2) * 0.5
-	for sid in known:
-		var def: Dictionary = KuroData.SKILL_DB[sid]
-		var rx := M + (col2 % 2) * (half + DS.SP_2)
-		var ry := y + int(col2 / 2) * 60
-		var r := Rect2(rx, ry, half, 52)
-		var on: bool = sid in eq
-		var pv := _begin_sink(r)
-		_panel(r, Color(0.08, 0.08, 0.12, 0.95), CYAN if on else Color(0.4, 0.42, 0.5, 0.6), 2.0 if on else 1.0)
-		# スキルアイコン（doctor/nurse 等は未用意 → テキストのみ）
-		var has_icon := _draw_icon("res://assets/generated/skill/%s.png" % sid, Rect2(rx + 10, ry + 10, 32, 32),
-				Color(1, 1, 1, 1.0 if on else 0.7))
-		var stx := rx + (52.0 if has_icon else 16.0)
-		_txt(font, Vector2(stx, ry + 24), String(def["name"]), DS.T_BODY, TEXT if on else TEXT_DIM)
-		_txt(font, Vector2(stx, ry + 44), "CD%.0fs　%s" % [float(def["cd"]), ("装備中" if on else "タップで装備")],
-				DS.T_MICRO, CYAN if on else TEXT_DIM)
-		_end_sink(pv)
-		_hit(r, "skill:%s:%s" % [gid, sid])
-		col2 += 1
-	y += int((known.size() + 1) / 2) * 60 + DS.SP_2
 
-	_stag()
-	# 育成ツリー（記憶の欠片）
-	Kit.header(self, font, Vector2(M, y), "育成", PURPLE, sz.x - M * 2, DS.T_SUB, "記憶の欠片で解放")
-	y += 52
-	var nodes: Array = KuroData.GIRL_TREES.get(gid, [])
+## 次に開く育成ノードを1行で。無ければ空文字。
+func _mb_next(gid: String) -> String:
 	var owned: Array = sim.state["girls"][gid].get("tree", [])
-	for node in nodes:
-		var nid := String(node["id"])
-		var r := Rect2(M, y, sz.x - M * 2, 48)
-		var is_owned: bool = nid in owned
-		var avail: bool = sim.tree_available(gid, nid)
-		var border := GREEN if is_owned else (PURPLE if avail else Color(0.35, 0.35, 0.4, 0.5))
-		_panel(r, Color(0.07, 0.07, 0.1, 0.9), border)
-		_txt(font, Vector2(r.position.x + 18, y + 31), String(node["name"]), DS.T_BODY,
-				TEXT if (is_owned or avail) else TEXT_DIM)
-		var eff := _effect_label(node["effect"])
-		_txt(font, Vector2(r.position.x + 200, y + 31), eff, DS.T_MICRO, TEXT_DIM)
-		if is_owned:
-			_txt(font, Vector2(r.end.x - _tw(font, "解放済", DS.T_MICRO) - 20, y + 31), "解放済", DS.T_MICRO, GREEN)
+	for node in KuroData.GIRL_TREES.get(gid, []):
+		if String(node["id"]) in owned:
+			continue
+		var req := int(node.get("req_aff", 0))
+		if sim.aff(gid) < req:
+			return "次：♥%d で %s" % [req, String(node["name"])]
+		return "次：欠片%d で %s" % [int(node["cost"]), String(node["name"])]
+	return "育成はすべて解放済"
+
+
+## 装備3枠（武器・防具・装飾）。ここでは外さない＝加工は工房に集約する。
+func _mb_gear(font: Font, area: Rect2, gid: String) -> void:
+	var eq: Dictionary = sim.state["girls"][gid]["equip"]
+	var slots := ["weapon", "armor", "trinket"]
+	var gap := 10.0
+	var cw := (area.size.x - gap * 2.0) / 3.0
+	for i in 3:
+		var sid: String = slots[i]
+		var it: Dictionary = eq.get(sid, {})
+		var r := Rect2(area.position.x + i * (cw + gap), area.position.y, cw, area.size.y)
+		var has: bool = not it.is_empty()
+		var col: Color = KuroData.equip_grade_color(int(it.get("grade", 0))) if has \
+				else Color(0.4, 0.4, 0.46)
+		var pv := _begin_sink(r)
+		_panel(r, Color(0.05, 0.055, 0.08, 0.93), Color(col.r, col.g, col.b, 0.7 if has else 0.35))
+		_txt(font, Vector2(r.position.x + 16.0, r.position.y + 26.0),
+				String(SimItems.SLOTS[sid]["name"]), DS.T_MICRO, TEXT_DIM)
+		if has:
+			_draw_icon("res://assets/generated/equip/%s.png" % sid,
+					Rect2(r.end.x - 44.0, r.position.y + 8.0, 32.0, 32.0), col)
+			_txt(font, Vector2(r.position.x + 16.0, r.position.y + 56.0), SimItems.display_name(it),
+					DS.T_BODY, col)
+			_txt(font, Vector2(r.position.x + 16.0, r.position.y + 80.0),
+					"score %.1f" % float(it.get("score", 0.0)), DS.T_MICRO, TEXT_DIM)
 		else:
-			var cost := int(node["cost"])
-			var req := int(node.get("req_aff", 0))
-			if avail:
-				_btn(font, Rect2(r.end.x - 116, y + 7, 108, 34), "欠片%d" % cost, PURPLE,
-						"tree:%s:%s" % [gid, nid], int(sim.state["shards"]) >= cost)
-			else:
-				var why := "♥%d必要" % req if sim.aff(gid) < req else "前提未"
-				_txt(font, Vector2(r.end.x - _tw(font, why, DS.T_MICRO) - 20, y + 31), why, DS.T_MICRO,
-						Color(0.6, 0.6, 0.66))
-		y += 56
+			_txt(font, Vector2(r.position.x + 16.0, r.position.y + 58.0), "空き", DS.T_SUB, TEXT_DIM)
+			_txt(font, Vector2(r.position.x + 16.0, r.position.y + 80.0), "工房で付ける", DS.T_MICRO, TEXT_DIM)
+		_end_sink(pv)
+		_hit(r, "_panel:workshop")
+
+
+## 編成の見立て（この画面の結論）。潜るのは店番以外、という事実を数字で置く。
+func _mb_ledger(font: Font, r: Rect2, gid: String, ac: Color) -> void:
+	var body := _conc(font, r, "編成の見立て", "店番以外が潜る", ac)
+	var divers: Array = sim.divers()
+	var atk := 0.0
+	var hp := 0.0
+	for d in divers:
+		atk += sim.girl_atk(d)
+		hp += sim.girl_maxhp(d)
+	var x := body.position.x + 24.0
+	var y1 := body.position.y + 36.0
+	_stat(font, Vector2(x, y1), "潜航", "mb_div", float(divers.size()), "人")
+	_stat(font, Vector2(x + 152.0, y1), "合計攻", "mb_atk", atk, "")
+	_stat(font, Vector2(x + 336.0, y1), "総HP", "mb_hp", hp, "")
+	_stat(font, Vector2(x + 528.0, y1), "技枠", "mb_slot", float(sim.skill_slots()), "")
+	var keeper := String(sim.state["morning"]["keeper"])
+	var kg: Dictionary = KuroData.GIRLS[keeper]
+	var msg := "店番は %s ／ %s。残り %d 人で潜る。" % [String(kg["name"]),
+			String(kg["synergy_desc"]), divers.size()]
+	var col := ac
+	if gid == keeper:
+		msg = "%s は今夜の店番。潜航には出ない。" % String(kg["name"])
+		col = GOLD
+	_strip(font, Rect2(body.position.x + 12.0, body.end.y - 54.0, body.size.x - 24.0, 42.0), msg, col)
 
 
 func _effect_label(eff: Dictionary) -> String:
 	if eff.has("skill"):
-		return "技：%s" % String(KuroData.SKILL_DB[eff["skill"]]["name"])
+		# ノード名が既に技名なので、ここでは「何が増えるか」を言う（写しにしない）
+		var sk: Dictionary = KuroData.SKILL_DB[eff["skill"]]
+		return "技を覚える　CD%.0fs" % float(sk["cd"])
 	var parts: Array = []
 	for k in eff:
 		var nm := String({"atk": "攻", "hp": "HP", "crit": "会心"}.get(k, k))
@@ -864,77 +1078,226 @@ func _effect_label(eff: Dictionary) -> String:
 
 # ── 市場 ─────────────────────────────────────────────────────────────────────
 
+## 闇市の品書き。KuroData.MARKET は名前と値段しか持たないので、
+## 「何のために買うのか」を画面が言えるように、表示語（札の一文字と一行説明）だけ置く。
+const MARKET_NOTE := {
+	"recipe": ["写", "献立の幅が広がる。重複すれば星が上がり単価も上がる。"],
+	"mats": ["箱", "乾・肉・海が +2 ずつ。今夜の皿数にそのまま効く。"],
+	"invite": ["状", "翌夜の客 +3。看板が育つまでの繋ぎ。"],
+}
+
+
 func _draw_market(font: Font, sz: Vector2) -> void:
-	var y := HEADER_H + float(M)
 	var s: Dictionary = sim.state
-	_stag()
-	# 在庫（素材アイコン＋数）
-	Kit.header(self, font, Vector2(M, y), "在庫", CYAN, sz.x - M * 2, DS.T_SUB, "潜って獲る／闇市で買う")
-	y += 56
-	var ix := float(M) + 8.0
-	for ing in ["dry", "meat", "sea"]:
-		# 素材も「増えたら跳ねる」。買った瞬間に在庫の数字が動くのが見える。
-		var drew := _draw_icon("res://assets/generated/ing/%s.png" % ing, Rect2(ix, y - 26, 32, 32))
-		var nx := ix + (40.0 if drew else 0.0)
-		if not drew:
-			_txt(font, Vector2(ix, y), String(KuroData.ING_NAMES[ing]), DS.T_MICRO, TEXT_DIM)
-			nx = ix + _tw(font, String(KuroData.ING_NAMES[ing]), DS.T_MICRO) + DS.SP_2
-		_num(font, Vector2(nx, y), "stock_" + String(ing), float(int(s["stock"][ing])), DS.T_SUB, TEXT)
-		ix = nx + 72.0
-	y += 28
+	var ac := GOLD                     # この画面の識別色（値札の色＝市場の色）
+	var w := sz.x - M * 2.0
+	var top := HEADER_H
+	var bot := sz.y - FOOTER_H
+	Kit.hatch(self, Rect2(0, top, sz.x, bot - top), Color(ac.r, ac.g, ac.b, 0.05), 26.0, 9.0)
+	var fc: Dictionary = sim.forecast_night()
+	var y := top + 12.0
 
 	_stag()
-	# 闇市（固定3品）
-	Kit.header(self, font, Vector2(M, y), "闇市", GOLD, sz.x - M * 2, DS.T_SUB, "いつでも同じ棚")
-	y += 56
-	for i in KuroData.MARKET.size():
-		var it: Dictionary = KuroData.MARKET[i]
-		var r := Rect2(M, y, sz.x - M * 2, 64)
-		_panel(r, Color(0.07, 0.06, 0.04, 0.92), Color(GOLD.r, GOLD.g, GOLD.b, 0.4))
-		_txt(font, Vector2(r.position.x + 20, y + 28), String(it["name"]), DS.T_BODY, TEXT)
-		_txt(font, Vector2(r.position.x + 20, y + 52), "%dG" % int(it["price"]), DS.T_MICRO, GOLD)
-		var can: bool = int(s["gold"]) >= int(it["price"])
-		_btn(font, Rect2(r.end.x - 116, y + 15, 104, 36), "買う", GOLD, "buy:%d" % i, can)
-		y += 72
+	# ① 在庫（3種を同じ大きさのカードで。数だけでなく「今夜どう効くか」も言う）
+	y = _sec(font, y, w, "在庫", ac, "潜って獲る／闇市で買う")
+	_mk_stock(font, Rect2(M, y, w, 128.0), s, fc)
+	y += 144.0
 
-	_stag()
-	# 交易船（10分毎ローテ・装備/ペット）
-	y += DS.SP_2
-	Kit.header(self, font, Vector2(M, y), "交易船", CYAN, sz.x - M * 2, DS.T_SUB, "10分毎に入替")
-	y += 56
+	# ④ 下端固定：仕入れの見立て（この画面の結論）
+	var conc_h := 196.0
+	var conc_top := bot - 12.0 - conc_h
+
+	# ②③ は残りを分け合う。停泊していない夜も、面で埋めて背景を露出させない。
 	var ship: Array = s["ship"]["stock"]
+	var region := maxf(conc_top - 16.0 - y - SEC_ADV * 2.0 - 16.0, 240.0)
+	var w2 := maxf(float(ship.size()), 1.4)
+	var h1 := region * 3.0 / (3.0 + w2)
+	var h2 := region - h1
+	var gap := 10.0
+
+	_stag()
+	# ② 闇市（固定3品）
+	y = _sec(font, y, w, "闇市", ac, "いつでも同じ棚")
+	var rh := (h1 - gap * 2.0) / 3.0
+	for i in KuroData.MARKET.size():
+		_mk_row(font, Rect2(M, y + i * (rh + gap), w, rh), i, s)
+	y += h1 + 16.0
+
+	_stag()
+	# ③ 交易船（10分毎ローテ・装備/ペット）
+	y = _sec(font, y, w, "交易船", ac, "10分毎に入替")
 	if ship.is_empty():
-		_txt(font, Vector2(M + 8, y + 20), "今は停泊していない。", DS.T_BODY, TEXT_DIM)
-		return
-	for i in ship.size():
-		var entry: Dictionary = ship[i]
-		var r := Rect2(M, y, sz.x - M * 2, 64)
-		var label := ""
-		var sub := ""
-		var col := CYAN
-		if entry["type"] == "pet":
-			var pet: Dictionary = KuroData.PETS[entry["pet"]]
-			label = "🐾 " + String(pet["name"])
-			sub = String(pet["desc"])
-			col = PINK
-		else:
-			var item: Dictionary = entry["item"]
-			var grade := int(item["grade"])
-			label = SimItems.display_name(item)
-			sub = "%s ・ %s" % [SimItems.GRADES[grade]["name"], SimItems.affix_text(item)]
-			col = KuroData.equip_grade_color(grade)
-		_panel(r, Color(0.05, 0.07, 0.09, 0.92), Color(col.r, col.g, col.b, 0.45))
-		# 装備はスロットアイコン（武器/防具/装飾）を添える
-		var tx := r.position.x + 20.0
-		if entry["type"] != "pet":
-			if _draw_icon("res://assets/generated/equip/%s.png" % String(entry["item"]["slot"]),
-					Rect2(r.position.x + 14, y + 14, 36, 36), col):
-				tx = r.position.x + 60.0
-		_txt(font, Vector2(tx, y + 28), label, DS.T_BODY, col)
-		_txt(font, Vector2(tx, y + 52), "%s　%dG" % [sub, int(entry["price"])], DS.T_MICRO, TEXT_DIM)
-		var can: bool = int(s["gold"]) >= int(entry["price"])
-		_btn(font, Rect2(r.end.x - 116, y + 15, 104, 36), "買う", col, "ship:%d" % i, can)
-		y += 72
+		_mk_ship_empty(font, Rect2(M, y, w, h2), s)
+	else:
+		var rh2 := (h2 - gap * (ship.size() - 1)) / float(ship.size())
+		for i in ship.size():
+			_mk_ship_row(font, Rect2(M, y + i * (rh2 + gap), w, rh2), i, s)
+
+	_stag()
+	_mk_ledger(font, Rect2(M, conc_top, w, conc_h), s, fc)
+
+
+## 在庫3種。素材も「増えたら跳ねる」＝買った瞬間に数字が動くのが見える。
+func _mk_stock(font: Font, area: Rect2, s: Dictionary, fc: Dictionary) -> void:
+	var gap := 10.0
+	var cw := (area.size.x - gap * 2.0) / 3.0
+	var menu: Array = s["morning"]["menu"]
+	var out: Array = fc["out"]
+	for i in KuroData.INGS.size():
+		var ing: String = KuroData.INGS[i]
+		var r := Rect2(area.position.x + i * (cw + gap), area.position.y, cw, area.size.y)
+		var uses := 0
+		for rid in menu:
+			if String(KuroData.RECIPES[rid]["ing"]) == ing:
+				uses += 1
+		var gone: bool = ing in out
+		var col := DS.DANGER if gone else (CYAN if uses > 0 else Color(0.45, 0.46, 0.54))
+		_panel(r, Color(0.05, 0.06, 0.08, 0.93), Color(col.r, col.g, col.b, 0.55))
+		_draw_icon("res://assets/generated/ing/%s.png" % ing,
+				Rect2(r.position.x + 14.0, r.position.y + 12.0, 44.0, 44.0), Color(1, 1, 1, 1), true)
+		_txt(font, Vector2(r.position.x + 70.0, r.position.y + 42.0),
+				String(KuroData.ING_NAMES[ing]), DS.T_BODY, TEXT)
+		var nw := _num(font, Vector2(r.position.x + 16.0, r.position.y + 94.0), "stock_" + ing,
+				float(int(s["stock"][ing])), DS.T_HEAD, TEXT)
+		_txt(font, Vector2(r.position.x + 20.0 + nw, r.position.y + 94.0), "個", DS.T_MICRO, TEXT_DIM)
+		var note := "今夜は使わない"
+		if gone:
+			note = "▲ 今夜で尽きる"
+		elif uses > 0:
+			note = "今夜 %d 品に使う" % uses
+		_txt(font, Vector2(r.position.x + 16.0, r.position.y + 118.0), note, DS.T_MICRO, col)
+
+
+## 市場の1行（闇市・交易船で同じ型）。札／品名／説明／値段／買う。
+## 高さが足りない時は段を小さくせず、行数だけ落として値段を1行目へ寄せる
+## （＝入りきらない情報は段階表示にする。字の段は 16/24/32/48 のまま）。
+func _mk_card(font: Font, r: Rect2, glyph: String, icon: String, title: String, sub: String,
+		price: int, key: String, col: Color, can: bool, id: String, lack: int) -> void:
+	_panel(r, Color(0.06, 0.06, 0.075, 0.92), Color(col.r, col.g, col.b, 0.5 if can else 0.25))
+	# 札（黒板に一文字／装備はスロット絵）＝品物の顔。経営の予報板と同じ作り。
+	var gs := clampf(r.size.y - 24.0, 44.0, 64.0)
+	var g := Rect2(r.position.x + 16.0, r.position.y + (r.size.y - gs) * 0.5, gs, gs)
+	Kit.slab(self, g, Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.95), 8.0)
+	Kit.slab_edge(self, g, Color(col.r, col.g, col.b, 0.5), 8.0, 1.5)
+	if icon == "" or not _draw_icon(icon, g.grow(-12.0), col):
+		_txt(font, Vector2(g.position.x + (gs - _tw(font, glyph, DS.T_HEAD)) * 0.5 + 4.0,
+				g.position.y + gs * 0.5 + 12.0), glyph, DS.T_HEAD, col)
+	var tx := g.end.x + 16.0
+	var bw := 132.0
+	var btn := Rect2(r.end.x - 16.0 - bw, r.position.y + (r.size.y - 56.0) * 0.5, bw, 56.0)
+	var pcol := GOLD if can else Color(0.55, 0.5, 0.42)
+	var mid := r.position.y + r.size.y * 0.5
+	if r.size.y >= 108.0:
+		_txt(font, Vector2(tx, r.position.y + 38.0), title, DS.T_SUB, col if can else TEXT_DIM)
+		_txt(font, Vector2(tx, r.position.y + 64.0), sub, DS.T_MICRO, TEXT_DIM)
+		var py := r.end.y - 20.0
+		var pw := _num(font, Vector2(tx, py), key, float(price), DS.T_SUB, pcol,
+				DS.SUCCESS, DS.DANGER, "", false)
+		_txt(font, Vector2(tx + pw + 4.0, py), "G", DS.T_MICRO, TEXT_DIM)
+		if lack > 0:
+			_txt(font, Vector2(tx + pw + 26.0, py), "%dG 足りない" % lack, DS.T_MICRO, DS.DANGER)
+	else:
+		# 2行に畳む：値段は品名と同じ行の右端（ボタンの手前）へ
+		var ps := "%dG" % price
+		var px := btn.position.x - 16.0 - _tw(font, ps, DS.T_SUB)
+		_txt(font, Vector2(tx, mid - 4.0), title, DS.T_SUB, col if can else TEXT_DIM)
+		var pw2 := _num(font, Vector2(px, mid - 4.0), key, float(price), DS.T_SUB, pcol,
+				DS.SUCCESS, DS.DANGER, "", false)
+		_txt(font, Vector2(px + pw2 + 2.0, mid - 4.0), "G", DS.T_MICRO, TEXT_DIM)
+		var s2 := sub
+		if lack > 0:
+			s2 = "%s　／　%dG 足りない" % [sub, lack] if sub != "" else "%dG 足りない" % lack
+		_txt(font, Vector2(tx, mid + 22.0), s2, DS.T_MICRO, DS.DANGER if lack > 0 else TEXT_DIM)
+	_btn(font, btn, "買う", col, id, can, DS.T_SUB)
+
+
+## 闇市の1行。
+func _mk_row(font: Font, r: Rect2, i: int, s: Dictionary) -> void:
+	var it: Dictionary = KuroData.MARKET[i]
+	var price := int(it["price"])
+	var can: bool = int(s["gold"]) >= price
+	var note: Array = MARKET_NOTE.get(String(it["id"]), ["品", ""])
+	_mk_card(font, r, String(note[0]), "", String(it["name"]), String(note[1]), price,
+			"mk_p%d" % i, GOLD, can, "buy:%d" % i, maxi(price - int(s["gold"]), 0))
+
+
+## 交易船の1行（装備／ペット）。等級色は「稀少さ」という事実なので残す。
+func _mk_ship_row(font: Font, r: Rect2, i: int, s: Dictionary) -> void:
+	var entry: Dictionary = s["ship"]["stock"][i]
+	var price := int(entry["price"])
+	var can: bool = int(s["gold"]) >= price
+	var label := ""
+	var sub := ""
+	var icon := ""
+	var col := GOLD
+	if entry["type"] == "pet":
+		var pet: Dictionary = KuroData.PETS[entry["pet"]]
+		label = String(pet["name"])
+		sub = "住み着く ・ %s" % String(pet["desc"])
+		col = PINK
+	else:
+		var item: Dictionary = entry["item"]
+		var grade := int(item["grade"])
+		label = SimItems.display_name(item)
+		sub = "%s ・ score %.1f" % [String(SimItems.GRADES[grade]["name"]), float(item["score"])]
+		var af := SimItems.affix_text(item)
+		if af != "":
+			sub += " ・ " + af
+		icon = "res://assets/generated/equip/%s.png" % String(item["slot"])
+		col = KuroData.equip_grade_color(grade)
+	_mk_card(font, r, "獣", icon, label, sub, price, "ship_p%d" % i, col, can, "ship:%d" % i,
+			maxi(price - int(s["gold"]), 0))
+
+
+## 停泊していない夜。空白ではなく「次はいつ・何が来るか」を置く（画面は必ず閉じる）。
+func _mk_ship_empty(font: Font, r: Rect2, s: Dictionary) -> void:
+	var ac := GOLD
+	_panel(r, Color(0.04, 0.05, 0.08, 0.9), Color(ac.r, ac.g, ac.b, 0.28))
+	Kit.hatch(self, r.grow(-6.0), Color(ac.r, ac.g, ac.b, 0.05), 22.0, 7.0)
+	_txt(font, Vector2(r.position.x + 24.0, r.position.y + 44.0), "今は停泊していない。", DS.T_SUB, TEXT_DIM)
+	var left := maxf(KuroData.SHIP_ROTATE_SEC
+			- (Time.get_unix_time_from_system() - float(s["ship"]["rotated"])), 0.0)
+	var wt := "次の入替まで %d:%02d" % [int(left / 60.0), int(left) % 60]
+	_txt(font, Vector2(r.end.x - _tw(font, wt, DS.T_BODY) - 24.0, r.position.y + 44.0), wt,
+			DS.T_BODY, ac)
+	var ly := r.position.y + 82.0
+	for line in ["・棚には装備が2つ並ぶ（潜航より当たりが早い）",
+			"・稀にペットが混じる（永続の売上・素材ボーナス）",
+			"・10分ごとに棚ごと入れ替わる"]:
+		if ly > r.end.y - 12.0:
+			break
+		_txt(font, Vector2(r.position.x + 24.0, ly), line, DS.T_MICRO, Color(0.62, 0.62, 0.7))
+		ly += 26.0
+
+
+## 仕入れの見立て（この画面の結論）。今夜の皿と財布を1枚に閉じる。
+func _mk_ledger(font: Font, r: Rect2, s: Dictionary, fc: Dictionary) -> void:
+	var ac := GOLD
+	var body := _conc(font, r, "仕入れの見立て", "今夜ぶん", ac)
+	var x := body.position.x + 24.0
+	var y1 := body.position.y + 36.0
+	_stat(font, Vector2(x, y1), "在庫", "mk_tot", float(sim.stock_total()), "個")
+	_stat(font, Vector2(x + 168.0, y1), "今夜出す", "mk_served", float(int(fc["served"])), "皿")
+	var short_n := int(fc["short"])
+	_stat(font, Vector2(x + 380.0, y1), "売り逃し", "mk_short", float(short_n), "皿",
+			DS.DANGER if short_n > 0 else DS.PAPER)
+	var y2 := y1 + 38.0
+	_stat(font, Vector2(x, y2), "所持金", "mk_gold", float(int(s["gold"])), "G", GOLD)
+	_stat(font, Vector2(x + 260.0, y2), "素材箱", "mk_box", float(int(int(s["gold"]) / 100)), "回ぶん")
+	_stat(font, Vector2(x + 480.0, y2), "看板", "mk_sign", float(sim.sign_total()), "")
+	var names: Array = []
+	for ing in fc["out"]:
+		names.append(String(KuroData.ING_NAMES.get(ing, ing)))
+	var msg := "素材は足りている。今夜は棚を見るだけでいい。"
+	var col := DS.SUCCESS
+	if short_n > 0:
+		msg = "▲ %s が尽きて %d 皿を売り逃す。潜るか素材箱を買う。" % [
+				"・".join(names) if not names.is_empty() else "素材", short_n]
+		col = DS.DANGER
+	elif not names.is_empty():
+		msg = "今夜で %s を使い切る。明日の仕込みには仕入れが要る。" % "・".join(names)
+		col = ac
+	_strip(font, Rect2(body.position.x + 12.0, body.end.y - 54.0, body.size.x - 24.0, 42.0), msg, col)
 
 
 # ── 経営 ─────────────────────────────────────────────────────────────────────
@@ -980,8 +1343,7 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 
 	_stag()
 	# ② 店番（適性と純益の2軸で選ぶ）-------------------------------------
-	Kit.header(self, font, Vector2(PAD, y), "店番", ac, w + 26.0, DS.T_HEAD, "適性だけでは決まらない")
-	y += 56.0
+	y = _sec(font, y, w, "店番", ac, "適性だけでは決まらない")
 	_mg_keepers(font, Rect2(PAD, y, w, 240.0), m, _keeper_profits())
 	y += 248.0
 	# 直近の操作が純益をいくら動かしたか（賭けを組んでいる実感）
@@ -990,9 +1352,9 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 
 	_stag()
 	# ③ 扉の方針 ---------------------------------------------------------
-	Kit.header(self, font, Vector2(PAD, y), "扉", ac, w + 26.0, DS.T_HEAD, "潜航中の扉をどう扱うか")
-	_chip(font, Rect2(sz.x - PAD - 168.0, y + 8.0, 168.0, 32.0), "改装ツリー ▸", ac, "_panel:renov")
-	y += 56.0
+	var door_y := y
+	y = _sec(font, y, w, "扉", ac, "潜航中の扉をどう扱うか")
+	_chip(font, Rect2(sz.x - PAD - 168.0, door_y + 8.0, 168.0, 32.0), "改装ツリー ▸", ac, "_panel:renov")
 	var door_open: bool = String(m["door"]) == "open"
 	_mg_segment(font, Rect2(PAD, y, w, 56.0), "踏み込む", "見送る", door_open, "door", ac)
 	y += 64.0
@@ -1000,9 +1362,7 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 	_stag()
 	# ④ 献立デッキ -------------------------------------------------------
 	var menu: Array = m["menu"]
-	Kit.header(self, font, Vector2(PAD, y), "献立", ac, w + 26.0, DS.T_HEAD,
-			"%d/%d 皿　タップで出し入れ" % [menu.size(), sim.menu_limit()])
-	y += 56.0
+	y = _sec(font, y, w, "献立", ac, "%d/%d 皿　タップで出し入れ" % [menu.size(), sim.menu_limit()])
 	var settle_top := bot - 276.0
 	_mg_deck(font, Rect2(PAD, y, w, settle_top - 16.0 - y), s, menu, taste)
 
@@ -1373,146 +1733,260 @@ func _mg_settle(font: Font, r: Rect2, fc: Dictionary, base: Dictionary, pen: boo
 # ── 工房（Cube: 装備加工）────────────────────────────────────────────────────
 
 func _draw_workshop(font: Font, sz: Vector2) -> void:
-	var y := HEADER_H + 12.0
 	var s: Dictionary = sim.state
-	_txt(font, Vector2(16, y), "Cube: 倉庫・分解・合成・刻印・装飾をここに集約", 14, TEXT_DIM)
-	y += 26
+	var ac := CYAN                     # この画面の識別色
+	var w := sz.x - M * 2.0
+	var top := HEADER_H
+	var bot := sz.y - FOOTER_H
+	Kit.hatch(self, Rect2(0, top, sz.x, bot - top), Color(ac.r, ac.g, ac.b, 0.05), 26.0, 9.0)
+	var y := top + 12.0
 
 	_stag()
-	# 資源とビュー切替
-	_panel(Rect2(12, y, sz.x - 24, 58), Color(0.045, 0.06, 0.08, 0.96), Color(CYAN.r, CYAN.g, CYAN.b, 0.35), 10)
-	# 倉庫・バッグ・廃材も生きた数値（分解した瞬間に廃材が跳ねる）
-	var wx := 26.0
-	for e in [["倉庫", "wk_store", float((s["storage"] as Array).size()), "/%d" % KuroData.STORAGE_MAX],
-			["バッグ", "wk_bag", float((s["inventory"] as Array).size()), "/%d" % KuroData.BAG_MAX],
-			["廃材", "wk_scrap", float(int(s["scrap"])), ""]]:
-		_txt(font, Vector2(wx, y + 25), String(e[0]), DS.T_MICRO, TEXT_DIM)
-		wx += _tw(font, String(e[0]), DS.T_MICRO) + 6.0
-		wx += _num(font, Vector2(wx, y + 25), String(e[1]), float(e[2]), DS.T_BODY, CYAN)
-		if String(e[3]) != "":
-			_txt(font, Vector2(wx, y + 25), String(e[3]), DS.T_MICRO, TEXT_DIM)
-			wx += _tw(font, String(e[3]), DS.T_MICRO)
-		wx += 20.0
-	_btn(font, Rect2(sz.x - 246, y + 12, 108, 34), "倉庫", CYAN, "_work:storage", _work_view != "storage", 14)
-	_btn(font, Rect2(sz.x - 130, y + 12, 108, 34), "バッグ", GOLD, "_work:bag", _work_view != "bag", 14)
-	y += 72
-
-	# 一括操作
-	if _work_view == "storage":
-		_btn(font, Rect2(12, y, 110, 34), "合成", PURPLE, "synth_storage", true, 14)
-		_btn(font, Rect2(132, y, 132, 34), "不要分解", PINK, "bulk_salvage_storage", true, 14)
-	else:
-		_btn(font, Rect2(12, y, 132, 34), "全て倉庫へ", CYAN, "bag_all", not (s["inventory"] as Array).is_empty(), 14)
-		_btn(font, Rect2(154, y, 132, 34), "バッグ合成", PURPLE, "synth_bag", true, 14)
-		_btn(font, Rect2(296, y, 132, 34), "不要分解", PINK, "bulk_salvage_bag", true, 14)
-	y += 46
+	# ① 資源バンド（倉庫・バッグ・廃材）----------------------------------
+	_wk_band(font, Rect2(M, y, w, 96.0), s, ac)
+	y += 108.0
 
 	var list: Array = s["storage"] if _work_view == "storage" else s["inventory"]
-	var shown := mini(list.size(), 7)
-	_txt(font, Vector2(16, y), "装備リスト（%s）" % ("倉庫" if _work_view == "storage" else "バッグ"), 15, TEXT)
-	y += 16
-	var row_h := 48.0
+	var where := "倉庫" if _work_view == "storage" else "バッグ"
+
+	_stag()
+	# ② 見る場所（倉庫／バッグ）------------------------------------------
+	y = _sec(font, y, w, "装備", ac, "%s %d 件　タップで選ぶ" % [where, list.size()])
+	_segment2(font, Rect2(M, y, w, 52.0), "倉庫", "バッグ", _work_view == "storage",
+			"_work:storage", "_work:bag", ac)
+	y += 64.0
+
+	_stag()
+	# ③ 一括操作 ---------------------------------------------------------
+	_wk_bulk(font, Rect2(M, y, w, 48.0), s)
+	y += 60.0
+
+	# ⑤ 詳細は下端固定。必要な高さを先に決め、残りを一覧に配る（縦を使い切る）
+	var det_min := 240.0
+	if _work_view == "storage":
+		det_min = 300.0
+		if not list.is_empty():
+			var head_it: Dictionary = list[0]
+			for it0 in list:
+				if int(it0["id"]) == _work_item_id:
+					head_it = it0
+			if SimItems.socket_capacity(int(head_it["grade"])) > 0:
+				det_min = 424.0
+	var gap := 10.0
+	var avail := bot - 12.0 - y
+	var n_show := mini(list.size(), 6)
+	var row_h := 0.0
+	while n_show > 1:
+		row_h = (avail - det_min - 16.0 - gap * (n_show - 1)) / float(n_show)
+		if row_h >= 64.0:
+			break
+		n_show -= 1
+	if n_show == 1:
+		row_h = clampf(avail - det_min - 16.0, 64.0, 112.0)
+	row_h = clampf(row_h, 64.0, 112.0)
+	var used := 0.0
+	if n_show > 0:
+		used = row_h * n_show + gap * (n_show - 1)
+
+	_stag()
+	# ④ 装備一覧 ---------------------------------------------------------
+	# 選択は先に決める（未選択なら先頭が選ばれている＝行にも枠が出る）
+	var sel_id := _work_item_id
+	var has_sel := false
+	for it0 in list:
+		if int(it0["id"]) == sel_id:
+			has_sel = true
+	if not has_sel and not list.is_empty():
+		sel_id = int((list[0] as Dictionary)["id"])
 	var selected := {}
 	var selected_idx := -1
-	for i in shown:
+	for i in n_show:
 		var it: Dictionary = list[i]
 		var iid := int(it["id"])
-		if iid == _work_item_id:
+		if iid == sel_id:
 			selected = it
 			selected_idx = i
-		var grade := int(it["grade"])
-		var col := KuroData.equip_grade_color(grade)
-		var r := Rect2(12, y + i * (row_h + 6), sz.x * 0.58, row_h)
-		var active := iid == _work_item_id
-		_panel(r, Color(0.06, 0.065, 0.09, 0.95), col if active else Color(col.r, col.g, col.b, 0.38), 2.0 if active else 1.0)
-		var tx := r.position.x + 12.0
-		if _draw_icon("res://assets/generated/equip/%s.png" % String(it["slot"]), Rect2(r.position.x + 8, r.position.y + 8, 32, 32), col):
-			tx += 38.0
-		_txt(font, Vector2(tx, r.position.y + 20), SimItems.display_name(it), 14, col)
-		_txt(font, Vector2(tx, r.position.y + 39), "%s  score %.1f  %s" % [
-				SimItems.GRADES[grade]["name"], float(it["score"]), SimItems.affix_text(it)], 11, TEXT_DIM)
-		_hit(r, "_selitem:%d" % iid)
-	if list.size() > shown:
-		_txt(font, Vector2(18, y + shown * (row_h + 6) + 18), "…他 %d件" % (list.size() - shown), 12, TEXT_DIM)
+		_wk_row(font, Rect2(M, y + i * (row_h + gap), w, row_h), it, iid == sel_id)
+	if list.is_empty():
+		var er := Rect2(M, y, w, maxf(used, 96.0))
+		_panel(er, Color(0.05, 0.05, 0.08, 0.86), Color(0.4, 0.42, 0.5, 0.4))
+		_txt(font, Vector2(er.position.x + 24.0, er.position.y + er.size.y * 0.5 + 6.0),
+				"%s は空。潜航・交易船・箱で装備が入る。" % where, DS.T_BODY, TEXT_DIM)
+		used = er.size.y
+	elif n_show < list.size():
+		_txt(font, Vector2(M + 8.0, y + used - 6.0), "…他 %d 件" % (list.size() - n_show),
+				DS.T_MICRO, TEXT_DIM)
 
-	# 詳細・加工パネル
-	var dx := sz.x * 0.62
-	var dw := sz.x - dx - 12
-	_panel(Rect2(dx, y, dw, 372), Color(0.055, 0.055, 0.085, 0.94), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.45), 12)
+	var det_top := y + used + 16.0
 	if selected.is_empty() and not list.is_empty():
 		selected = list[0]
 		selected_idx = 0
-	if selected.is_empty():
-		_txt(font, Vector2(dx + 18, y + 34), "装備がありません", 18, TEXT)
-		_txt(font, Vector2(dx + 18, y + 62), "潜行・交易船・箱で装備を入手すると、ここで加工できます。", 13, TEXT_DIM, HORIZONTAL_ALIGNMENT_LEFT, dw - 36)
+	_stag()
+	_wk_detail(font, Rect2(M, det_top, w, bot - 12.0 - det_top), selected, selected_idx, _work_view, ac)
+
+
+## 資源バンド。倉庫・バッグ・廃材は「分解した瞬間に跳ねる」生きた数値で置く。
+func _wk_band(font: Font, r: Rect2, s: Dictionary, ac: Color) -> void:
+	_panel(r, Color(0.045, 0.06, 0.08, 0.94), Color(ac.r, ac.g, ac.b, 0.4))
+	var y := r.position.y + 46.0
+	var x := r.position.x + 24.0
+	var xw := _stat(font, Vector2(x, y), "倉庫", "wk_store",
+			float((s["storage"] as Array).size()), "/%d" % KuroData.STORAGE_MAX, ac)
+	x = maxf(xw + 40.0, r.position.x + 240.0)
+	xw = _stat(font, Vector2(x, y), "バッグ", "wk_bag",
+			float((s["inventory"] as Array).size()), "/%d" % KuroData.BAG_MAX, ac)
+	x = maxf(xw + 40.0, r.position.x + 460.0)
+	_stat(font, Vector2(x, y), "廃材", "wk_scrap", float(int(s["scrap"])), "", GREEN)
+	_txt(font, Vector2(r.position.x + 24.0, r.position.y + 76.0),
+			"Cube ＝ 倉庫・分解・合成・刻印・装飾をここに集約する。", DS.T_MICRO, TEXT_DIM)
+
+
+## 一括操作。見る場所によって並びが変わる（同じ大きさの板で揃える）。
+func _wk_bulk(font: Font, r: Rect2, s: Dictionary) -> void:
+	var gap := 10.0
+	if _work_view == "storage":
+		var cw := (r.size.x - gap) * 0.5
+		_btn(font, Rect2(r.position.x, r.position.y, cw, r.size.y), "同格3つを合成", CYAN,
+				"synth_storage")
+		_btn(font, Rect2(r.position.x + cw + gap, r.position.y, cw, r.size.y), "不要をまとめて分解",
+				DS.DANGER, "bulk_salvage_storage")
 	else:
-		_draw_workshop_detail(font, Rect2(dx + 14, y + 14, dw - 28, 344), selected, selected_idx, _work_view)
+		var cw2 := (r.size.x - gap * 2.0) / 3.0
+		_btn(font, Rect2(r.position.x, r.position.y, cw2, r.size.y), "全て倉庫へ", CYAN, "bag_all",
+				not (s["inventory"] as Array).is_empty())
+		_btn(font, Rect2(r.position.x + cw2 + gap, r.position.y, cw2, r.size.y), "合成", CYAN,
+				"synth_bag")
+		_btn(font, Rect2(r.position.x + (cw2 + gap) * 2.0, r.position.y, cw2, r.size.y), "不要分解",
+				DS.DANGER, "bulk_salvage_bag")
 
 
-func _draw_workshop_detail(font: Font, rect: Rect2, item: Dictionary, idx: int, source: String) -> void:
-	var grade := int(item["grade"])
-	var col := KuroData.equip_grade_color(grade)
-	var y := rect.position.y
-	var x := rect.position.x
-	_txt(font, Vector2(x, y + 18), SimItems.display_name(item), 17, col)
-	_txt(font, Vector2(x, y + 42), "%s / %s / score %.1f" % [
-			SimItems.GRADES[grade]["name"], SimItems.SLOTS[item["slot"]]["name"], float(item["score"])], 13, TEXT_DIM)
-	var sum := SimItems.stat_summary(item)
-	_txt(font, Vector2(x, y + 76), "base %.1f   攻+%d%%  体+%d%%  速+%d%%" % [
-			float(sum["base"]), int(sum["atk"]), int(sum["hp"]), int(sum["spd"])], 13, TEXT)
-	_txt(font, Vector2(x, y + 98), "金+%d%%  材+%d%%  会+%d%%" % [
-			int(sum["gold"]), int(sum["mat"]), int(sum["crit"])], 13, TEXT)
+## 一覧の1行。等級色は「稀少さ」という事実なので残す（有彩色の追加ではない）。
+func _wk_row(font: Font, r: Rect2, it: Dictionary, active: bool) -> void:
+	var grade := int(it["grade"])
+	var col: Color = KuroData.equip_grade_color(grade)
+	var pv := _begin_sink(r)
+	_panel(r, Color(0.06, 0.065, 0.09, 0.95), col if active else Color(col.r, col.g, col.b, 0.38),
+			2.0 if active else 1.0)
+	Kit.slab(self, Rect2(r.position.x + 6.0, r.position.y + 6.0, 8.0, r.size.y - 12.0),
+			Color(col.r, col.g, col.b, 0.95 if active else 0.5), 3.0)
+	var mid := r.position.y + r.size.y * 0.5
+	var tx := r.position.x + 28.0
+	if _draw_icon("res://assets/generated/equip/%s.png" % String(it["slot"]),
+			Rect2(r.position.x + 26.0, mid - 20.0, 40.0, 40.0), col):
+		tx = r.position.x + 78.0
+	_txt(font, Vector2(tx, mid - 2.0), SimItems.display_name(it), DS.T_BODY, col)
+	_txt(font, Vector2(tx, mid + 22.0), "%s ・ score %.1f" % [
+			String(SimItems.GRADES[grade]["name"]), float(it["score"])], DS.T_MICRO, TEXT_DIM)
+	var af := SimItems.affix_text(it)
+	if af != "":
+		_txt(font, Vector2(r.end.x - _tw(font, af, DS.T_MICRO) - 20.0, mid + 6.0), af,
+				DS.T_MICRO, TEXT_DIM)
+	_end_sink(pv)
+	_hit(r, "_selitem:%d" % int(it["id"]))
 
-	y += 122
-	if source == "bag":
-		_btn(font, Rect2(x, y, 128, 32), "倉庫へ", CYAN, "bag_store:%d" % int(item["id"]), true, 13)
-		_btn(font, Rect2(x + 138, y, 118, 32), "分解", PINK, "salvage_bag:%d" % int(item["id"]), true, 13)
+
+## 選択中の装備の詳細と加工。下端固定の結論ブロック（経営の三行精算と同じ置き方）。
+## 操作は下から積む＝上に空きが出ても、押す場所は必ず同じ高さに座る。
+func _wk_detail(font: Font, r: Rect2, item: Dictionary, idx: int, source: String, ac: Color) -> void:
+	if item.is_empty():
+		var body0 := _conc(font, r, "装備なし", "", ac)
+		_txt(font, Vector2(body0.position.x + 24.0, body0.position.y + 44.0),
+				"潜航・交易船・箱で装備が入る。", DS.T_SUB, TEXT_DIM)
+		_txt(font, Vector2(body0.position.x + 24.0, body0.position.y + 78.0),
+				"ここで刻印（廃材で付け直し）・分解・合成・装飾ができる。", DS.T_MICRO, TEXT_DIM)
 		return
-
-	_btn(font, Rect2(x, y, 110, 32), "刻印", PURPLE, "reroll_storage:%d" % int(item["id"]), int(sim.state["scrap"]) >= SimItems.REROLL_COST, 13)
-	_btn(font, Rect2(x + 120, y, 110, 32), "分解", PINK, "salvage_storage:%d" % int(item["id"]), true, 13)
-	y += 44
-
-	_txt(font, Vector2(x, y), "装備先", 13, TEXT_DIM)
-	y += 8
-	var ids: Array = KuroData.GIRL_ORDER
-	for i in mini(ids.size(), 6):
-		var gid: String = ids[i]
-		var gx := x + (i % 3) * 86
-		var gy := y + 10 + int(i / 3) * 36
-		_btn(font, Rect2(gx, gy, 76, 28), String(KuroData.GIRLS[gid]["name"]), KuroData.GIRLS[gid]["color"], "equip_storage:%d:%s" % [int(item["id"]), gid], true, 11)
-	y += 90
-
+	var grade := int(item["grade"])
+	var col: Color = KuroData.equip_grade_color(grade)
+	var body := _conc(font, r, SimItems.display_name(item),
+			"score %.1f" % float(item["score"]), col)
+	var x := body.position.x + 24.0
+	var sum: Dictionary = SimItems.stat_summary(item)
+	_txt(font, Vector2(x, body.position.y + 32.0), "%s ／ %s ／ base %.1f" % [
+			String(SimItems.GRADES[grade]["name"]), String(SimItems.SLOTS[item["slot"]]["name"]),
+			float(sum["base"])], DS.T_MICRO, TEXT_DIM)
+	# ステの内訳（2段×3列。段は本文サイズ1つだけ）
+	var cols := (body.size.x - 48.0) / 3.0
+	var rows := [[["攻", "atk"], ["体", "hp"], ["速", "spd"]], [["金", "gold"], ["材", "mat"], ["会", "crit"]]]
+	for ri in 2:
+		for ci in 3:
+			var e: Array = rows[ri][ci]
+			var v := int(sum[e[1]])
+			var px := x + ci * cols
+			var py := body.position.y + 68.0 + ri * 30.0
+			_txt(font, Vector2(px, py), String(e[0]), DS.T_MICRO, TEXT_DIM)
+			_txt(font, Vector2(px + 34.0, py), "+%d%%" % v, DS.T_BODY, TEXT if v > 0 else TEXT_DIM)
+	# ── 操作は下から積む
+	var by := body.end.y - 12.0
+	if source == "bag":
+		var cw := (body.size.x - 48.0 - 10.0) * 0.5
+		_btn(font, Rect2(x, by - 56.0, cw, 56.0), "倉庫へ", CYAN, "bag_store:%d" % int(item["id"]))
+		_btn(font, Rect2(x + cw + 10.0, by - 56.0, cw, 56.0), "分解", DS.DANGER,
+				"salvage_bag:%d" % int(item["id"]))
+		return
 	var cap := SimItems.socket_capacity(grade)
 	var sockets: Array = item.get("sockets", [])
-	_txt(font, Vector2(x, y), "装飾ソケット %d/%d" % [sockets.size(), cap], 13, TEXT_DIM)
-	y += 10
-	var gems: Array = KuroData.SOCKET_GEMS.keys()
-	for i in mini(gems.size(), 4):
-		var gem: String = gems[i]
-		var active := gem == _work_gem
-		_btn(font, Rect2(x + i * 78, y + 10, 70, 28), String(KuroData.SOCKET_GEMS[gem]["name"]).substr(0, 4), GOLD if active else TEXT_DIM, "_selgem:%s" % gem, not active, 10)
-	y += 48
-	_btn(font, Rect2(x, y, 112, 32), "嵌める", GREEN, "socket_storage:%d:%s" % [idx, _work_gem], cap > sockets.size(), 13)
-	_btn(font, Rect2(x + 122, y, 112, 32), "外す", TEXT_DIM, "remove_gem:%d:0" % idx, not sockets.is_empty(), 13)
+	if cap > 0:
+		# 装飾ソケット（英雄以上だけが持つ）
+		_btn(font, Rect2(x, by - 52.0, (body.size.x - 48.0 - 10.0) * 0.5, 52.0), "嵌める", GREEN,
+				"socket_storage:%d:%s" % [idx, _work_gem], cap > sockets.size())
+		_btn(font, Rect2(x + (body.size.x - 48.0 + 10.0) * 0.5, by - 52.0,
+				(body.size.x - 48.0 - 10.0) * 0.5, 52.0), "外す", Color(0.55, 0.56, 0.62),
+				"remove_gem:%d:0" % idx, not sockets.is_empty())
+		by -= 60.0
+		var gems: Array = KuroData.SOCKET_GEMS.keys()
+		var gw := (body.size.x - 48.0 - 30.0) / 4.0
+		for i in mini(gems.size(), 4):
+			var gem: String = gems[i]
+			var on := gem == _work_gem
+			_btn(font, Rect2(x + i * (gw + 10.0), by - 48.0, gw, 48.0),
+					String(KuroData.SOCKET_GEMS[gem]["name"]).substr(0, 4),
+					GOLD if on else Color(0.55, 0.56, 0.62), "_selgem:%s" % gem, not on)
+		by -= 56.0
+		_txt(font, Vector2(x, by - 6.0), "装飾ソケット %d/%d" % [sockets.size(), cap], DS.T_MICRO, TEXT_DIM)
+		by -= 22.0
+	# 装備先（6人。誰に着けるかは1列で見せる）
+	var ids: Array = KuroData.GIRL_ORDER
+	var bw := (body.size.x - 48.0 - 40.0) / 6.0
+	for i in mini(ids.size(), 6):
+		var gid: String = ids[i]
+		_btn(font, Rect2(x + i * (bw + 8.0), by - 52.0, bw, 52.0), String(KuroData.GIRLS[gid]["name"]),
+				KuroData.GIRLS[gid]["color"], "equip_storage:%d:%s" % [int(item["id"]), gid])
+	by -= 60.0
+	_txt(font, Vector2(x, by - 6.0), "装備先", DS.T_MICRO, TEXT_DIM)
+	by -= 22.0
+	# 刻印・分解
+	var aw := (body.size.x - 48.0 - 10.0) * 0.5
+	_btn(font, Rect2(x, by - 56.0, aw, 56.0), "刻印（廃材%d）" % SimItems.REROLL_COST, CYAN,
+			"reroll_storage:%d" % int(item["id"]), int(sim.state["scrap"]) >= SimItems.REROLL_COST)
+	_btn(font, Rect2(x + aw + 10.0, by - 56.0, aw, 56.0), "分解", DS.DANGER,
+			"salvage_storage:%d" % int(item["id"]))
 
 
 # ── 経営サブビュー（改装ツリー・マップ）──────────────────────────────────────
 
 func _draw_renov(font: Font, sz: Vector2) -> void:
-	var y := HEADER_H + 12.0
 	var s: Dictionary = sim.state
-	_btn(font, Rect2(12, y, 132, 34), "← 仕込みへ", PURPLE, "_panel:management", true, 14)
-	y += 48
-	_txt(font, Vector2(16, y), "改装ツリー（ゴールドで解放・隣接から伸ばす）", 14, TEXT_DIM)
-	y += 22
+	var ac := PURPLE
+	var w := sz.x - M * 2.0
+	var top := HEADER_H
+	var bot := sz.y - FOOTER_H
+	Kit.hatch(self, Rect2(0, top, sz.x, bot - top), Color(ac.r, ac.g, ac.b, 0.05), 26.0, 9.0)
+	var y := top + 12.0
+	_btn(font, Rect2(M, y, 176.0, 44.0), "← 仕込みへ", ac, "_panel:management")
+	_txt(font, Vector2(M + 192.0, y + 30.0), "ゴールドで解放・隣接から伸ばす", DS.T_MICRO, TEXT_DIM)
+	y += 56.0
 
-	# pos(x:-3..3, y:-3..3) を画面座標へ。中央を基準に格子配置。
+	# 下端固定：改装の効き目（この画面の結論）
+	var conc_h := 200.0
+	var conc_top := bot - 12.0 - conc_h
+
+	# ツリーは残りの領域いっぱいに置く。節点は方向を持たない＝円のまま中央に組む。
+	var area := Rect2(M, y, w, maxf(conc_top - 16.0 - y, 320.0))
 	var nodes: Dictionary = KuroData.RENOV_NODES
-	var ox := sz.x * 0.5
-	var cell := 92.0
-	var oy := y + 3 * cell + 30.0   # y=-3 が一番上に来るよう原点を下げる
-	var map_bottom := oy + 3 * cell + 40.0
+	var cell := minf(104.0, minf((area.size.x - 76.0) / 6.0, (area.size.y - 76.0) / 6.0))
+	var rad := clampf(cell * 0.34, 22.0, 34.0)
+	var ox := area.position.x + area.size.x * 0.5
+	var oy := area.position.y + area.size.y * 0.5
 
 	# 解放の瞬間を捕まえる（一覧が書き換わるだけ、にしない）
 	var first_pass := not _own_renov.has("__seen")
@@ -1537,10 +2011,9 @@ func _draw_renov(font: Font, sz: Vector2) -> void:
 			var k := -1.0
 			if _burst.has(nid) and owned_link:
 				k = (_t - float(_burst[nid])) / Kit.BURST_LIFE
-			Kit.wire(self, fr, to, PURPLE, owned_link, k)
+			Kit.wire(self, fr, to, ac, owned_link, k)
 
-	# ノード
-	var rad := 30.0
+	# ノード（円＝ツリーの節点。値札は円の外へ出し、字は本文の段のまま置く）
 	for nid in nodes:
 		var node: Dictionary = nodes[nid]
 		var np: Array = node["pos"]
@@ -1548,22 +2021,29 @@ func _draw_renov(font: Font, sz: Vector2) -> void:
 		var is_owned: bool = nid in s["renov"]
 		var avail: bool = sim.renov_available(nid)
 		var can: bool = avail and int(s["gold"]) >= int(node["cost"])
-		var col := GREEN if is_owned else (GOLD if can else (PURPLE if avail else Color(0.4, 0.4, 0.46)))
-		var r := Rect2(c - Vector2(rad, rad), Vector2(rad * 2, rad * 2))
-		_round_panel(r, Color(col.r * 0.16, col.g * 0.16, col.b * 0.2, 0.96), col, rad, 2.0 if (is_owned or avail) else 1.0)
-		# 改装アイコン（無ければ名前テキスト）
+		var col := GREEN if is_owned else (GOLD if can else (ac if avail else Color(0.4, 0.4, 0.46)))
+		var r := Rect2(c - Vector2(rad, rad), Vector2(rad * 2.0, rad * 2.0))
+		_round_panel(r, Color(col.r * 0.16, col.g * 0.16, col.b * 0.2, 0.96), col, rad,
+				2.0 if (is_owned or avail) else 1.0)
 		var lit := is_owned or avail
-		var has_icon := _draw_icon("res://assets/generated/renov/%s.png" % nid, Rect2(c.x - 19, c.y - 22, 38, 38),
+		var has_icon := _draw_icon("res://assets/generated/renov/%s.png" % nid,
+				Rect2(c.x - rad * 0.62, c.y - rad * 0.66, rad * 1.24, rad * 1.24),
 				Color(1, 1, 1, 1.0 if lit else 0.4))
 		if not has_icon:
-			var nm := String(node["name"])
-			_txt(font, Vector2(c.x - _tw(font, nm, 11) * 0.5, c.y - 2), nm, 11, TEXT if lit else TEXT_DIM)
-		if not is_owned and int(node["cost"]) > 0:
-			var cs := "%d" % int(node["cost"])
-			_txt(font, Vector2(c.x - _tw(font, cs, 11) * 0.5, c.y + 19), cs, 11, GOLD if can else TEXT_DIM)
+			var nm := String(node["name"]).substr(0, 3)
+			_txt(font, Vector2(c.x - _tw(font, nm, DS.T_MICRO) * 0.5, c.y + 6.0), nm, DS.T_MICRO,
+					TEXT if lit else TEXT_DIM)
+		# 値札は円の下（円の中に数字を押し込んで字を潰さない）
+		if is_owned:
+			_txt(font, Vector2(c.x - _tw(font, "済", DS.T_MICRO) * 0.5, c.y + rad + 20.0), "済",
+					DS.T_MICRO, GREEN)
+		elif int(node["cost"]) > 0:
+			var cs := "%dG" % int(node["cost"])
+			_txt(font, Vector2(c.x - _tw(font, cs, DS.T_MICRO) * 0.5, c.y + rad + 20.0), cs,
+					DS.T_MICRO, GOLD if can else TEXT_DIM)
 		# 今買えるノードは呼吸する（押せる場所が黙っていない）
 		if can:
-			Kit.spot(self, c, rad * 1.9, GOLD, 0.10 + 0.10 * (0.5 + 0.5 * sin(_t * 3.0)))
+			Kit.spot(self, c, rad * 1.9, GOLD, 0.10 + 0.10 * Kit.heartbeat(_t))
 		# 解放の瞬間：光の輪が拡がる
 		if _burst.has(nid):
 			var bk := (_t - float(_burst[nid])) / Kit.BURST_LIFE
@@ -1574,24 +2054,25 @@ func _draw_renov(font: Font, sz: Vector2) -> void:
 		if avail:
 			_hit(r, "renov:" + nid)
 
-	# 凡例＋現在の効果サマリ
-	var ly := map_bottom
-	_txt(font, Vector2(16, ly), "緑=解放済 / 金=今買える / 紫=前提達成 / 灰=未開放", 12, TEXT_DIM)
-	ly += 24
-	# 効果合計も生きた数値にする（解放したら、ここが跳ねて差分が流れる）
-	var lx := 16.0
-	_txt(font, Vector2(lx, ly), "効果合計", DS.T_MICRO, TEXT_DIM)
-	lx += _tw(font, "効果合計", DS.T_MICRO) + 16.0
-	for e in [["攻", "atk", 100.0, "%"], ["HP", "hp", 100.0, "%"], ["金", "gold", 100.0, "%"],
-			["看板", "sign", 1.0, ""]]:
-		_txt(font, Vector2(lx, ly), String(e[0]), DS.T_MICRO, TEXT_DIM)
-		lx += _tw(font, String(e[0]), DS.T_MICRO) + 4.0
-		lx += _num(font, Vector2(lx, ly), "renov_" + String(e[1]),
-				float(sim.renov_bonus(String(e[1]))) * float(e[2]), DS.T_BODY, CYAN)
-		if String(e[3]) != "":
-			_txt(font, Vector2(lx, ly), String(e[3]), DS.T_MICRO, TEXT_DIM)
-			lx += _tw(font, String(e[3]), DS.T_MICRO)
-		lx += 18.0
+	_stag()
+	_rv_ledger(font, Rect2(M, conc_top, w, conc_h), ac)
+
+
+## 改装の効き目（この画面の結論）。解放したらここが跳ねて差分が流れる。
+func _rv_ledger(font: Font, r: Rect2, ac: Color) -> void:
+	var body := _conc(font, r, "改装の効き目", "いま効いている分", ac)
+	var x := body.position.x + 24.0
+	var y1 := body.position.y + 36.0
+	_stat(font, Vector2(x, y1), "攻", "renov_atk", sim.renov_bonus("atk") * 100.0, "%")
+	_stat(font, Vector2(x + 152.0, y1), "HP", "renov_hp", sim.renov_bonus("hp") * 100.0, "%")
+	_stat(font, Vector2(x + 304.0, y1), "金", "renov_gold", sim.renov_bonus("gold") * 100.0, "%", GOLD)
+	_stat(font, Vector2(x + 456.0, y1), "看板", "renov_sign", float(sim.sign_total()), "")
+	var y2 := y1 + 38.0
+	_stat(font, Vector2(x, y2), "献立枠", "renov_menu", float(sim.menu_limit()), "皿")
+	_stat(font, Vector2(x + 210.0, y2), "技枠", "renov_slot", float(sim.skill_slots()), "")
+	_stat(font, Vector2(x + 380.0, y2), "所持金", "renov_g", float(int(sim.state["gold"])), "G", GOLD)
+	_strip(font, Rect2(body.position.x + 12.0, body.end.y - 54.0, body.size.x - 24.0, 42.0),
+			"緑＝解放済 ／ 金＝今買える ／ 紫＝前提達成 ／ 灰＝未開放", ac)
 
 
 # ── フッター・トースト ────────────────────────────────────────────────────────
