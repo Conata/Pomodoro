@@ -16,6 +16,10 @@ extends Control
 
 const SPRITE_DIR := "res://assets/generated/sprites/"
 const PLAYER_ID := "kiriko"
+
+## キャラのビルボードを置く描画レイヤー（装飾ライトの照射対象から外すため）。
+const CHAR_LAYER := 2
+const CHAR_LAYER_MASK := 1 << (CHAR_LAYER - 1)
 const PIXEL_SIZE := 0.012          # Sprite3D の 1px = 何ワールド単位か（144x192 → 約1.7x2.3）
 const MOVE_SPEED := 4.0            # ワールド単位/秒
 const GROUND_HALF := 14.0          # 地面の半径（移動制限）
@@ -688,6 +692,10 @@ func _neon_light(pos: Vector3, col: Color, energy: float, rng: float) -> void:
 	o.light_color = col
 	o.light_energy = energy
 	o.omni_range = rng
+	# 装飾ライトはキャラを照らさない。Y固定ビルボードは法線がカメラを向くので
+	# 近くの点光源をまともに受けて白飛びする（とくに白衣・白ドレス）。
+	# キャラは CHAR_LAYER に置き、キーライトと環境光と主人公用ライトだけで陰影を作る。
+	o.light_cull_mask = ~CHAR_LAYER_MASK
 	_sub.add_child(o)
 
 
@@ -1345,6 +1353,7 @@ func _build_player() -> void:
 		_player_light.light_energy = 1.4
 		_player_light.omni_range = 5.0
 		_player_light.shadow_enabled = false
+		_player_light.light_cull_mask = 0xFFFFFFFF   # 主役を読ませるライトなのでキャラも照らす
 		_sub.add_child(_player_light)
 
 
@@ -1593,6 +1602,7 @@ func _make_billboard() -> Sprite3D:
 	# shaded=true でシーンライト（ネオン/月光）を受け、環境に馴染ませる。
 	# Y固定ビルボードは法線がカメラ向きに回るので、周囲の OmniLight がキャラを染める。
 	spr.shaded = true
+	spr.layers = CHAR_LAYER_MASK   # 装飾ライトの cull mask から外れるレイヤー
 	spr.double_sided = true
 	spr.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	spr.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD  # 影を落とし、輪郭をくっきり
