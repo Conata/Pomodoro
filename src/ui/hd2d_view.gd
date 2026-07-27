@@ -1887,8 +1887,9 @@ func _process(delta: float) -> void:
 
 	var p_used := false
 	if p_walking and player_move != Vector3.ZERO:
-		var dr := _walk_dir(player_move)
-		_player_flip = bool(dr[1])
+		var dr := _walk_dir(player_move, PLAYER_ID)
+		if bool(dr[2]):
+			_player_flip = bool(dr[1])   # 左右成分が薄い時は前の向きを保つ
 		var anim_key := "walk" if dr[0] == "side" else "walk_" + String(dr[0])
 		var w := _walk_texture(PLAYER_ID, anim_key, _player_cycle)
 		if w["tex"] != null:
@@ -1944,8 +1945,9 @@ func _process(delta: float) -> void:
 		if i < _npc_shadow.size():
 			_place_shadow(_npc_shadow[i], ground, by)
 		if nmoving and nmove != Vector3.ZERO:
-			var dr := _walk_dir(nmove)
-			_npc_sprites[i].flip_h = bool(dr[1])
+			var dr := _walk_dir(nmove, _npc_anims[i].char_id)
+			if bool(dr[2]):
+				_npc_sprites[i].flip_h = bool(dr[1])
 			var anim_key := "walk" if dr[0] == "side" else "walk_" + String(dr[0])
 			var w := _walk_texture(_npc_anims[i].char_id, anim_key, float(_npc_cycle[i]))
 			if w["tex"] != null:
@@ -2095,7 +2097,16 @@ func _tex_opt(path: String) -> Texture2D:
 
 ## カメラ相対の移動方向 → [向き, 左右反転]。向き ∈ {"front","back","side"}。
 ## カメラへ向かう＝正面、離れる＝背面、横移動＝side（既存 run=side view を使う）。
-func _walk_dir(world_move: Vector3) -> Array:
+## 進行方向から使うアニメを決める。返り値は [dir, flip, flip_valid]。
+##
+## 前後のコマは1枚しか無いキャラが多く（`walk_front`/`walk_back` は正面立ちポーズが
+## 1枚入っているだけ）、そのまま選ぶと**アニメせずに滑る**。実際のコマ数を見て
+## 2枚以上ある時だけ前後を使い、無ければ本物の歩行サイクルがある横歩きへ落とす。
+## 前後のコマを描き起こしたら、この関数を触らなくても自動で使われ始める。
+##
+## 奥/手前へ真っ直ぐ動くと左右成分がほぼ0になり、横歩きの向きが毎フレーム
+## ばたつく。flip_valid=false を返して呼び出し側に「前の向きを保て」と伝える。
+func _walk_dir(world_move: Vector3, id: String) -> Array:
 	var basis := Basis(Vector3.UP, _cam_yaw)
 	var into_screen := basis * Vector3(0, 0, -1)   # W で進む向き＝カメラから見て奥
 	var right := basis * Vector3(1, 0, 0)
@@ -2103,11 +2114,11 @@ func _walk_dir(world_move: Vector3) -> Array:
 	var fd := m.dot(into_screen)   # >0: 奥へ＝背面 / <0: 手前へ＝正面
 	var rd := m.dot(right)
 	var dir := "side"
-	if fd > 0.45:
+	if fd > 0.45 and _walk_count(id, "walk_back") >= 2:
 		dir = "back"
-	elif fd < -0.45:
+	elif fd < -0.45 and _walk_count(id, "walk_front") >= 2:
 		dir = "front"
-	return [dir, rd < 0.0]
+	return [dir, rd < 0.0, absf(rd) > 0.10]
 
 
 var _walk_count_cache: Dictionary = {}
