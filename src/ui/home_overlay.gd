@@ -44,6 +44,13 @@ var sim = null   # KuroSim 参照（main.gd が bind() で渡す）。仕込み�
 var _t := 0.0
 var _hits: Array = []
 var _ripples: Array = []   # タップ波紋（Kit.ripples）
+# ── フィードバック（クッキークリッカーの原則：動いた値は必ず画面が言う）──
+var _fx: Dictionary = {}   # 数値カウントアップの台帳（Kit.num）
+var _floats: Array = []    # 差分フロート（+120G が上へ流れて消える）
+var _flies: Array = []     # 飛ぶ数値（所持金の出入り）
+var _press: Dictionary = {}   # 直近の押下（rect と時刻）＝押下状態の3状態目
+var _last_tap := Vector2(360.0, 640.0)
+var _gold_pos := Vector2(120.0, 38.0)
 var _banter_t   := 0.0
 var _banter_q: Array = []
 var _banter_rng := RandomNumberGenerator.new()
@@ -92,6 +99,8 @@ func _gui_input(event: InputEvent) -> void:
 	for h in _hits:
 		if (h["rect"] as Rect2).has_point(p):
 			Kit.ripple_add(_ripples, p, _t)
+			_last_tap = p
+			_press = {"rect": h["rect"], "t0": _t}   # 押した場所が一瞬光る
 			action_pressed.emit(String(h["id"]))
 			accept_event()
 			return
@@ -99,6 +108,36 @@ func _gui_input(event: InputEvent) -> void:
 
 func _hit(rect: Rect2, id: String) -> void:
 	_hits.append({"rect": rect, "id": id})
+
+
+## 数値を1つ描く：カウントアップ＋変化した瞬間の拡大＋差分フロート。
+## 値は必ず sim から来たものを渡す（UI 側で式を作り直さない）。
+func _num(font: Font, pos: Vector2, key: String, v: float, size: int, col: Color,
+		gain := GOLD, drop := DS.DANGER) -> float:
+	var n: Dictionary = Kit.num(_fx, key, v, _t)
+	var s := "%d" % int(round(float(n["v"])))
+	Kit.num_draw(self, font, pos, s, size, col, float(n["pop"]))
+	var d := float(n["d"])
+	if absf(d) >= 1.0:
+		Kit.float_add(_floats, Vector2(pos.x, pos.y - size * 0.7),
+				"%s%d" % ["+" if d > 0.0 else "-", int(absf(round(d)))],
+				gain if d > 0.0 else drop, _t)
+	return font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+
+
+## 数値に添える単位（小さく・灰）。戻り値は幅。
+func _unit(font: Font, x: float, y: float, s: String) -> float:
+	_txt(font, Vector2(x, y), s, 16, TEXT_DIM)
+	return font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+
+
+## 切断ペナルティが「無かった場合」の見込みを sim 自身に計算させる。
+## UI 側で 0.6 を割り戻すと式が二重管理になるので、フラグを一瞬倒して読む。
+func _forecast_base() -> Dictionary:
+	sim.state["crowd_penalty"] = false
+	var b: Dictionary = sim.forecast_night()
+	sim.state["crowd_penalty"] = true
+	return b
 
 
 ## ホームのVN窓にバンタ（掛け合い/独り言）を1行進める。
@@ -147,13 +186,14 @@ func _draw() -> void:
 	var sz := size
 	var font := get_theme_default_font()
 	_hits.clear()
+	Kit.set_xf(self, Vector2.ZERO)   # 拡大描画が戻る先を自分の座標系に固定する
 
 	# ===== トップバー（薄い帯＋アイコン） =====
 	var tb := Rect2(0, 0, sz.x, 60)
 	draw_rect(tb, Color(0.02, 0.02, 0.05, 0.55))
 	draw_rect(Rect2(0, 60, sz.x, 1.5), Color(PINK.r, PINK.g, PINK.b, 0.4))
 	_icon(font, Vector2(34, 30), 21, "≡", PINK, "menu")
-	_txt(font, Vector2(66, 38), day_gold, 16, GOLD)  # 日数・所持金（実データ）
+	_topbar_wallet(font)
 	# 右：猫 / 設定 / ベル
 	_icon(font, Vector2(sz.x - 34, 30), 21, "猫", PINK, "cat")
 	_icon(font, Vector2(sz.x - 86, 30), 21, "設定", CYAN, "settings")
@@ -209,7 +249,41 @@ func _draw() -> void:
 
 	# ===== 最下部：各主要機能へのフッターナビ =====
 	_footer(font, sz)
+	# ===== 触った結果のフィードバック（押下→波紋→数値の増減） =====
+	if not _press.is_empty():
+		var pk := 1.0 - (_t - float(_press["t0"])) / Kit.PRESS_LIFE
+		if pk <= 0.0:
+			_press = {}
+		else:
+			Kit.press(self, _press["rect"], PINK, pk)
 	Kit.ripples(self, _ripples, _t)
+	Kit.flies(self, font, _flies, _t)
+	Kit.floats(self, font, _floats, _t)
+
+
+## トップバーの財布。日数と所持金は「変わったら動く」＝黙って差し替わらない。
+func _topbar_wallet(font: Font) -> void:
+	if sim == null:
+		_txt(font, Vector2(66, 38), day_gold, 16, GOLD)
+		return
+	var x := 66.0
+	_txt(font, Vector2(x, 38), "Day", 16, TEXT_DIM)
+	x += font.get_string_size("Day", HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 6.0
+	x += _num(font, Vector2(x, 38), "day", float(int(sim.state["day"])), 16, TEXT) + 18.0
+	_txt(font, Vector2(x, 38), "金", 16, TEXT_DIM)
+	x += font.get_string_size("金", HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 6.0
+	_gold_pos = Vector2(x, 38)
+	var g := float(int(sim.state["gold"]))
+	_num(font, Vector2(x, 38), "gold", g, 16, GOLD)
+	# 所持金の出入りは「飛ぶ数値」で財布と操作点をつなぐ
+	var seen := float(_fx.get("gold_seen", g))
+	if absf(g - seen) >= 1.0:
+		var d := g - seen
+		if d > 0.0:
+			Kit.fly_add(_flies, _last_tap, _gold_pos, "+%dG" % int(d), GOLD, _t)
+		else:
+			Kit.fly_add(_flies, _gold_pos, _last_tap, "-%dG" % int(-d), DS.DANGER, _t)
+	_fx["gold_seen"] = g
 
 
 ## 朝の仕込みカード：予報・店番・扉・献立と「今夜の見込み」を出撃前に見せる。
@@ -218,18 +292,37 @@ func _draw() -> void:
 func _prep_card(font: Font, sz: Vector2, y_bottom: float) -> void:
 	if sim == null:
 		return
-	var h := 96.0
+	var pen: bool = bool(sim.state.get("crowd_penalty", false))
+	var h := 128.0 if pen else 96.0
 	var r := Rect2(16, y_bottom - h, sz.x - 32, h)
-	_panel(r, Color(0.04, 0.04, 0.08, 0.86), Color(GOLD.r, GOLD.g, GOLD.b, 0.4), 12)
+	var edge := DS.DANGER if pen else GOLD
+	_panel(r, Color(0.04, 0.04, 0.08, 0.86), Color(edge.r, edge.g, edge.b, 0.55 if pen else 0.4), 12)
 	var fc: Dictionary = sim.forecast_night()
 	var m: Dictionary = sim.state["morning"]
 	# 見出し＋予報（右上）
-	_txt(font, Vector2(r.position.x + 14, r.position.y + 22), "今日の仕込み", 13, GOLD)
+	_txt(font, Vector2(r.position.x + 14, r.position.y + 22), "今日の仕込み", 16, GOLD)
 	var fst := "予報『%s』" % String(fc["forecast"])
-	var fw := font.get_string_size(fst, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
-	_txt(font, Vector2(r.end.x - fw - 14, r.position.y + 22), fst, 14, CYAN)
+	var fw := font.get_string_size(fst, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+	_txt(font, Vector2(r.end.x - fw - 14, r.position.y + 22), fst, 16, CYAN)
+	# ペナルティ帯：昨夜の切断が今日の客足をいくら削ったかを、赤い板で名指しする
+	if pen:
+		var base: Dictionary = _forecast_base()
+		var pr := Rect2(r.position.x + 10.0, r.position.y + 30.0, r.size.x - 20.0, 30.0)
+		Kit.slab(self, pr, DS.DANGER, 8.0)
+		var ink := DS.on(DS.DANGER)
+		draw_string(font, Vector2(pr.position.x + 14.0, pr.position.y + 21.0),
+				"▼ 昨夜の切断 ─ 客足 -40%", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, ink)
+		# 「8人 → 5人」。元の値は取り消し線で残す（黙って減らさない）
+		var bx := pr.end.x - 118.0
+		bx += Kit.struck(self, font, Vector2(bx, pr.position.y + 21.0),
+				"%d人" % int(base.get("customers", fc["customers"])), 16,
+				Color(ink.r, ink.g, ink.b, 0.62), ink, false) + 8.0
+		draw_string(font, Vector2(bx, pr.position.y + 21.0), "→", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, ink)
+		bx += font.get_string_size("→", HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 8.0
+		draw_string(font, Vector2(bx, pr.position.y + 21.0), "%d人" % int(fc["customers"]),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 16, ink)
 	# 行1：店番／扉（タップで変更）＋献立（タップで経営へ）
-	var y1 := r.position.y + 30
+	var y1 := r.position.y + (66.0 if pen else 30.0)
 	var x := r.position.x + 12
 	var keeper := String(m["keeper"])
 	var kname := String((KuroData.GIRLS.get(keeper, {}) as Dictionary).get("name", keeper))
@@ -239,10 +332,19 @@ func _prep_card(font: Font, sz: Vector2, y_bottom: float) -> void:
 			CYAN if door_open else TEXT_DIM, "door")
 	var menu: Array = m["menu"]
 	x = _chip(font, Vector2(x, y1), "献立 %d品 ▸" % menu.size(), PURPLE, "management")
-	# 行2：見込み（客・皿・金）と売り逃し警告
-	var y2 := r.position.y + 82
-	var line2 := "見込み  客%d・%d皿・約%dG" % [int(fc["customers"]), int(fc["served"]), int(fc["gold"])]
-	_txt(font, Vector2(r.position.x + 14, y2), line2, 15, TEXT)
+	# 行2：見込み（客・皿・金）。数字は動いたら必ずカウントし、差分を上へ流す
+	var y2 := r.end.y - 14.0
+	var nx := r.position.x + 14.0
+	_txt(font, Vector2(nx, y2), "見込み", 16, TEXT_DIM)
+	nx += font.get_string_size("見込み", HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 16.0
+	nx += _num(font, Vector2(nx, y2), "cust", float(int(fc["customers"])), 16,
+			DS.DANGER if pen else TEXT) + 2.0
+	nx += _unit(font, nx, y2, "人") + 10.0
+	nx += _num(font, Vector2(nx, y2), "served", float(int(fc["served"])), 16, TEXT) + 2.0
+	nx += _unit(font, nx, y2, "皿") + 10.0
+	nx += _unit(font, nx, y2, "約")
+	nx += _num(font, Vector2(nx, y2), "gain", float(int(fc["gold"])), 16, GOLD) + 2.0
+	nx += _unit(font, nx, y2, "G")
 	if int(fc["short"]) > 0:
 		var outs: Array = fc["out"]
 		var lack := ""
@@ -259,11 +361,11 @@ func _prep_card(font: Font, sz: Vector2, y_bottom: float) -> void:
 		var warn := "⚠ %s切れ（%d皿売り逃し）" % [lack, int(fc["short"])]
 		if goto_fl >= 0:
 			warn += " → %s へ ▸" % KuroData.stage_label(goto_fl)
-		var ww := font.get_string_size(warn, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+		var ww := font.get_string_size(warn, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
 		var wr := Rect2(r.end.x - ww - 22, y2 - 18, ww + 16, 26)
 		if goto_fl >= 0:
 			_hit(wr, "restock:%d" % goto_fl)   # タップ＝その階を選択してマップへ
-		_txt(font, Vector2(wr.position.x + 8, y2), warn, 14, Color(1.0, 0.5, 0.45))
+		_txt(font, Vector2(wr.position.x + 8, y2), warn, 16, DS.DANGER)
 	_hit(r, "prep_card")   # 余白タップは経営パネルへ（上の個別チップが優先）
 
 

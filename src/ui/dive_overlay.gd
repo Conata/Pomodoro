@@ -29,6 +29,14 @@ const FS_S := 12
 const FS_M := 16
 const FS_L := 22
 const FS_XL := 32
+const FS_H := 48
+
+# ヘッダは3段。上＝操作／中＝同期率（レベルとXPバー）／下＝ランの数字。
+# 「常時上がっている数字」を隠さないための固定席で、ここだけは何があっても消えない。
+const BAR_H := 52.0     # 操作バー
+const SYNC_H := 46.0    # 同期率バンド
+const STAT_H := 28.0    # 数字ストリップ
+const HEAD_H := BAR_H + SYNC_H + STAT_H
 
 # ── 表示データ（main.gd / KuroSim から set_data() で差し込む。既定はプレースホルダ）──
 var party: Array = [
@@ -57,7 +65,13 @@ func set_data(d: Dictionary) -> void:
 	for k in d:
 		if k in self:
 			set(k, d[k])
-	_floor_no = maxi(1, int(player_lv.replace("B", "").strip_edges()) + 1)
+	var nf := maxi(1, int(player_lv.replace("B", "").strip_edges()) + 1)
+	# 階層が変わった瞬間にバナー（潜航開始の初回だけは「変化」に数えない）
+	if _seen_floor and nf != _floor_no:
+		_floor_fx = _t
+		_floor_label = "B%dF" % nf
+	_seen_floor = true
+	_floor_no = nf
 	var m := RegEx.create_from_string("(\\d+)\\s*秒").search(quest_text)
 	_remain = float(m.get_string(1)) if m != null else -1.0
 	queue_redraw()
@@ -70,6 +84,34 @@ var _banner: Dictionary = {}  # 上部イベントバナー {msg, col, t0}（宝
 var _face_cache: Dictionary = {}  # girl_id -> 48px ポートレート
 var _name2id: Dictionary = {}
 
+# ── ランの実数（すべて sim から読む。UI側で数字を作り直さない）──────────────
+# main.gd の set_data() は固定の項目しか渡してこないので、sim 本体は祖先ノードから
+# 引く（読み取り専用。main.gd には一切触らない）。
+var _sim: Object = null
+var _sync_lv := 1
+var _sync_prog := 0.0
+var _sync_xp := 0
+var _sync_need := 10
+var _atk_mult := 1.0
+var _res: Array = []          # 取得済み共鳴 [{id, name, desc}]
+var _kills := 0
+var _gold := 0                # この潜航で稼いだ額（gold - run.gold0）
+var _mats := 0
+var _boxes := 0
+
+# ── 「数字が動いた」を絶対に見逃させないための状態 ───────────────────────
+var _gold_shown := 0.0        # 金だけは lerpf でカウントアップ（一気に飛ばさない）
+var _pop: Dictionary = {"kills": -9.9, "gold": -9.9, "mats": -9.9, "boxes": -9.9}
+var _chip: Dictionary = {}    # チップ中心座標（箱アイコンの飛び先）
+var _xp_tick := -9.9          # XPバーが伸びた時刻（バー頭の閃き）
+var _prev_prog := -1.0
+var _res_pop := -9.9          # 共鳴アイコンが1つ増えた時刻（ポップ）
+var _lv_fx: Dictionary = {}   # レベルアップ演出 {t0, lv, name, desc, atk}
+var _floor_fx := -9.9         # 階層バナー
+var _floor_label := ""
+var _box_fly: Array = []      # 拾った箱が数字チップへ飛ぶ [{t0}]
+var _seen_floor := false
+
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -81,6 +123,7 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	_t += delta
+	_poll_sim(delta)
 	# イベントフィードの寿命を減衰させ、古い行から消す
 	for e in _log:
 		e["life"] = float(e["life"]) - delta
@@ -92,18 +135,97 @@ func _process(delta: float) -> void:
 			_ripples.remove_at(i)
 		else:
 			i += 1
+	i = 0
+	while i < _box_fly.size():
+		if _t - float(_box_fly[i]["t0"]) > 0.85:
+			_box_fly.remove_at(i)
+		else:
+			i += 1
 	queue_redraw()
+
+
+## KuroSim 本体を祖先から引く（main.gd の `sim` プロパティ。読み取り専用）。
+func _sim_ref() -> Object:
+	if _sim != null:
+		return _sim
+	var n: Node = get_parent()
+	while n != null:
+		var s: Variant = n.get("sim")
+		if s != null:
+			_sim = s
+			return _sim
+		n = n.get_parent()
+	return null
+
+
+## 毎フレーム sim の実値を読む。UI側は「変化した瞬間」を記録するだけで、
+## 値そのものは一切こちらで作らない。
+func _poll_sim(delta: float) -> void:
+	var s := _sim_ref()
+	if s == null:
+		return
+	var run: Dictionary = s.state.get("run", {})
+	if not bool(run.get("active", false)):
+		return
+	_sync_lv = int(s.sync_level())
+	_sync_prog = float(s.sync_progress())
+	_sync_need = int(s.sync_need(_sync_lv))
+	_sync_xp = int(round(_sync_prog * _sync_need))
+	_atk_mult = float(s.sync_atk_mult())
+	var rn: Array = s.sync_resonances()
+	if rn.size() > _res.size():
+		_res_pop = _t
+	_res = rn
+	if not is_equal_approx(_sync_prog, _prev_prog):
+		if _sync_prog > _prev_prog:
+			_xp_tick = _t
+		_prev_prog = _sync_prog
+	var k := int(run.get("kills", 0))
+	if k != _kills:
+		_kills = k
+		_pop["kills"] = _t
+	var g := int(s.state.get("gold", 0)) - int(run.get("gold0", 0))
+	if g != _gold:
+		_gold = g
+		_pop["gold"] = _t
+	var mt := 0
+	for v in (run.get("mats", {}) as Dictionary).values():
+		mt += int(v)
+	if mt != _mats:
+		_mats = mt
+		_pop["mats"] = _t
+	var bx := (run.get("boxes", []) as Array).size()
+	if bx != _boxes:
+		if bx > _boxes:
+			_box_fly.append({"t0": _t})
+		_boxes = bx
+		_pop["boxes"] = _t
+	# 金だけはカウントアップ（数字が回っているのが見える）
+	_gold_shown = lerpf(_gold_shown, float(_gold), clampf(delta * 5.5, 0.0, 1.0))
+	if absf(_gold_shown - float(_gold)) < 0.6:
+		_gold_shown = float(_gold)
 
 
 ## main.gd から潜航中の sim イベントを受け取る。
 func add_events(events: Array) -> void:
 	for e in events:
+		var kind := String(e.get("kind", "log"))
+		match kind:
+			"levelup":
+				# 25分の山。共鳴（Lv3/6/9/12）を取った回は別格の長さで打つ。
+				_lv_fx = {"t0": _t, "lv": int(e.get("lv", 0)),
+						"name": String(e.get("res_name", "")),
+						"desc": String(e.get("res_desc", "")),
+						"atk": float(e.get("atk", 1.0))}
+			"gate":
+				# 階層が上がった瞬間（ボス撃破時のみ起きる）。
+				_floor_fx = _t
+				_floor_label = "B%dF" % int(e.get("floor", _floor_no))
 		var msg := String(e.get("msg", ""))
 		if msg == "":
 			continue
-		var kind := String(e.get("kind", "log"))
-		# 見せ場（戦利品/扉/記憶/階突破/ボス）は上部バナーにも昇格
-		if kind in ["loot", "door_loot", "door", "gate", "memory", "boss"]:
+		# 見せ場（戦利品/扉/記憶/階突破/ボス/レベルアップ）は上部バナーにも昇格
+		if kind in ["loot", "door_loot", "door", "memory", "boss"]:
 			_banner = {"msg": msg, "col": _kind_col(kind), "t0": _t}
 		_log.append({"msg": msg, "col": _kind_col(kind), "life": 7.0})
 	while _log.size() > 6:
@@ -112,9 +234,11 @@ func add_events(events: Array) -> void:
 
 
 ## 意味色は3つだけ（金＝報酬 / 赤＝危険 / 無彩色＝それ以外）。虹色にしない。
+## 同期率だけは識別色シアン（＝この画面の主軸）。
 func _kind_col(kind: String) -> Color:
 	match kind:
 		"boss", "resync": return DANGER
+		"levelup": return CYAN
 		"door", "door_loot", "loot", "gate", "memory": return GOLD
 		_: return TEXT_DIM
 
@@ -283,11 +407,12 @@ func _draw() -> void:
 	_hits.clear()
 
 	# ===== トップバー：階層／残り時間／操作 =====================================
-	var bar_h := 52.0
-	var top := _snap(Rect2(0, 0, sz.x, bar_h))
+	var bar_h := BAR_H
+	var top := _snap(Rect2(0, 0, sz.x, HEAD_H))
 	draw_rect(top, Color(0.03, 0.032, 0.055, 0.88))
-	draw_rect(Rect2(0, bar_h - 1, sz.x, 1), Color(CYAN.r, CYAN.g, CYAN.b, 0.35))
-	draw_rect(Rect2(10, bar_h - 3, 14, 2), CORE)     # ネオン管の芯
+	draw_rect(Rect2(0, bar_h - 1, sz.x, 1), Color(CYAN.r, CYAN.g, CYAN.b, 0.18))
+	draw_rect(Rect2(0, HEAD_H - 1, sz.x, 1), Color(CYAN.r, CYAN.g, CYAN.b, 0.35))
+	draw_rect(Rect2(10, HEAD_H - 3, 14, 2), CORE)     # ネオン管の芯
 
 	# 左：階層（B1F）＋探索率。プレースホルダの「プレイヤー」は出さない。
 	_txt(font, Vector2(12, 24), "B%dF" % _floor_no, FS_L, TEXT)
@@ -317,6 +442,9 @@ func _draw() -> void:
 		_txt(font, Vector2(r.position.x + (r.size.x - lw) * 0.5, r.position.y + 24), lbl, FS_M,
 				TEXT if int(it[3]) == 2 else col)
 
+	_draw_sync_band(sz, font)
+	_draw_stat_strip(sz, font)
+
 	# ===== イベントバナー（黒帯・4秒でフェード） ================================
 	if not _banner.is_empty():
 		var bage := _t - float(_banner["t0"])
@@ -325,7 +453,7 @@ func _draw() -> void:
 			var bmsg := String(_banner["msg"])
 			var bcol: Color = _banner["col"]
 			var bw := minf(font.get_string_size(bmsg, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_M).x + 36, sz.x - 24)
-			var br := _snap(Rect2((sz.x - bw) * 0.5, bar_h + 10, bw, 34))
+			var br := _snap(Rect2((sz.x - bw) * 0.5, HEAD_H + 10, bw, 34))
 			draw_rect(br, Color(0.02, 0.02, 0.04, 0.88 * ba))
 			draw_rect(br, Color(bcol.r, bcol.g, bcol.b, 0.5 * ba), false, 1.0)
 			draw_string(font, Vector2(br.position.x + 18, br.position.y + 23), bmsg,
@@ -336,7 +464,7 @@ func _draw() -> void:
 	# ===== ボスバナー（交戦中のみ・赤の脈動） ===================================
 	if boss_name != "":
 		var bw2 := font.get_string_size(boss_name, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_L).x + 74
-		var br2 := _snap(Rect2((sz.x - bw2) * 0.5, bar_h + 52, bw2, 38))
+		var br2 := _snap(Rect2((sz.x - bw2) * 0.5, HEAD_H + 52, bw2, 38))
 		var bp := 0.5 + 0.5 * sin(_t * 4.0)
 		draw_rect(br2, Color(0.14, 0.02, 0.04, 0.92))
 		draw_rect(br2, Color(DANGER.r, DANGER.g, DANGER.b, 0.5 + 0.4 * bp), false, 2.0)
@@ -409,6 +537,10 @@ func _draw() -> void:
 				TEXT if ready else TEXT_DIM)
 		_hit(r3, "cast")
 
+	_draw_box_fly(sz)
+	_draw_floor_banner(sz, font)
+	_draw_levelup(sz, font)
+
 	# タップ波紋（角丸/グローなしの矩形）
 	for rp in _ripples:
 		var k := (_t - float(rp["t0"])) / 0.45
@@ -420,3 +552,223 @@ func _draw() -> void:
 
 func _hit(rect: Rect2, id: String) -> void:
 	_hits.append({"rect": rect, "id": id})
+
+
+# ══ 同期率バンド（Lv とXPバー・取得済み共鳴） ════════════════════════════
+# 25分の潜航で撃破は600〜700体。その積み上がりを1本のバーに束ねて常時見せる。
+# バーは lerp で「じわっと」動かさない：sync_progress() をそのまま描くので
+# 撃破のたびにカクッと進み、進んだ瞬間だけ頭が閃く（クッキークリッカーの原則）。
+func _draw_sync_band(sz: Vector2, font: Font) -> void:
+	var y0 := BAR_H
+	var lv_age := _t - float(_lv_fx.get("t0", -9.9)) if not _lv_fx.is_empty() else 9.9
+	var glow := clampf(1.0 - lv_age / 0.9, 0.0, 1.0)
+
+	# レベル（上がった直後だけ1段大きく＝「上がった」ことを見逃させない）
+	var lv_txt := "Lv.%d" % _sync_lv
+	var lv_fs := FS_XL if glow > 0.35 else FS_L
+	_txt(font, Vector2(12, y0 + 32), lv_txt, lv_fs,
+			Color(1, 1, 1) if glow > 0.35 else CYAN)
+	_txt(font, Vector2(12, y0 + 44), "同期率", FS_S, TEXT_DIM)
+
+	# 共鳴アイコン列（Lv3/6/9/12 の4枠。取ると1つ増えて、その瞬間ポップする）
+	var slots := 4
+	var isz := 26.0
+	var ix0 := sz.x - 8.0 - slots * (isz + 4.0)
+	var res_age := _t - _res_pop
+	for i in slots:
+		var r := _snap(Rect2(ix0 + i * (isz + 4.0), y0 + 9, isz, isz))
+		var got := i < _res.size()
+		if got and i == _res.size() - 1 and res_age < 0.6:
+			# 増えた瞬間だけ枠が膨らんで戻る
+			var e := sin(clampf(res_age / 0.6, 0.0, 1.0) * PI) * 7.0
+			r = _snap(Rect2(r.position - Vector2(e, e), r.size + Vector2(e * 2, e * 2)))
+		draw_rect(r, Color(0.02, 0.02, 0.05, 0.92))
+		draw_rect(r, Color(CYAN.r, CYAN.g, CYAN.b, 0.85 if got else 0.20), false,
+				2.0 if got else 1.0)
+		if got:
+			var nm := String((_res[i] as Dictionary).get("name", ""))
+			var ch := nm.substr(3, 1) if nm.length() > 3 else "◆"
+			var cw := font.get_string_size(ch, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_M).x
+			_txt(font, Vector2(r.position.x + (r.size.x - cw) * 0.5, r.position.y + r.size.y - 6),
+					ch, FS_M, CYAN)
+		else:
+			draw_rect(Rect2(r.get_center() - Vector2(3, 1), Vector2(6, 2)),
+					Color(LINE.r, LINE.g, LINE.b, 0.5))
+
+	# XPバー（撃破ごとにカクッと伸びる。数値も併記して「何回で上がるか」を見せる）
+	var bx := 86.0
+	var bw := ix0 - 12.0 - bx
+	if bw < 60.0:
+		return
+	var br := _snap(Rect2(bx, y0 + 16, bw, 14))
+	draw_rect(Rect2(br.position - Vector2(1, 1), br.size + Vector2(2, 2)), Color(0.02, 0.02, 0.04))
+	draw_rect(Rect2(br.position - Vector2(1, 1), br.size + Vector2(2, 2)),
+			Color(1, 1, 1, 0.22), false, 1.0)
+	draw_rect(br, Color(0.09, 0.11, 0.15))
+	# レベルの刻み（次の共鳴までの残りが目で数えられる）
+	var k := clampf(_sync_prog, 0.0, 1.0)
+	if k > 0.0:
+		var fw := roundf(br.size.x * k)
+		draw_rect(Rect2(br.position, Vector2(fw, br.size.y)), CYAN)
+		draw_rect(Rect2(br.position, Vector2(fw, 1.0)), Color(0.85, 1.0, 1.0, 0.9))
+		# 伸びた瞬間だけバーの頭が白く閃く（＝1体倒したことの受領証）
+		var tick := clampf(1.0 - (_t - _xp_tick) / 0.22, 0.0, 1.0)
+		if tick > 0.0:
+			draw_rect(Rect2(br.position.x + fw - 4.0, br.position.y - 2.0, 6.0, br.size.y + 4.0),
+					Color(1, 1, 1, 0.85 * tick))
+	# レベルアップ直後はバー全体が光る
+	if glow > 0.0:
+		draw_rect(br, Color(1, 1, 1, 0.55 * glow))
+	var xt := "%d / %d" % [_sync_xp, _sync_need]
+	var xw := font.get_string_size(xt, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_S).x
+	_txt(font, Vector2(br.get_center().x - xw * 0.5, br.position.y + 11), xt, FS_S, TEXT)
+	# 攻撃倍率（レベルが「効いている」ことの証明）
+	_txt(font, Vector2(bx, y0 + 44), "攻撃 x%.2f" % _atk_mult, FS_S, TEXT_DIM)
+
+
+# ══ 数字ストリップ（常時上がっている値を全部見せる） ══════════════════════
+# 撃破数／この潜航で稼いだ金／素材／箱。値が変わった瞬間だけ1段大きく描いて戻す。
+func _draw_stat_strip(sz: Vector2, font: Font) -> void:
+	var y0 := BAR_H + SYNC_H
+	draw_rect(Rect2(0, y0, sz.x, 1), Color(CYAN.r, CYAN.g, CYAN.b, 0.14))
+	var items := [
+		["kills", "撃破", str(_kills), TEXT],
+		["gold", "獲得", "%dG" % int(round(_gold_shown)), GOLD],
+		["mats", "素材", str(_mats), CYAN],
+		["boxes", "箱", str(_boxes), GOLD],
+	]
+	var x := 12.0
+	var cw := (sz.x - 24.0) / float(items.size())
+	for it: Array in items:
+		var id: String = it[0]
+		var age := _t - float(_pop.get(id, -9.9))
+		var hot := clampf(1.0 - age / 0.35, 0.0, 1.0)
+		var col: Color = it[3]
+		_txt(font, Vector2(x, y0 + 20), String(it[1]), FS_S, TEXT_DIM)
+		var lw := font.get_string_size(String(it[1]), HORIZONTAL_ALIGNMENT_LEFT, -1, FS_S).x
+		var vfs := FS_L if hot > 0.25 else FS_M
+		var vcol := Color(1, 1, 1) if hot > 0.25 else col
+		_txt(font, Vector2(x + lw + 8.0, y0 + 21), String(it[2]), vfs, vcol)
+		_chip[id] = Vector2(x + lw + 18.0, y0 + 14.0)
+		x += cw
+
+
+## 拾った箱が数字チップへ飛ぶ（拾った瞬間が黙っていない）。
+func _draw_box_fly(sz: Vector2) -> void:
+	var dst: Vector2 = _chip.get("boxes", Vector2(sz.x * 0.8, BAR_H + SYNC_H + 14.0))
+	for b in _box_fly:
+		var k := clampf((_t - float(b["t0"])) / 0.85, 0.0, 1.0)
+		var src := Vector2(sz.x * 0.62, sz.y * 0.58)
+		var e := 1.0 - pow(1.0 - k, 3.0)
+		var p := src.lerp(dst, e) + Vector2(0, -sin(k * PI) * 90.0)
+		var s := 20.0 * (1.0 - k * 0.5)
+		var a := 1.0 - pow(k, 3.0)
+		draw_rect(_snap(Rect2(p.x - s * 0.5, p.y - s * 0.5, s, s)), Color(0.28, 0.20, 0.10, a))
+		draw_rect(_snap(Rect2(p.x - s * 0.5, p.y - s * 0.5, s, s)),
+				Color(GOLD.r, GOLD.g, GOLD.b, a), false, 2.0)
+		draw_rect(_snap(Rect2(p.x - s * 0.5, p.y - 2.0, s, 3.0)), Color(GOLD.r, GOLD.g, GOLD.b, a))
+
+
+## 階層が上がった瞬間のバナー（全幅の帯が左右に開いて `B2F` を出す）。
+func _draw_floor_banner(sz: Vector2, font: Font) -> void:
+	var age := _t - _floor_fx
+	if age < 0.0 or age > 2.6:
+		return
+	var open := clampf(age / 0.30, 0.0, 1.0)
+	var fade := clampf((2.6 - age) / 0.5, 0.0, 1.0)
+	var h := 96.0
+	var y := sz.y * 0.28
+	var w := sz.x * open
+	draw_rect(_snap(Rect2((sz.x - w) * 0.5, y, w, h)), Color(0.02, 0.03, 0.06, 0.92 * fade))
+	draw_rect(_snap(Rect2((sz.x - w) * 0.5, y, w, 2)), Color(CYAN.r, CYAN.g, CYAN.b, 0.9 * fade))
+	draw_rect(_snap(Rect2((sz.x - w) * 0.5, y + h - 2, w, 2)),
+			Color(CYAN.r, CYAN.g, CYAN.b, 0.9 * fade))
+	var ta := clampf((age - 0.22) / 0.20, 0.0, 1.0) * fade
+	if ta <= 0.0:
+		return
+	var lbl := _floor_label if _floor_label != "" else "B%dF" % _floor_no
+	var lw := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_H).x
+	_txt(font, Vector2((sz.x - lw) * 0.5, y + 68), lbl, FS_H, Color(1, 1, 1, ta))
+	var sub := "到達"
+	var sw := font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_M).x
+	_txt(font, Vector2((sz.x - sw) * 0.5, y + 26), sub, FS_M, Color(CYAN.r, CYAN.g, CYAN.b, ta))
+
+
+# ══ レベルアップ（画面の山） ═══════════════════════════════════════════
+# 通常回：一瞬のフラッシュ＋`同期率 Lv.7` がせり上がってフェード（1.8秒）。
+# 共鳴回（Lv3/6/9/12）：カードで名前と効果を大きく見せる（3.6秒）。音は main 側。
+func _draw_levelup(sz: Vector2, font: Font) -> void:
+	if _lv_fx.is_empty():
+		return
+	var res_name := String(_lv_fx.get("name", ""))
+	var has_res := res_name != ""
+	var dur := 3.6 if has_res else 1.8
+	var age := _t - float(_lv_fx["t0"])
+	if age > dur:
+		_lv_fx = {}
+		return
+	# ① 画面全体の一瞬のフラッシュ
+	if age < 0.26:
+		var f := 1.0 - age / 0.26
+		draw_rect(Rect2(Vector2.ZERO, sz), Color(0.72, 0.95, 1.0, (0.60 if has_res else 0.42) * f))
+	# ② 広がる矩形リング（角丸もグローも使わない・この画面の作法どおり）
+	var cx := sz.x * 0.5
+	var cy := sz.y * 0.42
+	for j in 2:
+		var rk := clampf((age - j * 0.12) / 0.65, 0.0, 1.0)
+		if rk <= 0.0 or rk >= 1.0:
+			continue
+		var rw := 60.0 + rk * sz.x * 0.72
+		var rh := rw * 0.42
+		draw_rect(_snap(Rect2(cx - rw * 0.5, cy - rh * 0.5, rw, rh)),
+				Color(CYAN.r, CYAN.g, CYAN.b, 0.55 * (1.0 - rk)), false, 3.0)
+	# ③ せり上がる大文字
+	var txt := "同期率 Lv.%d" % int(_lv_fx.get("lv", 0))
+	var rise := 1.0 - pow(1.0 - clampf(age / 0.45, 0.0, 1.0), 3.0)
+	var ty := cy + 46.0 - rise * 64.0
+	var ta := clampf((dur - age) / 0.55, 0.0, 1.0) * clampf(age / 0.08, 0.0, 1.0)
+	var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_H).x
+	draw_rect(_snap(Rect2(cx - tw * 0.5 - 22, ty - 46, tw + 44, 58)),
+			Color(0.02, 0.03, 0.06, 0.72 * ta))
+	draw_string(font, Vector2(cx - tw * 0.5 + 2, ty + 2), txt, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			FS_H, Color(0, 0, 0, 0.7 * ta))
+	draw_string(font, Vector2(cx - tw * 0.5, ty), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_H,
+			Color(1, 1, 1, ta))
+	var atk := "攻撃 x%.2f" % float(_lv_fx.get("atk", 1.0))
+	var aw := font.get_string_size(atk, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_M).x
+	draw_string(font, Vector2(cx - aw * 0.5, ty + 30), atk, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_M,
+			Color(CYAN.r, CYAN.g, CYAN.b, ta))
+	if not has_res:
+		return
+	# ④ 共鳴カード（Lv3/6/9/12 だけ。25分で4回しか出ない＝ここが本当の山）
+	var ck := clampf((age - 0.40) / 0.26, 0.0, 1.0)
+	if ck <= 0.0:
+		return
+	var ce := 1.0 - pow(1.0 - ck, 3.0)
+	var ca := clampf((dur - age) / 0.6, 0.0, 1.0)
+	var full := Vector2(470.0, 168.0)
+	var cs := full * (0.62 + 0.38 * ce)
+	var top := cy + 96.0
+	var cr := _snap(Rect2(cx - cs.x * 0.5, top - cs.y * 0.5 + 40.0, cs.x, cs.y))
+	draw_rect(cr, Color(0.03, 0.05, 0.09, 0.96 * ca))
+	draw_rect(cr, Color(CYAN.r, CYAN.g, CYAN.b, 0.95 * ca), false, 3.0)
+	draw_rect(_snap(Rect2(cr.position + Vector2(6, 6), cr.size - Vector2(12, 12))),
+			Color(CYAN.r, CYAN.g, CYAN.b, 0.30 * ca), false, 1.0)
+	# 四隅の切り欠き（カードであることを角丸なしで示す）
+	for c: Vector2 in [cr.position, Vector2(cr.end.x - 16, cr.position.y),
+			Vector2(cr.position.x, cr.end.y - 4), Vector2(cr.end.x - 16, cr.end.y - 4)]:
+		draw_rect(_snap(Rect2(c.x, c.y, 16, 4)), Color(1, 1, 1, 0.8 * ca))
+	if ck < 1.0:
+		return
+	var cap := "共鳴獲得"
+	var pw := font.get_string_size(cap, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_S).x
+	_txt(font, Vector2(cx - pw * 0.5, cr.position.y + 30), cap, FS_S, Color(GOLD.r, GOLD.g, GOLD.b, ca))
+	var nw := font.get_string_size(res_name, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_XL).x
+	draw_string(font, Vector2(cx - nw * 0.5 + 2, cr.position.y + 84), res_name,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, FS_XL, Color(0, 0, 0, 0.7 * ca))
+	draw_string(font, Vector2(cx - nw * 0.5, cr.position.y + 82), res_name,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, FS_XL, Color(1, 1, 1, ca))
+	draw_rect(_snap(Rect2(cx - 60, cr.position.y + 98, 120, 1)), Color(CYAN.r, CYAN.g, CYAN.b, 0.5 * ca))
+	var desc := String(_lv_fx.get("desc", ""))
+	var dw := font.get_string_size(desc, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_L).x
+	_txt(font, Vector2(cx - dw * 0.5, cr.position.y + 130), desc, FS_L, Color(CYAN.r, CYAN.g, CYAN.b, ca))

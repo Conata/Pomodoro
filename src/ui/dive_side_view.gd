@@ -110,6 +110,21 @@ var _striker := -1           # 直近で「殴った」味方（踏み込み演�
 var _strike_t := -9.9
 var _knock: Array = []       # 敵スロットのノックバック残量
 
+# ── 撃破（2.5秒に1体）と同期率レベルアップの演出 ────────────────────────
+# 出しすぎると画面が埋まるので、フロータは12個・破裂は6個で頭打ちにして古い順に捨てる。
+const FLOAT_MAX := 12
+const POP_MAX := 6
+var _pops: Array = []        # 撃破の破裂 {p, t0, elite, boss}
+# 「会心」の判定：sim は会心を期待値で DPS に畳んでいて per-hit のフラグを持たない。
+# そこで UI 側は sim が実際に起こした2つの事実だけを見る——
+#   ① 直前に技（fx イベント）が飛んだ＝決め手の一撃
+#   ② その数字が直近の移動平均を明確に超えた＝装備や同期率で火力が跳ねた瞬間
+# 数字そのものは sim の値をそのまま出す。大きさと白さの判定だけがUIの仕事。
+var _dmg_ema := 0.0
+var _fx_t := -9.9
+var _lv_t := -9.9            # レベルアップ時刻（足元からの光柱）
+var _lv_res := false         # その回が共鳴（Lv3/6/9/12）かどうか＝光柱の格を上げる
+
 # ── 会話劇（戦闘・道中の掛け合い吹き出し。Banter 駆動）──
 var _bubble: Dictionary = {}       # 表示中の吹き出し {gid, text, t0, dur}
 var _bubble_q: Array = []          # 掛け合いの残り行 [[gid, text], ...]
@@ -261,10 +276,19 @@ func add_events(events: Array) -> void:
 			"dmg_pop":
 				var val := int(e.get("val", 0))
 				if String(e.get("at", "enemy")) == "enemy":
-					# 与ダメ：殴り手（生存味方を巡回）が踏み込み、対象の敵に斬撃＋数字
-					var slot := randi() % maxi(mobs.size(), 1)
-					_floaters.append({"txt": "%d" % val, "col": GOLD, "side": "enemy",
-							"slot": slot, "t0": _t, "jx": randf_range(-14.0, 14.0)})
+					# 与ダメ：sim は必ず隊列の先頭（mobs[0]）を削るので、斬撃も数字も
+					# スロット0に落とす（＝画面の因果と sim の因果を一致させる）。
+					var slot := 0
+					# 会心＝技の直後、または火力が跳ねた一撃。色は足さず「白く・大きく」で差を作る。
+					var crit := (_t - _fx_t) < 0.35 \
+							or (_dmg_ema > 0.0 and float(val) > _dmg_ema * 1.20)
+					_dmg_ema = float(val) if _dmg_ema <= 0.0 else lerpf(_dmg_ema, float(val), 0.35)
+					# 同じ場所に積まないよう横も縦もばらす（重なると数字が読めなくなる）
+					_floaters.append({"txt": ("%d!" % val) if crit else str(val),
+							"col": Color(1, 1, 1) if crit else Color(0.93, 0.95, 1.0),
+							"side": "enemy", "slot": slot, "t0": _t,
+							"jx": randf_range(-34.0, 34.0), "jy": randf_range(-20.0, 4.0),
+							"crit": crit})
 					_slashes.append({"slot": slot, "t0": _t})
 					if slot < _knock.size():
 						_knock[slot] = 10.0
@@ -273,14 +297,23 @@ func add_events(events: Array) -> void:
 				else:
 					# 被ダメ：盾役（先頭の生存者）の頭上に赤数字＋赤フラッシュ
 					_floaters.append({"txt": "-%d" % val, "col": Color(1.0, 0.42, 0.45), "side": "party",
-							"slot": _tank_index(), "t0": _t, "jx": randf_range(-10.0, 10.0)})
+							"slot": _tank_index(), "t0": _t, "jx": randf_range(-10.0, 10.0),
+							"crit": false})
 					_hurt_t = _t
 					var ti := _tank_index()
 					if ti >= 0 and ti < _party_hurt.size():
 						_party_hurt[ti] = _t
-				while _floaters.size() > 14:
+				while _floaters.size() > FLOAT_MAX:
 					_floaters.pop_front()
+			"kill":
+				# 2.5秒に1回。敵が弾けて、その撃破で入った金（sim の実値）が飛ぶ。
+				_on_kill(e)
+			"levelup":
+				_lv_t = _t
+				_lv_res = String(e.get("res_name", "")) != ""
+				punch(0.5 if _lv_res else 0.3)
 			"fx":
+				_fx_t = _t
 				_bursts.append({"kind": String(e.get("fx", "")), "t0": _t})
 				while _bursts.size() > 4:
 					_bursts.pop_front()
@@ -294,6 +327,35 @@ func add_events(events: Array) -> void:
 				_banter_event("wipe", 1.0, true)
 			"door":
 				_banter_event("door", 0.8)
+
+
+## 撃破の瞬間。sim の kill イベント（gold / ing / elite / boss）をそのまま画に変える。
+## 数字は一切こちらで作らない。出しすぎ防止のため破裂とフロータは上限で切る。
+func _on_kill(e: Dictionary) -> void:
+	var boss := bool(e.get("boss", false))
+	var elite := bool(e.get("elite", false))
+	# 破裂の位置＝いま殴っている先頭スロット（居なければ敵スロット先頭の定位置）
+	var p := Vector2(size.x * ENEMY_X0, size.y * GROUND_Y)
+	if not _enemy_pos.is_empty() and _enemy_pos[0] != null:
+		p = _enemy_pos[0]
+	_pops.append({"p": p, "t0": _t, "elite": elite, "boss": boss})
+	while _pops.size() > POP_MAX:
+		_pops.pop_front()
+	var g := int(e.get("gold", 0))
+	if g > 0:
+		_floaters.append({"txt": "+%dG" % g, "col": GOLD, "side": "fixed", "plate": true,
+				"pos": p + Vector2(randf_range(-10.0, 18.0), -MOB_H * 0.95),
+				"t0": _t, "jx": 0.0, "jy": 0.0, "crit": false})
+	var ing := String(e.get("ing", ""))
+	if ing != "":
+		_floaters.append({"txt": "%s+%d" % [String(KuroData.ING_NAMES.get(ing, ing)),
+				int(e.get("ing_n", 1))], "col": CYAN, "side": "fixed", "plate": true,
+				"pos": p + Vector2(randf_range(-24.0, 6.0), -MOB_H * 1.20),
+				"t0": _t + 0.14, "jx": 0.0, "jy": 0.0, "crit": false})
+	while _floaters.size() > FLOAT_MAX:
+		_floaters.pop_front()
+	if boss or elite:
+		punch(0.45 if boss else 0.22)
 
 
 ## 次に「殴った」ことにする味方（生存者を巡回）。
@@ -652,6 +714,7 @@ func _draw() -> void:
 					Vector2(sz.x, gy + 40.0), Vector2(0, gy + 40.0)]),
 			PackedColorArray([Color(0.06, 0.03, 0.14, 0.10), Color(0.06, 0.03, 0.14, 0.10),
 					Color(0.06, 0.03, 0.14, 0.42), Color(0.06, 0.03, 0.14, 0.42)]))
+	_draw_milestones(sz, gy, font)
 	_draw_portal(Vector2(58, gy), font)
 	_draw_goal(sz, gy)
 
@@ -758,6 +821,8 @@ func _draw() -> void:
 		if not dead and int(p.get("ready", 0)) > 0:
 			_ready_light(Vector2(feet.x, r.position.y - 26.0))
 
+	_draw_pops()
+	_draw_lv_pillars(sz, gy)
 	_draw_combat_fx(sz, gy, font)
 	_draw_foreground(sz, gy)
 	_draw_bubble(sz, gy, font)
@@ -893,9 +958,16 @@ func _draw_combat_fx(sz: Vector2, gy: float, font: Font) -> void:
 		if k >= 1.0:
 			_floaters.remove_at(i)
 			continue
-		var slot := int(fl["slot"])
+		if k < 0.0:
+			i += 1
+			continue
+		var slot := int(fl.get("slot", 0))
+		var side := String(fl["side"])
 		var base := Vector2(sz.x * 0.5, gy)
-		if String(fl["side"]) == "enemy":
+		if side == "fixed":
+			# 撃破の金・素材は「倒れた場所」に置き去りにする（対象はもう居ない）
+			base = fl.get("pos", base)
+		elif side == "enemy":
 			if slot < _enemy_top.size() and _enemy_top[slot] != null and slot < _enemy_pos.size() and _enemy_pos[slot] != null:
 				base = Vector2((_enemy_pos[slot] as Vector2).x, float(_enemy_top[slot]) - 26.0)
 			else:
@@ -905,15 +977,185 @@ func _draw_combat_fx(sz: Vector2, gy: float, font: Font) -> void:
 				base = _party_pos[slot]
 			base += Vector2(0, -GIRL_H - 30.0)
 		var e := 1.0 - pow(1.0 - k, 2.0)
-		var pos := base + Vector2(float(fl["jx"]), -e * 34.0)
+		var pos := base + Vector2(float(fl["jx"]),
+				float(fl.get("jy", 0.0)) - e * (54.0 if side == "fixed" else 34.0))
 		var col: Color = fl["col"]
 		var a := 1.0 - k * k
-		var fsize := FS_L if k < 0.18 else FS_M   # 出た瞬間だけ大きく（ポップ感）
+		# 出た瞬間だけ大きく（ポップ感）。会心はもう1段上げて、桁が違うことを目で分からせる。
+		var crit := bool(fl.get("crit", false))
+		var fsize := FS_M
+		if crit:
+			fsize = FS_XL if k < 0.30 else FS_L
+		elif k < 0.18:
+			fsize = FS_L
 		var txt := String(fl["txt"])
+		if crit:
+			# 会心は色相を増やさず「白い衝撃線」で差を作る（虹色にしない）
+			draw_line(pos + Vector2(-26, -8), pos + Vector2(26, -8), Color(1, 1, 1, a * 0.55), 2.0)
 		var tw := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x
+		if bool(fl.get("plate", false)):
+			# 報酬（+G／素材）はネオンの上でも必ず読めるよう黒い下地を敷く
+			draw_rect(Rect2(roundf(pos.x - tw * 0.5 - 6.0), roundf(pos.y - fsize + 1.0),
+					roundf(tw + 12.0), fsize + 6.0), Color(0.02, 0.02, 0.05, 0.72 * a))
 		draw_string(font, pos + Vector2(-tw * 0.5 + 1, 1), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, Color(0, 0, 0, a * 0.75))
 		draw_string(font, pos + Vector2(-tw * 0.5, 0), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, Color(col.r, col.g, col.b, a))
 		i += 1
+
+
+## 撃破の破裂。敵が消える瞬間に「弾けた」証拠を残す（居なくなっただけにしない）。
+## 上限は POP_MAX。2.5秒に1体なので、これ以上残すと床が破片で埋まる。
+func _draw_pops() -> void:
+	var i := 0
+	while i < _pops.size():
+		var p: Dictionary = _pops[i]
+		var k := (_t - float(p["t0"])) / 0.55
+		if k >= 1.0:
+			_pops.remove_at(i)
+			continue
+		var c: Vector2 = p["p"]
+		var big := bool(p["boss"])
+		var mid := bool(p["elite"])
+		var scale := 1.9 if big else (1.35 if mid else 1.0)
+		var a := 1.0 - k
+		var h := (BOSS_H if big else MOB_H) * 0.5
+		var org := c + Vector2(0, -h)
+		# 弾けたリング（角丸を使わない作法どおり8角形の輪郭）＋外へ飛ぶ破片
+		var rr := (16.0 + 78.0 * k) * scale
+		_octagon_ring(org, rr, Color(1.0, 0.95, 0.88, a * 0.9), 3.0)
+		_octagon_ring(org, rr * 0.62, Color(1.0, 0.72, 0.42, a * 0.7), 2.0)
+		for j in 10:
+			var ang := TAU * j / 10.0 + float(int(c.x)) * 0.7
+			var d := (12.0 + 86.0 * k) * scale
+			var q := org + Vector2(cos(ang) * d, sin(ang) * d * 0.72 + k * k * 34.0)
+			_octagon(q, (5.0 - 3.4 * k) * scale, Color(1.0, 0.94, 0.88, a))
+		# 一瞬の縦の閃光（「居なくなった」ではなく「弾けた」に見せる）
+		if k < 0.30:
+			var fa := (1.0 - k / 0.30)
+			draw_rect(Rect2(org.x - 3.0 * scale, org.y - h * 0.9, 6.0 * scale, h * 1.8),
+					Color(1, 1, 1, 0.55 * fa))
+		# 足元に潰れた影（破片が床へ落ちたことを示す）
+		_ellipse(Vector2(c.x, c.y), Vector2(56.0 * scale * (0.4 + k), 11.0 * (1.0 - k * 0.6)),
+				Color(1.0, 0.86, 0.7, 0.20 * a))
+		i += 1
+
+
+## 8角形の輪郭（塗りつぶさないリング）。draw_arc の丸みを持ち込まないための版。
+func _octagon_ring(c: Vector2, r: float, col: Color, w: float) -> void:
+	if r <= 0.5:
+		return
+	var pts := PackedVector2Array()
+	for i in 9:
+		var a := TAU * (i % 8 + 0.5) / 8.0
+		pts.append(c + Vector2(cos(a) * r, sin(a) * r * 0.82))
+	draw_polyline(pts, col, w)
+
+
+## 同期率レベルアップ：パーティ全員の足元から光柱が立つ。
+## 共鳴の回（Lv3/6/9/12）は太く長く、2倍の時間残る＝25分で4回だけの山。
+func _draw_lv_pillars(sz: Vector2, gy: float) -> void:
+	var dur := 2.0 if _lv_res else 1.3
+	var age := _t - _lv_t
+	if age < 0.0 or age > dur:
+		return
+	var k := age / dur
+	var a := clampf(age / 0.10, 0.0, 1.0) * clampf(1.0 - pow(k, 2.0), 0.0, 1.0)
+	var hgt := (520.0 if _lv_res else 340.0) * (0.35 + 0.65 * clampf(age / 0.28, 0.0, 1.0))
+	var wid := 30.0 if _lv_res else 20.0
+	var col := CYAN
+	for i in _party_pos.size():
+		if _party_pos[i] == null:
+			continue
+		var f: Vector2 = _party_pos[i]
+		# 足元＝濃い／上端＝0 の縦グラデ四角（ハードエッジの出ない安価な光の柱）
+		draw_polygon(
+				PackedVector2Array([Vector2(f.x - wid * 0.5, f.y - hgt),
+						Vector2(f.x + wid * 0.5, f.y - hgt),
+						Vector2(f.x + wid, f.y + 6.0), Vector2(f.x - wid, f.y + 6.0)]),
+				PackedColorArray([Color(col.r, col.g, col.b, 0.0), Color(col.r, col.g, col.b, 0.0),
+						Color(col.r, col.g, col.b, 0.55 * a), Color(col.r, col.g, col.b, 0.55 * a)]))
+		draw_rect(Rect2(f.x - 2.0, f.y - hgt * 0.9, 4.0, hgt * 0.9),
+				Color(0.92, 1.0, 1.0, 0.55 * a))
+		# 足元の輪（床に着いていることを示す）
+		_ellipse(f, Vector2(wid * (1.4 + k * 2.2), 10.0 * (1.4 + k * 2.2) * 0.34),
+				Color(col.r, col.g, col.b, 0.40 * a))
+		# 立ち上る粒
+		for j in 5:
+			var jy := -fposmod(age * 240.0 + j * 47.0, hgt)
+			_octagon(Vector2(f.x + sin(j * 21.7 + age * 4.0) * wid * 0.8, f.y + jy), 2.4,
+					Color(0.85, 1.0, 1.0, a * 0.8))
+	# 地面全体を走る横一線（全員に同時に起きたことを示す）
+	var lw := clampf(age / 0.22, 0.0, 1.0) * sz.x
+	draw_rect(Rect2((sz.x - lw) * 0.5, gy - 2.0, lw, 3.0), Color(col.r, col.g, col.b, 0.7 * a))
+
+
+## 道中のマイルストーン標識。非戦闘の移動中に「静かな時間」を作らないための最小装置。
+## 42（＝階長の10%）ごとに標柱が右から左へ流れ、隊列の足元に深度と残距離を出す。
+## 数値はすべて sim の dist から引く。
+func _draw_milestones(sz: Vector2, gy: float, font: Font) -> void:
+	var ref_x := PARTY_X0 + PARTY_ROAM_X + PARTY_GAP * 2.0
+	var span := 42.0                       # 階長 420 の 10%
+	var dim := 0.45 if in_combat else 1.0   # 交戦中は主役の邪魔をしない
+	var base_i := int(floor(dist / span)) - 1
+	for j in 13:
+		var pd := float(base_i + j) * span
+		if pd < 0.0:
+			continue
+		var x := snappedf(ref_x + (pd - dist) * 14.0, 2.0)
+		if x < -60.0 or x > sz.x + 60.0:
+			continue
+		var gate := absf(fposmod(pd, KuroData.FLOOR_LEN)) < 1.0
+		# 通り過ぎた標識は暗く、まだ先の標識は明るい＝どちらへ進んでいるかが一目で分かる
+		var ahead := pd >= dist
+		var a := (0.95 if gate else 0.66) * dim * (1.0 if ahead else 0.42)
+		var h := 76.0 if gate else 46.0
+		var col := PURPLE if gate else CYAN
+		# 標柱（黒地＋縞。ネオン背景でも輪郭が消えない）
+		draw_rect(Rect2(x - 3.0, gy - h, 6.0, h), Color(0.03, 0.02, 0.07, 0.94 * dim))
+		for seg in int(h / 12.0):
+			if seg % 2 == 0:
+				draw_rect(Rect2(x - 3.0, gy - h + seg * 12.0, 6.0, 6.0),
+						Color(col.r, col.g, col.b, a * 0.40))
+		draw_rect(Rect2(x - 4.0, gy - h - 2.0, 8.0, 4.0), Color(col.r, col.g, col.b, a))
+		_contact_shadow(Vector2(x, gy), 16.0)
+		var lbl := KuroData.stage_label(int(pd / KuroData.FLOOR_LEN)) if gate \
+				else "%d%%" % int(round(fposmod(pd, KuroData.FLOOR_LEN) / KuroData.FLOOR_LEN * 100.0))
+		var tw := font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_S).x
+		# 標識板は柱の右側に立てる（柱の頭に乗せると隊列の頭上UIとぶつかる）
+		var pr := Rect2(snappedf(x + 3.0, 2.0), snappedf(gy - h - 2.0, 2.0), tw + 12.0, 18.0)
+		draw_rect(pr, Color(0.02, 0.02, 0.05, 0.86 * dim))
+		draw_rect(pr, Color(col.r, col.g, col.b, a * 0.8), false, 1.0)
+		draw_string(font, Vector2(pr.position.x + 6.0, pr.position.y + 13.0), lbl,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, FS_S, Color(col.r, col.g, col.b, minf(a * 1.3, 1.0)))
+	# 足元の距離ルーラー。4.2（=1%）ごとに刻みが流れる＝止まって見える瞬間を作らない。
+	# 非戦闘の移動中でも「進んでいる」ことが常に目に入る一番安い装置。
+	var ry := gy + 14.0
+	draw_rect(Rect2(0, ry, sz.x, 1.0), Color(0.60, 0.66, 0.88, 0.30 * dim))
+	var tick := 4.2
+	var t0 := floorf(dist / tick) - 40.0
+	for j in 90:
+		var td: float = (t0 + float(j)) * tick
+		var tx := snappedf(ref_x + (td - dist) * 14.0, 1.0)
+		if tx < 0.0 or tx > sz.x:
+			continue
+		var tenth := absf(fposmod(td, tick * 10.0)) < 0.01
+		var th := 10.0 if tenth else 5.0
+		draw_rect(Rect2(tx, ry - th, 2.0, th), Color(0.02, 0.02, 0.05, 0.7 * dim))
+		draw_rect(Rect2(tx, ry - th, 2.0, th - 1.0),
+				Color(0.74, 0.82, 1.0, (0.85 if tenth else 0.45) * dim))
+	# 隊列の現在位置を指す針（ルーラーのどこに居るかが一目で分かる）
+	draw_rect(Rect2(snappedf(ref_x - 2.0, 1.0), ry - 16.0, 4.0, 20.0), Color(0.02, 0.02, 0.05, 0.9))
+	draw_rect(Rect2(snappedf(ref_x - 1.0, 1.0), ry - 15.0, 2.0, 18.0),
+			Color(CYAN.r, CYAN.g, CYAN.b, 0.95 * dim))
+
+	# 深度と、次のゲートまでの残り
+	var fl := int(dist / KuroData.FLOOR_LEN)
+	var left := maxf(float(fl + 1) * KuroData.FLOOR_LEN - dist, 0.0)
+	var read := "深度 %dm    ゲートまで %dm" % [int(dist), int(left)]
+	var rw := font.get_string_size(read, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_S).x
+	var rx := snappedf(ref_x - rw * 0.5, 2.0)
+	draw_rect(Rect2(rx - 8.0, gy + 20.0, rw + 16.0, 18.0), Color(0.02, 0.02, 0.05, 0.78))
+	draw_string(font, Vector2(rx, gy + 33.0), read, HORIZONTAL_ALIGNMENT_LEFT, -1, FS_S,
+			Color(0.78, 0.84, 0.96, 0.95))
 
 
 ## 空とネオン都市のパララックス。真っ黒な平面を作らないのが最優先：

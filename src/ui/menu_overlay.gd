@@ -62,6 +62,19 @@ var _t := 0.0
 var _hits: Array = []
 var _ripples: Array = []   # タップ波紋（Kit.ripples）
 var _tex: Dictionary = {}      # アイコン/立ち絵テクスチャのキャッシュ（path -> Texture2D|null）
+# ── フィードバック（クッキークリッカーの原則：動いた値は必ず画面が言う）──
+var _fx: Dictionary = {}       # 数値カウントアップの台帳（Kit.num）
+var _floats: Array = []        # 差分フロート（+18G が上へ流れて消える）
+var _flies: Array = []         # 飛ぶ数値（所持金の出入り＝支払いが目に見える）
+var _press: Dictionary = {}    # 直近の押下（rect と時刻）＝押下状態の3状態目
+var _last_tap := Vector2(360.0, 640.0)
+var _gold_pos := Vector2(560.0, 68.0)
+var _chg := ""                 # 直近の仕込み操作（「店番 → ユズキ」等）
+var _chg_t := -99.0
+var _chg_d := 0.0              # その操作で純益がいくら動いたか
+var _burst: Dictionary = {}    # 解放バースト（改装ノードid -> 時刻）
+var _own_renov: Dictionary = {}   # 改装の所持状態キャッシュ（解放の瞬間を捕まえる）
+var _stat_cache: Dictionary = {}  # 各員の攻/HP（装備の付け替え量を出すため）
 
 
 func _ready() -> void:
@@ -111,7 +124,10 @@ func _gui_input(event: InputEvent) -> void:
 	for h in _hits:
 		if (h["rect"] as Rect2).has_point(p):
 			Kit.ripple_add(_ripples, p, _t)
+			_last_tap = p
+			_press = {"rect": h["rect"], "t0": _t}   # 押した場所が一瞬光る
 			var id := String(h["id"])
+			_note_change(id)
 			if id.begins_with("_"):
 				_local(id)            # 純UI操作（選択など）はその場で処理
 			else:
@@ -144,6 +160,104 @@ func _local(id: String) -> void:
 
 func _hit(rect: Rect2, id: String) -> void:
 	_hits.append({"rect": rect, "id": id})
+
+
+## 朝の仕込み操作を覚えておき、「何を変えたら純益がいくら動いたか」を言えるようにする。
+## 実際の差分は sim の見込みから読む（ここでは名前だけ控える）。
+func _note_change(id: String) -> void:
+	var parts := id.split(":")
+	match parts[0]:
+		"keeper":
+			if parts.size() > 1:
+				_chg = "店番 → %s" % String(KuroData.GIRLS[parts[1]]["name"])
+		"door":
+			_chg = "扉 → %s" % ("見送る" if String(sim.state["morning"]["door"]) == "open" else "踏み込む")
+		"menu":
+			if parts.size() > 1:
+				_chg = "献立 → %s" % String(KuroData.RECIPES[parts[1]]["name"])
+		_:
+			return
+	_chg_t = _t
+	_chg_d = 0.0
+
+
+## 数値を1つ描く：カウントアップ＋変化した瞬間の拡大＋差分フロート。
+## 値は必ず sim から来たものを渡す（UI 側で式を作り直さない）。戻り値は描いた幅。
+func _num(font: Font, pos: Vector2, key: String, v: float, size: int, col: Color,
+		gain := DS.SUCCESS, drop := DS.DANGER, suffix := "", float_it := true) -> float:
+	var n: Dictionary = Kit.num(_fx, key, v, _t)
+	var s := "%d" % int(round(float(n["v"])))
+	Kit.num_draw(self, font, pos, s, size, col, float(n["pop"]))
+	var w := _tw(font, s, size)
+	var d := float(n["d"])
+	# フロートは数値の右肩から上がる（上の行の文字に被せない）
+	if float_it and absf(d) >= 1.0:
+		Kit.float_add(_floats, Vector2(pos.x + w + 8.0, pos.y - 4.0),
+				"%s%d%s" % ["+" if d > 0.0 else "-", int(absf(round(d))), suffix],
+				gain if d > 0.0 else drop, _t)
+	return w
+
+
+## 切断ペナルティが「無かった場合」の見込みを sim 自身に計算させる。
+## UI 側で 0.6 を割り戻すと式が二重管理になるので、フラグを一瞬倒して読む。
+func _forecast_base() -> Dictionary:
+	sim.state["crowd_penalty"] = false
+	var b: Dictionary = sim.forecast_night()
+	sim.state["crowd_penalty"] = true
+	return b
+
+
+## 「その子を店番にしたら今夜の純益はいくらか」を、店番の数だけ sim に計算させる。
+## 適性だけでは決まらない（シナジー×献立×予報）ことを、数字の差分で見せるための材料。
+func _keeper_profits() -> Dictionary:
+	var m: Dictionary = sim.state["morning"]
+	var cur := String(m["keeper"])
+	var out := {}
+	for id in KuroData.GIRL_ORDER:
+		m["keeper"] = id
+		var f: Dictionary = sim.forecast_night()
+		out[id] = int(f["gold"]) - int(f["served"]) * MAT_COST
+	m["keeper"] = cur
+	return out
+
+
+## 全員の攻/HPを見張り、装備の付け替えで変わったら変化量をその場（指の下）に出す。
+func _watch_stats() -> void:
+	for gid in KuroData.GIRL_ORDER:
+		var atk := float(sim.girl_atk(gid))
+		var hp := float(sim.girl_maxhp(gid))
+		var prev: Array = _stat_cache.get(gid, [])
+		_stat_cache[gid] = [atk, hp]
+		if prev.is_empty() or _panel_t < 0.6:
+			continue
+		var da := atk - float(prev[0])
+		var dh := hp - float(prev[1])
+		if absf(da) < 0.5 and absf(dh) < 0.5:
+			continue
+		var parts: Array[String] = [String(KuroData.GIRLS[gid]["name"])]
+		if absf(da) >= 0.5:
+			parts.append("攻%s%d" % ["+" if da > 0.0 else "-", int(absf(da))])
+		if absf(dh) >= 0.5:
+			parts.append("HP%s%d" % ["+" if dh > 0.0 else "-", int(absf(dh))])
+		Kit.float_add(_floats, _last_tap + Vector2(-40.0, -16.0), " ".join(parts),
+				DS.SUCCESS if (da + dh) >= 0.0 else DS.DANGER, _t)
+
+
+## 所持金の出入りを「飛ぶ数値」で財布と操作点の間に飛ばす。
+func _watch_gold() -> void:
+	var g := float(int(sim.state["gold"]))
+	var seen := float(_fx.get("gold_seen", g))
+	# 開いた直後（＝閉じている間に動いた分）は飛ばさない。指の位置が古いので嘘になる。
+	if _panel_t < 0.6:
+		_fx["gold_seen"] = g
+		return
+	if absf(g - seen) >= 1.0:
+		var d := g - seen
+		if d > 0.0:
+			Kit.fly_add(_flies, _last_tap, _gold_pos, "+%dG" % int(d), GOLD, _t)
+		else:
+			Kit.fly_add(_flies, _gold_pos, _last_tap, "-%dG" % int(-d), DS.DANGER, _t)
+	_fx["gold_seen"] = g
 
 
 func _panel(rect: Rect2, bg: Color, border: Color, radius := 10.0, bw := 1.5) -> void:
@@ -217,6 +331,7 @@ func _draw() -> void:
 	var sz := size
 	var font := get_theme_default_font()
 	_hits.clear()
+	Kit.set_xf(self, Vector2.ZERO)   # 拡大描画が戻る先を自分の座標系に固定する
 	var accent: Color = PANEL_ACCENT.get(panel, PURPLE)
 	if sim != null and bool(sim.state["run"]["active"]):
 		# 潜航中の寄り道：背景絵は敷かず暗幕だけ＝下で戦い続けるステージが透ける
@@ -229,8 +344,10 @@ func _draw() -> void:
 	var pk := clampf(_panel_t / 0.25, 0.0, 1.0)
 	pk = pk * pk * (3.0 - 2.0 * pk)
 	if sim != null:
+		_watch_stats()
+		_watch_gold()
 		if pk < 1.0:
-			draw_set_transform(Vector2(0.0, (1.0 - pk) * 16.0), 0.0, Vector2.ONE)
+			Kit.set_xf(self, Vector2(0.0, (1.0 - pk) * 16.0))
 		match panel:
 			"map": _draw_map(font, sz)
 			"member": _draw_member(font, sz)
@@ -239,13 +356,22 @@ func _draw() -> void:
 			"renov": _draw_renov(font, sz)
 			"workshop": _draw_workshop(font, sz)
 		if pk < 1.0:
-			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			Kit.set_xf(self, Vector2.ZERO)
 			draw_rect(Rect2(0, HEADER_H + 2, sz.x, sz.y - HEADER_H - FOOTER_H - 2),
 					Color(0.02, 0.02, 0.05, (1.0 - pk) * 0.65))
 	_draw_footer(font, sz)
 	Kit.vignette(self, sz)
 	_draw_toast(font, sz)
+	# 触った結果のフィードバック（押下→波紋→数値の増減）は最前面に置く
+	if not _press.is_empty():
+		var prk := 1.0 - (_t - float(_press["t0"])) / Kit.PRESS_LIFE
+		if prk <= 0.0:
+			_press = {}
+		else:
+			Kit.press(self, _press["rect"], accent, prk)
 	Kit.ripples(self, _ripples, _t)
+	Kit.flies(self, font, _flies, _t)
+	Kit.floats(self, font, _floats, _t)
 
 
 func _draw_header(font: Font, sz: Vector2) -> void:
@@ -268,19 +394,25 @@ func _draw_header(font: Font, sz: Vector2) -> void:
 	# タイトル
 	_txt(font, Vector2(title_x, 40), String(PANEL_TITLES.get(panel, "")), DS.T_SUB, DS.PAPER)
 	# 日数・所持金・欠片（ラベルは小さく灰、数値は白。有彩色を増やさない）
+	# 数値は Kit.num で追いかける＝変わった瞬間に必ず拡大し、差分が上へ流れる。
 	if sim != null:
 		var s: Dictionary = sim.state
-		var pairs := [["DAY", "%d" % int(s["day"])], ["金", "%d" % int(s["gold"])],
-				["欠片", "%d" % int(s["shards"])]]
+		var pairs := [["DAY", "day", float(int(s["day"])), DS.PAPER],
+				["金", "gold", float(int(s["gold"])), GOLD],
+				["欠片", "shards", float(int(s["shards"])), DS.PAPER]]
 		var total := 0.0
 		for p in pairs:
-			total += _tw(font, String(p[0]), DS.T_MICRO) + 6.0 + _tw(font, String(p[1]), DS.T_SUB) + 20.0
+			total += _tw(font, String(p[0]), DS.T_MICRO) + 6.0 \
+					+ _tw(font, "%d" % int(p[2]), DS.T_SUB) + 20.0
 		var hx := sz.x - 16.0 - total + 20.0
 		for p in pairs:
 			_txt(font, Vector2(hx, 68), String(p[0]), DS.T_MICRO, DS.TEXT_MUTE)
 			hx += _tw(font, String(p[0]), DS.T_MICRO) + 6.0
-			_txt(font, Vector2(hx, 68), String(p[1]), DS.T_SUB, DS.PAPER)
-			hx += _tw(font, String(p[1]), DS.T_SUB) + 20.0
+			if String(p[1]) == "gold":
+				_gold_pos = Vector2(hx, 68)
+			# 所持金は「飛ぶ数値」が差分を運ぶので、ここでのフロートは出さない（重ねない）
+			hx += _num(font, Vector2(hx, 68), "hdr_" + String(p[1]), float(p[2]), DS.T_SUB,
+					p[3], GOLD, DS.DANGER, "", String(p[1]) != "gold") + 20.0
 
 
 # ── 深層マップ（ステージ制・タスクバーヒーロー準拠）──────────────────────────
@@ -424,13 +556,18 @@ func _draw_member(font: Font, sz: Vector2) -> void:
 	var tx := 110.0 if has_portrait else 26.0
 	_txt(font, Vector2(tx, y + 28), String(g["name"]), 22, g["color"])
 	_txt(font, Vector2(tx, y + 52), String(g["role"]), 13, TEXT_DIM)
-	# ステータス
-	_txt(font, Vector2(tx, y + 80), "攻 %d" % int(sim.girl_atk(gid)), 16, Color(1.0, 0.6, 0.45))
-	_txt(font, Vector2(tx + 96, y + 80), "HP %d" % int(sim.girl_maxhp(gid)), 16, GREEN)
+	# ステータス（装備を替えたら、その場で数字が動いて差分が流れる）
+	_txt(font, Vector2(tx, y + 80), "攻", DS.T_MICRO, TEXT_DIM)
+	_num(font, Vector2(tx + 26, y + 80), "atk_" + gid, float(int(sim.girl_atk(gid))), DS.T_BODY,
+			Color(1.0, 0.6, 0.45))
+	_txt(font, Vector2(tx + 96, y + 80), "HP", DS.T_MICRO, TEXT_DIM)
+	_num(font, Vector2(tx + 130, y + 80), "hp_" + gid, float(int(sim.girl_maxhp(gid))), DS.T_BODY, GREEN)
 	# 好感度バー
-	_txt(font, Vector2(tx, y + 104), "♥", 14, PINK)
+	_txt(font, Vector2(tx, y + 104), "♥", DS.T_MICRO, PINK)
 	_bar(Rect2(tx + 22, y + 92, sz.x - 24 - tx - 22 - 56, 14), sim.aff(gid) / 100.0, PINK)
-	_txt(font, Vector2(sz.x - 24 - 48, y + 104), "%d/100" % sim.aff(gid), 13, PINK)
+	var aw := _num(font, Vector2(sz.x - 24 - 56, y + 104), "aff_" + gid, float(sim.aff(gid)),
+			DS.T_BODY, PINK)
+	_txt(font, Vector2(sz.x - 24 - 56 + aw, y + 104), "/100", DS.T_MICRO, TEXT_DIM)
 	# 店番シナジー
 	_txt(font, Vector2(sz.x - 24 - 210, y + 28), "店番:%s" % String(g["synergy"]), 12, GOLD)
 	_txt(font, Vector2(sz.x - 24 - 210, y + 46), String(g["synergy_desc"]), 11, TEXT_DIM)
@@ -506,13 +643,15 @@ func _draw_market(font: Font, sz: Vector2) -> void:
 	var y := HEADER_H + 16.0
 	var s: Dictionary = sim.state
 	# 在庫（素材アイコン＋数）
-	_txt(font, Vector2(16, y + 4), "在庫", 14, TEXT_DIM)
+	_txt(font, Vector2(16, y + 4), "在庫", DS.T_MICRO, TEXT_DIM)
 	var ix := 64.0
 	for ing in ["dry", "meat", "sea"]:
-		var cnt := int(s["stock"][ing])
+		# 素材も「増えたら跳ねる」。買った瞬間に在庫の数字が動くのが見える。
 		var drew := _draw_icon("res://assets/generated/ing/%s.png" % ing, Rect2(ix, y - 8, 26, 26))
-		_txt(font, Vector2(ix + (28.0 if drew else 0.0), y + 4),
-				str(cnt) if drew else "%s%d" % [KuroData.ING_NAMES[ing], cnt], 14, TEXT)
+		if not drew:
+			_txt(font, Vector2(ix, y + 4), String(KuroData.ING_NAMES[ing]), DS.T_MICRO, TEXT_DIM)
+		var nx := ix + (28.0 if drew else 36.0)
+		_num(font, Vector2(nx, y + 4), "stock_" + String(ing), float(int(s["stock"][ing])), DS.T_BODY, TEXT)
 		ix += 74.0 if drew else 88.0
 	y += 28
 
@@ -585,42 +724,61 @@ func _draw_management(font: Font, sz: Vector2) -> void:
 	Kit.hatch(self, Rect2(0, top, sz.x, bot - top), Color(ac.r, ac.g, ac.b, 0.055), 26.0, 9.0)
 
 	var fc: Dictionary = sim.forecast_night()
+	var pen: bool = bool(s.get("crowd_penalty", false))
+	var base: Dictionary = _forecast_base() if pen else fc
 	var taste := String(s["forecast"])
 	var tcol: Color = KuroData.TASTE_COLORS.get(taste, ac)
+	# 今夜の純益は「この画面の結論」。値の変化はここで捕まえ、操作の手応えに使う。
+	var profit := int(fc["gold"]) - int(fc["served"]) * MAT_COST
+	var pn: Dictionary = Kit.num(_fx, "profit", float(profit), _t)
+	if absf(float(pn["d"])) >= 1.0:
+		_chg_d = float(pn["d"])
+		if _t - _chg_t > 1.2:
+			_chg = "仕込みが変わった"      # 改装解放など、チップ以外で動いた時
+		_chg_t = _t
 
-	# ① 今夜の予報 ------------------------------------------------------- 96..192
-	_mg_forecast(font, Rect2(PAD, top + 12.0, w, 96.0), taste, tcol, fc)
+	# ① 今夜の予報 -------------------------------------------------------
+	var y := top + 12.0
+	_mg_forecast(font, Rect2(PAD, y, w, 96.0), taste, tcol, fc, base, pen)
+	y += 104.0
+	# ①-b 切断の罰（あるときだけ、赤い板で名指しする）
+	if pen:
+		_mg_penalty(font, Rect2(PAD, y, w, 34.0), fc, base)
+		y += 42.0
 
-	# ② 店番 -------------------------------------------------------------
-	Kit.header(self, font, Vector2(PAD, 216.0), "店番", ac, w + 26.0, DS.T_HEAD, "この夜の売上を決める")
-	_mg_keepers(font, Rect2(PAD, 272.0, w, 128.0), m)
-	# 選択店番のシナジー（識別色の帯に反転で）
-	var kg: Dictionary = KuroData.GIRLS[m["keeper"]]
-	var syn := Rect2(PAD, 408.0, w, 32.0)
-	Kit.slab(self, syn, Color(ac.r, ac.g, ac.b, 0.92), 8.0)
-	_txt(font, Vector2(syn.position.x + 20.0, syn.position.y + 23.0),
-			"%s ／ %s ＝ %s" % [String(kg["name"]), String(kg["synergy"]), String(kg["synergy_desc"])],
-			DS.T_BODY, DS.on(ac))
+	# ② 店番（適性と純益の2軸で選ぶ）-------------------------------------
+	Kit.header(self, font, Vector2(PAD, y), "店番", ac, w + 26.0, DS.T_HEAD, "適性だけでは決まらない")
+	y += 56.0
+	_mg_keepers(font, Rect2(PAD, y, w, 240.0), m, _keeper_profits())
+	y += 248.0
+	# 直近の操作が純益をいくら動かしたか（賭けを組んでいる実感）
+	_mg_change(font, Rect2(PAD, y, w, 32.0), m)
+	y += 40.0
 
 	# ③ 扉の方針 ---------------------------------------------------------
-	Kit.header(self, font, Vector2(PAD, 448.0), "扉", ac, w + 26.0, DS.T_HEAD, "潜航中の扉をどう扱うか")
-	_chip(font, Rect2(sz.x - PAD - 168.0, 456.0, 168.0, 32.0), "改装ツリー ▸", ac, "_panel:renov")
+	Kit.header(self, font, Vector2(PAD, y), "扉", ac, w + 26.0, DS.T_HEAD, "潜航中の扉をどう扱うか")
+	_chip(font, Rect2(sz.x - PAD - 168.0, y + 8.0, 168.0, 32.0), "改装ツリー ▸", ac, "_panel:renov")
+	y += 56.0
 	var door_open: bool = String(m["door"]) == "open"
-	_mg_segment(font, Rect2(PAD, 504.0, w, 56.0), "踏み込む", "見送る", door_open, "door", ac)
+	_mg_segment(font, Rect2(PAD, y, w, 56.0), "踏み込む", "見送る", door_open, "door", ac)
+	y += 64.0
 
 	# ④ 献立デッキ -------------------------------------------------------
 	var menu: Array = m["menu"]
-	Kit.header(self, font, Vector2(PAD, 568.0), "献立", ac, w + 26.0, DS.T_HEAD,
+	Kit.header(self, font, Vector2(PAD, y), "献立", ac, w + 26.0, DS.T_HEAD,
 			"%d/%d 皿　タップで出し入れ" % [menu.size(), sim.menu_limit()])
-	var settle_top := bot - 316.0                       # 906
-	_mg_deck(font, Rect2(PAD, 624.0, w, settle_top - 640.0), s, menu, taste)
+	y += 56.0
+	var settle_top := bot - 276.0
+	_mg_deck(font, Rect2(PAD, y, w, settle_top - 16.0 - y), s, menu, taste)
 
 	# ⑤ 今夜の三行精算（この画面の結論。画面最大の文字はここ）-------------
-	_mg_settle(font, Rect2(PAD, settle_top, w, 308.0), fc, door_open)
+	_mg_settle(font, Rect2(PAD, settle_top, w, 276.0), fc, base, pen, door_open, pn)
 
 
 ## 予報の帯：傾いた黒板に、味の一文字を反転面で叩き込む。
-func _mg_forecast(font: Font, r: Rect2, taste: String, tcol: Color, fc: Dictionary) -> void:
+## 客見込みは罰の前後を並べて出す（黙って 8→5 に差し替わらない）。
+func _mg_forecast(font: Font, r: Rect2, taste: String, tcol: Color, fc: Dictionary,
+		base: Dictionary, pen: bool) -> void:
 	var ac := PURPLE
 	Kit.slab(self, Rect2(r.position.x + 8.0, r.position.y + 8.0, r.size.x - 8.0, r.size.y),
 			Color(ac.r, ac.g, ac.b, 0.85), 12.0)
@@ -633,32 +791,68 @@ func _mg_forecast(font: Font, r: Rect2, taste: String, tcol: Color, fc: Dictiona
 	var tx := r.position.x + 104.0
 	_txt(font, Vector2(tx, r.position.y + 34.0), "今夜の予報", DS.T_MICRO, Color(tcol.r, tcol.g, tcol.b, 0.95))
 	_txt(font, Vector2(tx, r.position.y + 68.0), "『%s』が高く売れる" % taste, DS.T_SUB, DS.PAPER)
-	# 数値は等幅で大きく（白のみ）
+	# 数値は等幅で大きく（白のみ）。変わったら必ず動く。
 	var x1 := r.end.x - 232.0
 	_txt(font, Vector2(x1, r.position.y + 34.0), "看板", DS.T_MICRO, DS.TEXT_2)
-	_txt(font, Vector2(x1, r.position.y + 68.0), "%d" % sim.sign_total(), DS.T_SUB, DS.PAPER)
-	var x2 := r.end.x - 128.0
+	_num(font, Vector2(x1, r.position.y + 68.0), "sign", float(sim.sign_total()), DS.T_SUB, DS.PAPER)
+	var x2 := r.end.x - 132.0
 	_txt(font, Vector2(x2, r.position.y + 34.0), "客見込み", DS.T_MICRO, DS.TEXT_2)
-	_txt(font, Vector2(x2, r.position.y + 68.0), "%d人" % int(fc["customers"]), DS.T_SUB, DS.PAPER)
+	if pen:
+		# 罰の前の数字を取り消し線で残し、赤い減少マークで今の数字へ繋ぐ
+		var bx := x2
+		bx += Kit.struck(self, font, Vector2(bx, r.position.y + 68.0),
+				"%d" % int(base["customers"]), DS.T_BODY, DS.TEXT_MUTE) + 6.0
+		_txt(font, Vector2(bx, r.position.y + 68.0), "▼", DS.T_MICRO, DS.DANGER)
+		bx += _tw(font, "▼", DS.T_MICRO) + 4.0
+		bx += _num(font, Vector2(bx, r.position.y + 68.0), "fc_cust", float(int(fc["customers"])),
+				DS.T_SUB, DS.DANGER)
+		_txt(font, Vector2(bx + 2.0, r.position.y + 68.0), "人", DS.T_MICRO, DS.TEXT_2)
+	else:
+		var cw := _num(font, Vector2(x2, r.position.y + 68.0), "fc_cust", float(int(fc["customers"])),
+				DS.T_SUB, DS.PAPER)
+		_txt(font, Vector2(x2 + cw + 2.0, r.position.y + 68.0), "人", DS.T_MICRO, DS.TEXT_2)
 
 
-## 店番6枚。選択＝面の反転（識別色のベタ＋暗色の文字）。最良適性は緑＋24px＋バッジ。
-func _mg_keepers(font: Font, area: Rect2, m: Dictionary) -> void:
+## 切断の罰（今夜だけ効く）。赤い板に、削られた量と削られた売上を書く。
+func _mg_penalty(font: Font, r: Rect2, fc: Dictionary, base: Dictionary) -> void:
+	Kit.slab(self, r, DS.DANGER, 8.0)
+	var ink := DS.on(DS.DANGER)
+	var pulse := 0.5 + 0.5 * sin(_t * 3.0)
+	Kit.slab_edge(self, r, Color(1, 1, 1, 0.25 + 0.3 * pulse), 8.0, 1.5)
+	draw_string(font, Vector2(r.position.x + 16.0, r.position.y + 23.0),
+			"▼ 昨夜の切断 ─ 客足 -40%", HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_BODY, ink)
+	var lost := int(base["gold"]) - int(fc["gold"])
+	var tail := "客 %d人 → %d人　売上 -%dG" % [int(base["customers"]), int(fc["customers"]), maxi(lost, 0)]
+	draw_string(font, Vector2(r.end.x - _tw(font, tail, DS.T_BODY) - 16.0, r.position.y + 23.0),
+			tail, HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_BODY, ink)
+
+
+## 店番6枚（3×2）。適性（1軸目）とシナジー＋今夜の純益差（2軸目）を同じ大きさで並べる。
+## 「最適」は宣言しない。適性最高／純益最高を別々に示し、判断はプレイヤーへ返す。
+func _mg_keepers(font: Font, area: Rect2, m: Dictionary, prof: Dictionary) -> void:
 	var ac := PURPLE
 	var ids: Array = KuroData.GIRL_ORDER
-	var n := ids.size()
+	var per := 3
 	var gap := 8.0
-	var cw := (area.size.x - gap * (n - 1)) / float(n)
-	var best := 0.0
+	var cw := (area.size.x - gap * (per - 1)) / float(per)
+	var ch := (area.size.y - gap) * 0.5
+	var cur := String(m["keeper"])
+	var now_p := int(prof.get(cur, 0))
+	var best_apt := 0.0
+	var best_p := -99999
 	for id in ids:
-		best = maxf(best, float(KuroData.GIRLS[id]["keeper_apt"]))
-	for i in n:
+		best_apt = maxf(best_apt, float(KuroData.GIRLS[id]["keeper_apt"]))
+		best_p = maxi(best_p, int(prof.get(id, 0)))
+	for i in ids.size():
 		var id: String = ids[i]
 		var g: Dictionary = KuroData.GIRLS[id]
-		var r := Rect2(area.position.x + i * (cw + gap), area.position.y, cw, area.size.y)
-		var active: bool = id == m["keeper"]
+		var r := Rect2(area.position.x + (i % per) * (cw + gap),
+				area.position.y + int(i / per) * (ch + gap), cw, ch)
+		var active := id == cur
 		var apt := float(g["keeper_apt"])
-		var is_best := apt >= best - 0.001
+		var apt_best := apt >= best_apt - 0.001
+		var p := int(prof.get(id, 0))
+		var p_best := p >= best_p
 		if active:
 			Kit.slab(self, Rect2(r.position.x + 5.0, r.position.y + 6.0, r.size.x - 5.0, r.size.y),
 					Color(0, 0, 0, 0.72), 8.0)
@@ -667,32 +861,66 @@ func _mg_keepers(font: Font, area: Rect2, m: Dictionary) -> void:
 			Kit.slab(self, r, Color(0.03, 0.028, 0.05, 0.92), 8.0)
 			Kit.slab_edge(self, r, Color(1, 1, 1, 0.16), 8.0, 1.0)
 		var fg := DS.on(ac) if active else DS.TEXT
-		var cx := r.position.x + cw * 0.5 + 2.0
-		var iy := r.position.y + (34.0 if is_best else 26.0)
+		var sub := Color(fg.r, fg.g, fg.b, 0.72)
+		# ── 上段：2つの「最高」を別々のバッジで（片方だけを正解にしない）
+		if apt_best:
+			var br := Rect2(r.position.x + 8.0, r.position.y + 3.0, 76.0, 22.0)
+			Kit.slab(self, br, DS.SUCCESS, 5.0)
+			_txt(font, Vector2(br.position.x + 8.0, br.position.y + 17.0), "適性最高", DS.T_MICRO, DS.INK)
+		if p_best:
+			var br2 := Rect2(r.end.x - 84.0, r.position.y + 3.0, 76.0, 22.0)
+			Kit.slab(self, br2, GOLD, 5.0)
+			_txt(font, Vector2(br2.position.x + 8.0, br2.position.y + 17.0), "純益最高", DS.T_MICRO, DS.INK)
+		# ── 顔・名前
 		_draw_icon("res://assets/generated/face/%s/neutral_open.png" % id,
-				Rect2(cx - 22.0, iy - 22.0, 44.0, 44.0),
+				Rect2(r.position.x + 10.0, r.position.y + 30.0, 44.0, 44.0),
 				Color(1, 1, 1, 1.0 if active else 0.85), true)
-		var nm := String(g["name"])
-		_txt(font, Vector2(cx - _tw(font, nm, DS.T_BODY) * 0.5, r.position.y + 82.0), nm, DS.T_BODY, fg)
-		# 適性：最良は SUCCESS＋24px、他は本文
-		var vs := DS.T_SUB if is_best else DS.T_BODY
-		var vc := fg
-		if is_best:
-			vc = DS.on(ac) if active else DS.SUCCESS
+		_txt(font, Vector2(r.position.x + 62.0, r.position.y + 52.0), String(g["name"]), DS.T_BODY, fg)
+		# ── 今夜の純益（この子にしたらいくらになるか／今の子との差）
+		var dv := "%dG" % p if active else "%s%dG" % ["+" if p - now_p >= 0 else "-", absi(p - now_p)]
+		var dc := fg if active else (DS.SUCCESS if p > now_p else (DS.DANGER if p < now_p else sub))
+		_txt(font, Vector2(r.end.x - _tw(font, dv, DS.T_BODY) - 10.0, r.position.y + 52.0), dv, DS.T_BODY, dc)
+		# ── 適性（1軸目）
+		_txt(font, Vector2(r.position.x + 62.0, r.position.y + 78.0), "適性", DS.T_MICRO, sub)
 		var vt := "%d%%" % int(apt * 100.0)
-		_txt(font, Vector2(cx - _tw(font, vt, vs) * 0.5, r.position.y + 108.0), vt, vs, vc)
-		# 適性の横バー（数字だけでなく量でも比べられるように）
-		Kit.bar(self, Rect2(r.position.x + 10.0, r.position.y + 114.0, cw - 20.0, 6.0),
+		var vc := (DS.on(ac) if active else DS.SUCCESS) if apt_best else fg
+		_txt(font, Vector2(r.position.x + 106.0, r.position.y + 78.0), vt,
+				DS.T_SUB if apt_best else DS.T_BODY, vc)
+		Kit.bar(self, Rect2(r.position.x + 10.0, r.position.y + 86.0, cw - 20.0, 6.0),
 				clampf((apt - 0.6) / 0.9, 0.05, 1.0),
-				(DS.INK if active else DS.SUCCESS) if is_best else
+				(DS.INK if active else DS.SUCCESS) if apt_best else
 				(Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.8) if active else Color(ac.r, ac.g, ac.b, 0.9)))
-		# 最良適性は帯で宣言する（バッジは小さすぎて読めない）
-		if is_best:
-			var br := Rect2(r.position.x + 1.0, r.position.y + 1.0, cw - 2.0, 22.0)
-			Kit.slab(self, br, DS.SUCCESS, 6.0)
-			_txt(font, Vector2(br.position.x + (br.size.x - _tw(font, "最適", DS.T_MICRO)) * 0.5 + 3.0,
-					br.position.y + 17.0), "最適", DS.T_MICRO, DS.INK)
+		# ── シナジー（2軸目）：全員ぶんを同じ大きさで並べる
+		_txt(font, Vector2(r.position.x + 10.0, r.position.y + 108.0), String(g["synergy_desc"]),
+				DS.T_MICRO, sub)
 		_hit(r, "keeper:" + id)
+
+
+## 直近の仕込み操作と、それが今夜の純益をいくら動かしたか。
+## 何も触っていない時は、選んでいる店番のシナジーを出す（帯を空けない）。
+func _mg_change(font: Font, r: Rect2, m: Dictionary) -> void:
+	var ac := PURPLE
+	var fresh := _chg != "" and (_t - _chg_t) < 4.0
+	var col := Color(ac.r, ac.g, ac.b, 0.92)
+	if fresh and absf(_chg_d) >= 1.0:
+		col = DS.SUCCESS if _chg_d > 0.0 else DS.DANGER
+	Kit.slab(self, r, col, 8.0)
+	var ink := DS.on(col)
+	if fresh:
+		var k := clampf(1.0 - (_t - _chg_t) / 4.0, 0.0, 1.0)
+		Kit.slab_edge(self, r, Color(1, 1, 1, 0.35 * k), 8.0, 1.5)
+		draw_string(font, Vector2(r.position.x + 20.0, r.position.y + 23.0), _chg,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_BODY, ink)
+		var d := "純益 %s%dG" % ["+" if _chg_d >= 0.0 else "-", int(absf(_chg_d))]
+		if absf(_chg_d) < 1.0:
+			d = "純益 変わらず"
+		draw_string(font, Vector2(r.end.x - _tw(font, d, DS.T_BODY) - 20.0, r.position.y + 23.0), d,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_BODY, ink)
+	else:
+		var kg: Dictionary = KuroData.GIRLS[m["keeper"]]
+		draw_string(font, Vector2(r.position.x + 20.0, r.position.y + 23.0),
+				"%s ／ %s ＝ %s" % [String(kg["name"]), String(kg["synergy"]), String(kg["synergy_desc"])],
+				HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_BODY, ink)
 
 
 ## 全幅の2択セグメント（選択側だけが面の反転）。
@@ -804,7 +1032,9 @@ func _mg_deck(font: Font, area: Rect2, s: Dictionary, menu: Array, taste: String
 
 
 ## 今夜の三行精算（見込み）。この画面の結論を、画面最大の文字で置く。
-func _mg_settle(font: Font, r: Rect2, fc: Dictionary, door_open: bool) -> void:
+## すべての数値は Kit.num で追いかける＝朝の操作が「いくら動いたか」で返ってくる。
+func _mg_settle(font: Font, r: Rect2, fc: Dictionary, base: Dictionary, pen: bool,
+		door_open: bool, pn: Dictionary) -> void:
 	var ac := PURPLE
 	var served := int(fc["served"])
 	var revenue := int(fc["gold"])
@@ -825,41 +1055,62 @@ func _mg_settle(font: Font, r: Rect2, fc: Dictionary, door_open: bool) -> void:
 	Kit.slab(self, body, Color(0.03, 0.028, 0.05, 0.92), 10.0)
 	Kit.hatch(self, body.grow(-6.0), Color(ac.r, ac.g, ac.b, 0.05), 22.0, 7.0)
 	var x := body.position.x + 24.0
-	# 一行目：客と皿
-	var y1 := body.position.y + 44.0
+	# 一行目：客と皿（客は罰を受けていれば赤＋元の値）
+	var y1 := body.position.y + 36.0
+	# 明細の数字はカウントと拡大だけ（フロートは結論＝純益に集約し、行を汚さない）
 	_txt(font, Vector2(x, y1), "客", DS.T_MICRO, DS.TEXT_2)
-	_txt(font, Vector2(x + 28.0, y1), "%d" % int(fc["customers"]), DS.T_SUB, DS.PAPER)
-	_txt(font, Vector2(x + 28.0 + _tw(font, "%d" % int(fc["customers"]), DS.T_SUB) + 4.0, y1), "人", DS.T_MICRO, DS.TEXT_2)
+	var cwid := _num(font, Vector2(x + 28.0, y1), "st_cust", float(int(fc["customers"])), DS.T_SUB,
+			DS.DANGER if pen else DS.PAPER, DS.SUCCESS, DS.DANGER, "", false)
+	_txt(font, Vector2(x + 32.0 + cwid, y1), "人", DS.T_MICRO, DS.TEXT_2)
+	if pen:
+		_txt(font, Vector2(x + 52.0 + cwid, y1), "▼%d" % maxi(int(base["customers"]) - int(fc["customers"]), 0),
+				DS.T_MICRO, DS.DANGER)
 	var x2 := x + 148.0
 	_txt(font, Vector2(x2, y1), "出す皿", DS.T_MICRO, DS.TEXT_2)
-	_txt(font, Vector2(x2 + 76.0, y1), "%d" % served, DS.T_SUB, DS.PAPER)
-	_txt(font, Vector2(x2 + 76.0 + _tw(font, "%d" % served, DS.T_SUB) + 4.0, y1), "皿", DS.T_MICRO, DS.TEXT_2)
+	var swid := _num(font, Vector2(x2 + 76.0, y1), "st_served", float(served), DS.T_SUB, DS.PAPER,
+			DS.SUCCESS, DS.DANGER, "", false)
+	_txt(font, Vector2(x2 + 80.0 + swid, y1), "皿", DS.T_MICRO, DS.TEXT_2)
 	var x3 := body.end.x - 148.0
 	_txt(font, Vector2(x3, y1), "仕込み", DS.T_MICRO, DS.TEXT_2)
-	_txt(font, Vector2(x3 + 76.0, y1), "%d" % int(fc["prep"]), DS.T_SUB, DS.TEXT)
+	_num(font, Vector2(x3 + 76.0, y1), "st_prep", float(int(fc["prep"])), DS.T_SUB, DS.TEXT,
+			DS.SUCCESS, DS.DANGER, "", false)
 	# 二行目：売上と原価
-	var y2 := y1 + 40.0
+	var y2 := y1 + 36.0
 	_txt(font, Vector2(x, y2), "売上", DS.T_MICRO, DS.TEXT_2)
-	_txt(font, Vector2(x + 52.0, y2), "+%dG" % revenue, DS.T_SUB, DS.PAPER)
+	_txt(font, Vector2(x + 52.0, y2), "+", DS.T_MICRO, DS.TEXT_2)
+	var rw := _num(font, Vector2(x + 66.0, y2), "st_rev", float(revenue), DS.T_SUB, DS.PAPER,
+			GOLD, DS.DANGER, "G", false)
+	_txt(font, Vector2(x + 68.0 + rw, y2), "G", DS.T_MICRO, DS.TEXT_2)
 	_txt(font, Vector2(x2, y2), "原価", DS.T_MICRO, DS.TEXT_2)
-	_txt(font, Vector2(x2 + 52.0, y2), "-%dG" % cost, DS.T_SUB, DS.DANGER)
+	_txt(font, Vector2(x2 + 52.0, y2), "-", DS.T_MICRO, DS.DANGER)
+	var cw2 := _num(font, Vector2(x2 + 66.0, y2), "st_cost", float(cost), DS.T_SUB, DS.DANGER,
+			DS.DANGER, DS.SUCCESS, "G", false)
+	_txt(font, Vector2(x2 + 68.0 + cw2, y2), "G", DS.T_MICRO, DS.DANGER)
 	_txt(font, Vector2(x3, y2), "単価", DS.T_MICRO, DS.TEXT_2)
-	_txt(font, Vector2(x3 + 52.0, y2), "%dG" % (int(revenue / float(maxi(served, 1)))), DS.T_SUB, DS.TEXT)
-	# 三行目：純益（面の反転・画面最大）
+	var uw := _num(font, Vector2(x3 + 66.0, y2), "st_unit", float(int(revenue / float(maxi(served, 1)))),
+			DS.T_SUB, DS.TEXT, GOLD, DS.DANGER, "G", false)
+	_txt(font, Vector2(x3 + 68.0 + uw, y2), "G", DS.T_MICRO, DS.TEXT_2)
+	# 三行目：純益（面の反転・画面最大）。旧値→新値をカウントし、差分を上へ流す。
 	var pcol := ac if profit >= 0 else DS.DANGER
-	var slab := Rect2(body.position.x + 8.0, y2 + 22.0, body.size.x - 16.0, 88.0)
+	var slab := Rect2(body.position.x + 8.0, y2 + 20.0, body.size.x - 16.0, 76.0)
 	Kit.slab(self, Rect2(slab.position.x + 7.0, slab.position.y + 7.0, slab.size.x - 7.0, slab.size.y),
 			Color(0, 0, 0, 0.75), 12.0)
 	Kit.slab(self, slab, pcol, 12.0)
 	var pink := DS.on(pcol)
-	_txt(font, Vector2(slab.position.x + 26.0, slab.position.y + 42.0), "純益", DS.T_SUB, pink)
-	_txt(font, Vector2(slab.position.x + 26.0, slab.position.y + 70.0),
+	_txt(font, Vector2(slab.position.x + 26.0, slab.position.y + 34.0), "純益", DS.T_SUB, pink)
+	_txt(font, Vector2(slab.position.x + 26.0, slab.position.y + 60.0),
 			"浮上したら手元に残る", DS.T_MICRO, Color(pink.r, pink.g, pink.b, 0.8))
-	var pv := "%s%dG" % ["+" if profit >= 0 else "-", absi(profit)]
-	_txt(font, Vector2(slab.end.x - _tw(font, pv, DS.T_DISPLAY) - 32.0, slab.position.y + 62.0),
-			pv, DS.T_DISPLAY, pink)
+	var shown_p := int(round(float(pn["v"])))
+	var pv := "%s%dG" % ["+" if shown_p >= 0 else "-", absi(shown_p)]
+	var ppos := Vector2(slab.end.x - _tw(font, pv, DS.T_DISPLAY) - 32.0, slab.position.y + 56.0)
+	Kit.num_draw(self, font, ppos, pv, DS.T_DISPLAY, pink, float(pn["pop"]))
+	var pd := float(pn["d"])
+	if absf(pd) >= 1.0:
+		Kit.float_add(_floats, ppos + Vector2(0.0, -46.0),
+				"%s%dG" % ["+" if pd > 0.0 else "-", int(absf(pd))],
+				DS.SUCCESS if pd > 0.0 else DS.DANGER, _t)
 	# 補足2行（素材切れ・扉の方針）
-	var ny := slab.end.y + 26.0
+	var ny := slab.end.y + 24.0
 	var short_n := int(fc["short"])
 	var out: Array = fc["out"]
 	var names: Array = []
@@ -887,10 +1138,18 @@ func _draw_workshop(font: Font, sz: Vector2) -> void:
 
 	# 資源とビュー切替
 	_panel(Rect2(12, y, sz.x - 24, 58), Color(0.045, 0.06, 0.08, 0.96), Color(CYAN.r, CYAN.g, CYAN.b, 0.35), 10)
-	_txt(font, Vector2(26, y + 25), "倉庫 %d/%d   バッグ %d/%d   廃材 %d" % [
-			(s["storage"] as Array).size(), KuroData.STORAGE_MAX,
-			(s["inventory"] as Array).size(), KuroData.BAG_MAX,
-			int(s["scrap"])], 15, CYAN)
+	# 倉庫・バッグ・廃材も生きた数値（分解した瞬間に廃材が跳ねる）
+	var wx := 26.0
+	for e in [["倉庫", "wk_store", float((s["storage"] as Array).size()), "/%d" % KuroData.STORAGE_MAX],
+			["バッグ", "wk_bag", float((s["inventory"] as Array).size()), "/%d" % KuroData.BAG_MAX],
+			["廃材", "wk_scrap", float(int(s["scrap"])), ""]]:
+		_txt(font, Vector2(wx, y + 25), String(e[0]), DS.T_MICRO, TEXT_DIM)
+		wx += _tw(font, String(e[0]), DS.T_MICRO) + 6.0
+		wx += _num(font, Vector2(wx, y + 25), String(e[1]), float(e[2]), DS.T_BODY, CYAN)
+		if String(e[3]) != "":
+			_txt(font, Vector2(wx, y + 25), String(e[3]), DS.T_MICRO, TEXT_DIM)
+			wx += _tw(font, String(e[3]), DS.T_MICRO)
+		wx += 20.0
 	_btn(font, Rect2(sz.x - 246, y + 12, 108, 34), "倉庫", CYAN, "_work:storage", _work_view != "storage", 14)
 	_btn(font, Rect2(sz.x - 130, y + 12, 108, 34), "バッグ", GOLD, "_work:bag", _work_view != "bag", 14)
 	y += 72
@@ -1012,7 +1271,17 @@ func _draw_renov(font: Font, sz: Vector2) -> void:
 	var oy := y + 3 * cell + 30.0   # y=-3 が一番上に来るよう原点を下げる
 	var map_bottom := oy + 3 * cell + 40.0
 
-	# 接続線（prev → node）
+	# 解放の瞬間を捕まえる（一覧が書き換わるだけ、にしない）
+	var first_pass := not _own_renov.has("__seen")
+	for nid in nodes:
+		var had: bool = bool(_own_renov.get(nid, false))
+		var has: bool = nid in s["renov"]
+		_own_renov[nid] = has
+		if has and not had and not first_pass:
+			_burst[nid] = _t
+	_own_renov["__seen"] = true
+
+	# 接続線（prev → node）。解放直後は前提ノードから光が流れて「線が繋がる」。
 	for nid in nodes:
 		var node: Dictionary = nodes[nid]
 		var np: Array = node["pos"]
@@ -1021,7 +1290,10 @@ func _draw_renov(font: Font, sz: Vector2) -> void:
 			var pp: Array = nodes[p]["pos"]
 			var fr := Vector2(ox + float(pp[0]) * cell, oy + float(pp[1]) * cell)
 			var owned_link: bool = (nid in s["renov"]) and (p in s["renov"])
-			draw_line(fr, to, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.55 if owned_link else 0.18), 2.0)
+			var k := -1.0
+			if _burst.has(nid) and owned_link:
+				k = (_t - float(_burst[nid])) / Kit.BURST_LIFE
+			Kit.wire(self, fr, to, PURPLE, owned_link, k)
 
 	# ノード
 	var rad := 30.0
@@ -1045,17 +1317,37 @@ func _draw_renov(font: Font, sz: Vector2) -> void:
 		if not is_owned and int(node["cost"]) > 0:
 			var cs := "%d" % int(node["cost"])
 			_txt(font, Vector2(c.x - _tw(font, cs, 11) * 0.5, c.y + 19), cs, 11, GOLD if can else TEXT_DIM)
+		# 今買えるノードは呼吸する（押せる場所が黙っていない）
+		if can:
+			Kit.spot(self, c, rad * 1.9, GOLD, 0.10 + 0.10 * (0.5 + 0.5 * sin(_t * 3.0)))
+		# 解放の瞬間：光の輪が拡がる
+		if _burst.has(nid):
+			var bk := (_t - float(_burst[nid])) / Kit.BURST_LIFE
+			if bk >= 1.0:
+				_burst.erase(nid)
+			else:
+				Kit.burst(self, c, rad, GREEN, bk)
 		if avail:
 			_hit(r, "renov:" + nid)
 
 	# 凡例＋現在の効果サマリ
 	var ly := map_bottom
 	_txt(font, Vector2(16, ly), "緑=解放済 / 金=今買える / 紫=前提達成 / 灰=未開放", 12, TEXT_DIM)
-	ly += 22
-	var sm := "効果合計  攻+%d%% ・ HP+%d%% ・ 金+%d%% ・ 看板+%d" % [
-		int(sim.renov_bonus("atk") * 100), int(sim.renov_bonus("hp") * 100),
-		int(sim.renov_bonus("gold") * 100), int(sim.renov_bonus("sign"))]
-	_txt(font, Vector2(16, ly), sm, 13, CYAN)
+	ly += 24
+	# 効果合計も生きた数値にする（解放したら、ここが跳ねて差分が流れる）
+	var lx := 16.0
+	_txt(font, Vector2(lx, ly), "効果合計", DS.T_MICRO, TEXT_DIM)
+	lx += _tw(font, "効果合計", DS.T_MICRO) + 16.0
+	for e in [["攻", "atk", 100.0, "%"], ["HP", "hp", 100.0, "%"], ["金", "gold", 100.0, "%"],
+			["看板", "sign", 1.0, ""]]:
+		_txt(font, Vector2(lx, ly), String(e[0]), DS.T_MICRO, TEXT_DIM)
+		lx += _tw(font, String(e[0]), DS.T_MICRO) + 4.0
+		lx += _num(font, Vector2(lx, ly), "renov_" + String(e[1]),
+				float(sim.renov_bonus(String(e[1]))) * float(e[2]), DS.T_BODY, CYAN)
+		if String(e[3]) != "":
+			_txt(font, Vector2(lx, ly), String(e[3]), DS.T_MICRO, TEXT_DIM)
+			lx += _tw(font, String(e[3]), DS.T_MICRO)
+		lx += 18.0
 
 
 # ── フッター・トースト ────────────────────────────────────────────────────────

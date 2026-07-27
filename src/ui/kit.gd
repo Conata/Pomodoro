@@ -353,6 +353,174 @@ static func ripples(ci: CanvasItem, list: Array, now: float) -> void:
 		i += 1
 
 
+# ── 数値の生き物化（カウントアップ／拡大／差分フロート）────────────────────
+# クッキークリッカーの原則：状態が動いたら、画面が必ず何かを言う。
+# 「変化の検出」をここへ集約する。各オーバーレイは今の値を渡すだけでよく、
+# どこかの描画点を書き忘れない限り、黙って数字が入れ替わる箇所は生まれない。
+
+const NUM_SNAP := 0.5      # これ以下の差は吸着（端数を残さない）
+const POP_LIFE := 0.30     # 拡大の寿命（秒）
+const FLOAT_LIFE := 1.05   # 差分フロートの寿命（秒）
+const FLY_LIFE := 0.55     # 飛ぶ数値（支払い/収穫）の寿命（秒）
+const PRESS_LIFE := 0.22   # 押下フラッシュの寿命（秒）
+const BURST_LIFE := 0.85   # 解放バーストの寿命（秒）
+
+## 現在のキャンバス平行移動。set_xf() で設定すると num_draw が復元できる
+## （拡大描画のために transform を一時的に奪うので、元へ戻す先を覚えておく）。
+static var xf := Vector2.ZERO
+
+
+static func set_xf(ci: CanvasItem, ofs: Vector2) -> void:
+	xf = ofs
+	ci.draw_set_transform(ofs, 0.0, Vector2.ONE)
+
+
+## 値を追いかける台帳。store はオーバーレイが持つ Dictionary。
+## 返り値 {"v": 表示値（カウントアップ中）, "pop": 0..1 拡大量, "d": 変化した瞬間の差分}。
+## 初回は目標値へ吸着（開いた瞬間に0から数え上げない）。
+static func num(store: Dictionary, key: String, target: float, now: float) -> Dictionary:
+	if not store.has(key):
+		store[key] = {"v": target, "g": target, "pop": 0.0, "t": now}
+		return {"v": target, "pop": 0.0, "d": 0.0}
+	var e: Dictionary = store[key]
+	var dt := clampf(now - float(e["t"]), 0.0, 0.1)
+	e["t"] = now
+	var d := 0.0
+	if absf(target - float(e["g"])) > 0.0001:
+		d = target - float(e["g"])
+		e["g"] = target
+		e["pop"] = 1.0
+	var v := float(e["v"])
+	var g := float(e["g"])
+	v += (g - v) * clampf(dt * 9.0, 0.0, 1.0)
+	if absf(g - v) < NUM_SNAP:
+		v = g
+	e["v"] = v
+	e["pop"] = maxf(float(e["pop"]) - dt / POP_LIFE, 0.0)
+	return {"v": v, "pop": float(e["pop"]), "d": d}
+
+
+## 数値を「一瞬だけ拡大して」描く。size は DS の段（16/24/32/48）から選ぶこと。
+## 拡大は transform で行う＝字の段数を増やさずに、変化した事実だけを見せる。
+static func num_draw(ci: CanvasItem, font: Font, pos: Vector2, s: String, size: int, col: Color,
+		pop := 0.0) -> void:
+	var at := pos
+	if pop > 0.001:
+		var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+		var c := Vector2(pos.x + w * 0.5, pos.y - size * 0.34)
+		var sc := 1.0 + 0.45 * pop * pop
+		ci.draw_set_transform(xf + c, 0.0, Vector2(sc, sc))
+		at = pos - c
+	ci.draw_string_outline(font, at, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, 4, Color(0, 0, 0, 0.85 * col.a))
+	ci.draw_string(font, at, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
+	if pop > 0.001:
+		ci.draw_set_transform(xf, 0.0, Vector2.ONE)
+
+
+## 取り消し線つきの旧値。罰の前の数字を「消された事実」として残す。
+## line は取り消し線の色（赤い面の上では地に沈むので、呼び出し側が指定できる）。
+static func struck(ci: CanvasItem, font: Font, pos: Vector2, s: String, size: int, col: Color,
+		line := DS.DANGER, outline := true) -> float:
+	var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	if outline:
+		ci.draw_string_outline(font, pos, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, 3, Color(0, 0, 0, 0.8))
+	ci.draw_string(font, pos, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
+	ci.draw_line(Vector2(pos.x - 2.0, pos.y - size * 0.3), Vector2(pos.x + w + 2.0, pos.y - size * 0.3),
+			Color(line.r, line.g, line.b, 0.95), 2.0)
+	return w
+
+
+## 差分のフロート（+120G が上へ流れて消える）。
+static func float_add(list: Array, pos: Vector2, text: String, col: Color, now: float) -> void:
+	list.append({"p": pos, "s": text, "c": col, "t0": now})
+	while list.size() > 14:
+		list.pop_front()
+
+
+static func floats(ci: CanvasItem, font: Font, list: Array, now: float) -> void:
+	var i := 0
+	while i < list.size():
+		var e: Dictionary = list[i]
+		var k := (now - float(e["t0"])) / FLOAT_LIFE
+		if k >= 1.0:
+			list.remove_at(i)
+			continue
+		var ez := 1.0 - pow(1.0 - k, 2.2)
+		var p: Vector2 = (e["p"] as Vector2) + Vector2(0.0, -54.0 * ez)
+		var a := clampf((1.0 - k) * 1.8, 0.0, 1.0)
+		var c: Color = e["c"]
+		num_draw(ci, font, p, String(e["s"]), DS.T_BODY, Color(c.r, c.g, c.b, a),
+				clampf(1.0 - k * 6.0, 0.0, 1.0))
+		i += 1
+
+
+## 飛ぶ数値。購入＝所持金から実際に飛んでいく／収穫＝手元へ飛んでくる。
+static func fly_add(list: Array, from: Vector2, to: Vector2, text: String, col: Color, now: float) -> void:
+	list.append({"a": from, "b": to, "s": text, "c": col, "t0": now})
+	while list.size() > 10:
+		list.pop_front()
+
+
+static func flies(ci: CanvasItem, font: Font, list: Array, now: float) -> void:
+	var i := 0
+	while i < list.size():
+		var e: Dictionary = list[i]
+		var k := (now - float(e["t0"])) / FLY_LIFE
+		if k >= 1.0:
+			list.remove_at(i)
+			continue
+		var a: Vector2 = e["a"]
+		var b: Vector2 = e["b"]
+		var ctrl := (a + b) * 0.5 + Vector2(0.0, -120.0)
+		var u := k * k * (3.0 - 2.0 * k)
+		var p := a.lerp(ctrl, u).lerp(ctrl.lerp(b, u), u)
+		var c: Color = e["c"]
+		var al := clampf((1.0 - k) * 2.4, 0.0, 1.0)
+		ci.draw_texture_rect(_glow(), Rect2(p - Vector2(36, 36), Vector2(72, 72)), false,
+				Color(c.r, c.g, c.b, 0.40 * al))
+		var s := String(e["s"])
+		var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_BODY).x
+		num_draw(ci, font, p - Vector2(w * 0.5, -6.0), s, DS.T_BODY, Color(c.r, c.g, c.b, al))
+		i += 1
+
+
+## 押下フラッシュ。押せる場所は押した瞬間に必ず応える（3状態目）。
+static func press(ci: CanvasItem, rect: Rect2, col: Color, k: float) -> void:
+	if k <= 0.0:
+		return
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1, 1, 1, 0.18 * k)
+	sb.set_corner_radius_all(8)
+	sb.border_color = Color(col.r, col.g, col.b, 0.95 * k)
+	sb.set_border_width_all(2)
+	ci.draw_style_box(sb, rect.grow(3.0 * k))
+
+
+## 解放の瞬間。光の輪が拡がり、放射が飛ぶ（改装ノード・購入の着弾）。
+static func burst(ci: CanvasItem, center: Vector2, radius: float, col: Color, k: float) -> void:
+	if k <= 0.0 or k >= 1.0:
+		return
+	var e := 1.0 - pow(1.0 - k, 2.0)
+	var a := 1.0 - k
+	ci.draw_texture_rect(_glow(), Rect2(center - Vector2(radius * 2.6, radius * 2.6),
+			Vector2(radius * 5.2, radius * 5.2)), false, Color(col.r, col.g, col.b, 0.55 * a))
+	ci.draw_arc(center, radius * (0.7 + 2.2 * e), 0.0, TAU, 42, Color(col.r, col.g, col.b, a), 3.0 * a + 0.5)
+	for i in 6:
+		var ang := TAU * i / 6.0 + e * 1.2
+		var d := Vector2(cos(ang), sin(ang))
+		ci.draw_line(center + d * radius * (1.1 + 1.3 * e), center + d * radius * (1.5 + 2.0 * e),
+				Color(col.r, col.g, col.b, a), 2.0)
+
+
+## 線を「繋がる」ように描く（改装ツリーの解放直後：光が前提ノードから流れてくる）。
+static func wire(ci: CanvasItem, a: Vector2, b: Vector2, col: Color, lit: bool, k := -1.0) -> void:
+	ci.draw_line(a, b, Color(col.r, col.g, col.b, 0.55 if lit else 0.18), 2.0)
+	if k >= 0.0 and k < 1.0:
+		var u := clampf(k * 1.4, 0.0, 1.0)
+		ci.draw_line(a, a.lerp(b, u), Color(col.r, col.g, col.b, 1.0 - k * 0.5), 4.0)
+		ci.draw_circle(a.lerp(b, u), 5.0 * (1.0 - k * 0.5), Color(col.r, col.g, col.b, 1.0 - k))
+
+
 ## HP/進行バー：内側の溝＋グラデ入り本体＋先端の粒。
 static func bar(ci: CanvasItem, rect: Rect2, frac: float, col: Color) -> void:
 	var bgsb := StyleBoxFlat.new()
