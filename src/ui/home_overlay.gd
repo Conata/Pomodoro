@@ -21,7 +21,7 @@ const HOME_CAST := ["mil", "yuzuki", "muu", "kiriko", "doctor", "nurse"]
 const BANTER_INTERVAL := 6.0   # 秒：次のセリフまでのインターバル
 const EXCHANGE_STEP  := 3.2    # 秒：掛け合いの1行表示時間
 
-const STRIP_H := 168.0   # 最下部 HD-2D フィールド帯の高さ（FieldStrip と一致させる）
+const STRIP_H := 60.0   # 最下部 HD-2D フィールド帯の高さ（FieldStrip と一致させる）
 const FOOTER_H := 58.0   # 最下部フッターナビバーの高さ（旧版のボトムタブを踏襲）
 
 # 各主要機能へのフッターナビ（旧 main_legacy の 店/メンバー/工房/市場/経営 を踏襲）。
@@ -200,23 +200,12 @@ func _draw() -> void:
 	if fmod(_t, 1.0) < 0.6:
 		_txt(font, Vector2(sz.x - 44, vy0 + vh - 14), "▼", 14, PINK)
 
-	# ===== 最下部：HD-2D フィールド帯の枠＋コンパス =====
+	# ===== 最下部：フィールドへの導線 =====
+	# 以前はここに 168px の HD-2D フィールド帯（FieldStrip）を敷いていたが、
+	# 実機では一度も合成されず「黒い帯」のままだったので高さを詰めた。
+	# フィールドへは店先の探索ポータル（右）から入る。
 	var fy := sz.y - STRIP_H
-	# 上辺のネオンライン
 	draw_rect(Rect2(0, fy, sz.x, 2), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.6))
-	# フィールドのタップ領域はフッターと重ならないよう上側だけにする
-	_hit(Rect2(0, fy, sz.x, STRIP_H - FOOTER_H), "field")
-	# 左：味方／右：敵 のラベル
-	_txt(font, Vector2(18, fy + 22), "PARTY", 13, CYAN)
-	var ew := font.get_string_size("ENEMY", HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x
-	_txt(font, Vector2(sz.x - 18 - ew, fy + 22), "ENEMY", 13, Color(1.0, 0.4, 0.85))
-	# コンパス（中央下・フッターの上）
-	var cc := Vector2(sz.x * 0.5, sz.y - 16 - FOOTER_H)
-	draw_arc(cc, 14, 0, TAU, 28, Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.7), 2.0)
-	draw_line(cc + Vector2(0, -10), cc + Vector2(0, 10), Color(PINK.r, PINK.g, PINK.b, 0.8), 2.0)
-	# 進行バー
-	_panel(Rect2(sz.x * 0.5 + 26, sz.y - 22 - FOOTER_H, sz.x * 0.5 - 50, 8), Color(0, 0, 0, 0.5), Color(1, 1, 1, 0.15), 3, 1)
-	draw_rect(Rect2(sz.x * 0.5 + 26, sz.y - 22 - FOOTER_H, (sz.x * 0.5 - 50) * 0.3, 8), PURPLE)
 
 	# ===== 最下部：各主要機能へのフッターナビ =====
 	_footer(font, sz)

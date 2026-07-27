@@ -40,8 +40,9 @@ const PANEL_BG_ART := {
 	"map": "res://assets/generated/scene/dungeon.png",
 	"member": "res://assets/generated/scene/restaurant.png",
 	"market": "res://assets/generated/scene/street.png",
-	"management": "res://assets/generated/scene/shop_interior.png",
-	"renov": "res://assets/generated/scene/shop_interior.png",
+	# management / renov は背景アートを持たない。shop_interior.png は看板と垂れ幕に
+	# 実在しない漢字（「秸乄たっリ」等）が描かれており、日本語話者には一目で偽物と分かる。
+	# 素材を等倍で描き直すまでは無地の地の方が良い（この2画面はUIで埋まっている）。
 	"workshop": "res://assets/generated/bg/interior.png",
 }
 const PANEL_ACCENT := {

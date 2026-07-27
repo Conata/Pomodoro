@@ -114,11 +114,13 @@ func _ready() -> void:
 		_cam_dist_target = 11.5
 	elif stage_theme == "strip":
 		# 横帯：パーティ左(-X)・敵右(+X)。中央に間合いを取り対峙感を出す
-		_player_pos = Vector3(-4.6, 0, 0.4)  # 主人公はパーティ左端
-		_cam_target_override = Vector3(0.2, 0.9, 0.2)
-		_cam_height = 2.8
-		_cam_dist = 5.6
-		_cam_dist_target = 5.6
+		# 横帯は 720x110 前後の極端な横長。カメラを低く寄せないと、画の大半が
+		# 足場の上の空間になり「黒い帯」に見える。キャラの胸から下で切る構図にする。
+		_player_pos = Vector3(-3.4, 0, 0.4)  # 主人公はパーティ左端
+		_cam_target_override = Vector3(0.4, 1.15, 0.3)
+		_cam_height = 1.5
+		_cam_dist = 7.2
+		_cam_dist_target = 7.2
 	_build_viewport()
 	_build_world()
 	_build_player()
@@ -509,8 +511,8 @@ func _add_lantern(pos: Vector3, col: Color) -> void:
 	# 芯：小さく強い白。夜の画で一番明るい点になる
 	var core := MeshInstance3D.new()
 	var sm := SphereMesh.new()
-	sm.radius = 0.075
-	sm.height = 0.15
+	sm.radius = 0.05
+	sm.height = 0.10
 	sm.radial_segments = 8
 	sm.rings = 4
 	core.mesh = sm
@@ -519,7 +521,7 @@ func _add_lantern(pos: Vector3, col: Color) -> void:
 	cmat.albedo_color = Color(0.3, 0.15, 0.12)
 	cmat.emission_enabled = true
 	cmat.emission = Color(1.0, 0.93, 0.86)
-	cmat.emission_energy_multiplier = 3.2
+	cmat.emission_energy_multiplier = 6.0
 	core.material_override = cmat
 	core.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_sub.add_child(core)
@@ -778,7 +780,7 @@ func _build_env_home() -> void:
 	env.background_color = Color(0.03, 0.035, 0.06)  # 夜
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.34, 0.28, 0.24)  # 暖色寄りの環境光（店内）
-	env.ambient_light_energy = 0.25
+	env.ambient_light_energy = 0.10
 	env.glow_enabled = true
 	# HDR 描画（use_hdr_2d）前提。閾値1.0＝「1を超えた分だけ」滲ませ、加算合成で色を残す。
 	# SOFTLIGHT（既定）はハローを白へ寄せるのでネオンの色が死ぬ。
@@ -789,7 +791,7 @@ func _build_env_home() -> void:
 	env.set("glow_levels/4", true)   # 小さい光芯
 	env.set("glow_levels/5", true)   # 広い色ハロー
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_white = 3.0   # 既定1.0だとフィルミックのロールオフが効かず1.0超が即白になる
+	env.tonemap_white = 1.8   # 3.0 だとロールオフが強すぎて提灯の芯まで灰色に潰れる
 	# 空気遠近：奥のネオン街を沈ませて主役（店先）を前に出す
 	env.fog_enabled = true
 	env.fog_light_color = Color(0.05, 0.06, 0.13)
@@ -799,7 +801,7 @@ func _build_env_home() -> void:
 	# 夜の露出：全体を少し締め、ネオンの彩度を取り戻す
 	env.adjustment_enabled = true
 	env.adjustment_contrast = 1.18
-	env.adjustment_brightness = 0.90
+	env.adjustment_brightness = 1.0   # 暗さは環境光で作る。ポストで落とすと階調ごと失う
 	env.adjustment_saturation = 1.30
 	var we := WorldEnvironment.new()
 	we.environment = env
@@ -807,11 +809,15 @@ func _build_env_home() -> void:
 
 	# 店内を照らす暖色の弱いキーライト（影あり）
 	var key := DirectionalLight3D.new()
-	key.rotation_degrees = Vector3(-50.0, -20.0, 0.0)
-	key.light_energy = 0.7
+	# カメラは +Z から見るので、左上手前から差す光にすると影が手前の床へ伸びて読める
+	key.rotation_degrees = Vector3(-38.0, 35.0, 0.0)
+	key.light_energy = 1.25
 	key.light_color = Color(1.0, 0.82, 0.6)
 	key.shadow_enabled = true
-	key.shadow_blur = 1.5
+	key.shadow_blur = 0.6
+	key.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	key.directional_shadow_max_distance = 30.0
+	key.shadow_normal_bias = 0.3
 	_sub.add_child(key)
 
 
@@ -1057,6 +1063,10 @@ func _build_props_strip() -> void:
 	# 敵（右に横並び・やや小さめ）
 	for e in [Vector3(2.6, 0, 0.2), Vector3(3.9, 0, 0.6), Vector3(5.1, 0, 0.1)]:
 		_spawn_enemy(e, 0.8)
+	# 帯を照らすキーライト。これが無いとスプライトが環境光だけになり、
+	# 帯全体が「黒い枠」に見える（実際そうなっていた）。
+	_neon_light(Vector3(-2.0, 1.8, 1.6), Color(0.85, 0.92, 1.0), 3.0, 6.0)   # 味方側
+	_neon_light(Vector3(3.6, 1.8, 1.6), Color(1.0, 0.55, 0.85), 2.4, 6.0)    # 敵側
 
 
 const KENNEY_DIR := "res://assets/third_party/kenney_naturekit/models/"
@@ -1224,9 +1234,9 @@ const DIVE_NPCS := [
 
 # 横帯（フィールド）のパーティ配置：左(-X)に横並び。主人公は別途 _player_pos。
 const STRIP_NPCS := [
-	{"id": "mil",    "pos": Vector3(-3.6, 0.0, 0.2), "flip": false},
-	{"id": "nurse",  "pos": Vector3(-2.6, 0.0, 0.6), "flip": false},
-	{"id": "doctor", "pos": Vector3(-1.7, 0.0, 0.2), "flip": false},
+	{"id": "mil",    "pos": Vector3(-2.5, 0.0, 0.2), "flip": false},
+	{"id": "nurse",  "pos": Vector3(-1.6, 0.0, 0.6), "flip": false},
+	{"id": "doctor", "pos": Vector3(-0.7, 0.0, 0.2), "flip": false},
 ]
 
 

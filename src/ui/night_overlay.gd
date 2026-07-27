@@ -16,16 +16,22 @@ extends Control
 signal finished(tips: int)   # 劇場の終了（チップ合計を持ち帰る）
 signal tip_tapped            # タップ給仕の瞬間（SFX用）
 
-const PINK := Color(1.0, 0.36, 0.72)
-const CYAN := Color(0.35, 0.92, 1.0)
-const GOLD := Color(1.0, 0.82, 0.4)
+# 状態色は一対一対応にする：CYAN=予報的中 だけ。金＝お金（売上・チップ）、赤＝素材切れ。
+# （マゼンタは「バグの色」として空けておく＝画に出たら異常と分かる）
+const CYAN := Color(0.35, 0.92, 1.0)     # 予報的中 — この意味以外に使わない
+const GOLD := Color(1.0, 0.82, 0.4)      # 金（売上・チップ・常連）
+const DENY := Color(1.0, 0.45, 0.42)     # 素材切れ
 const TEXT := Color(0.96, 0.95, 0.98)
 const TEXT_DIM := Color(0.72, 0.74, 0.82)
 const BG_ART := "res://assets/generated/bg/interior.png"
 
+## 文字は5段だけ。11段あった頃は「意味の違い」ではなく「気分の違い」で選ばれていた。
+const FS := {XS = 10, S = 14, M = 18, L = 24, XL = 48}
+
 const U := 3.0               # ピクセル密度モジュール（全座標をこの倍数へ）
 const COUNTER_Y := 0.46      # カウンター天面（画面比）— 構図を上へ寄せる
 const SEAT_XS := [0.11, 0.27, 0.43, 0.73, 0.89]
+const SEAT_JITTER := 14.0    # 等間隔をやめる幅（±px）。整列した椅子は工場に見える
 const KEEPER_X := 0.58       # 店番はカウンターの奥、席の切れ目に立つ
 const SLAB_H := 18.0         # 天面の厚み
 const APRON_H := 99.0        # 前板の高さ
@@ -148,9 +154,10 @@ func _warm_up() -> void:
 	_keeper_frames.clear()
 	for i in 4:
 		var t := _pix("res://assets/generated/sprites/%s/idle_f%d.png" % [keeper, i], 48)
-		if t == null:
+		# 隅が不透明なフレームは地が抜けていない＝色板が出る。捨てて f0 に落とす。
+		if not _frame_ok(t):
 			t = _pix("res://assets/generated/sprites/%s/idle_f0.png" % keeper, 48)
-		if t != null:
+		if _frame_ok(t):
 			_keeper_frames.append(t)
 
 
@@ -197,7 +204,7 @@ func _process(delta: float) -> void:
 	var cy := q(size.y * COUNTER_Y)
 	for c in _custs:
 		c["t"] = float(c["t"]) + delta
-		var seat_x := q(float(SEAT_XS[int(c["seat"])]) * size.x)
+		var seat_x := _seat_x(int(c["seat"]))
 		match String(c["state"]):
 			"in":
 				c["x"] = maxf(float(c["x"]) - 320.0 * delta, seat_x)
@@ -247,6 +254,13 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
+## 席の x。等間隔だと「椅子を並べた工場」に見えるので seed で ±14px 崩す。
+## day を混ぜて、同じ夜のあいだは動かず、日が変われば並びが変わる。
+func _seat_x(i: int) -> float:
+	var j := (float((i * 37 + day * 23 + 11) % 29) / 14.0 - 1.0) * SEAT_JITTER
+	return q(float(SEAT_XS[i]) * size.x + j)
+
+
 func _free_seat() -> int:
 	for i in _seats.size():
 		if not _seats[i]:
@@ -258,7 +272,7 @@ func _free_seat() -> int:
 func _serve(c: Dictionary, tapped: bool) -> void:
 	c["state"] = "eat"
 	c["t"] = 0.0
-	var seat_x := q(float(SEAT_XS[int(c["seat"])]) * size.x)
+	var seat_x := _seat_x(int(c["seat"]))
 	var cy := q(size.y * COUNTER_Y)
 	var s: Dictionary = _script[int(c["serving"])]
 	_floats.append({"pos": Vector2(seat_x, cy - CUST_H + 30.0),
@@ -601,7 +615,7 @@ func _draw_counter_props(font: Font, cy: float) -> void:
 		if String(c["state"]) != "in" and String(c["state"]) != "out":
 			occupied[int(c["seat"])] = c
 	for i in SEAT_XS.size():
-		var x := q(float(SEAT_XS[i]) * size.x)
+		var x := _seat_x(i)
 		# 湯呑（空席でも天面に情報がある）
 		var tc := Vector2(x - 45, cy - 6)
 		draw_rect(Rect2(tc.x - 9, tc.y, 18, 3), Color(0, 0, 0, 0.4))
@@ -636,18 +650,59 @@ func _draw_counter_props(font: Font, cy: float) -> void:
 
 # ── 客 ────────────────────────────────────────────────────────────────
 
+## 3種の骨格。パレットだけ替えた5人は同じ人にしか見えない——
+## 別人にするには「輪郭・姿勢・目線・持ち物」を振る必要がある。
+const POSE_STOOP := 0    # 猫背（首が肩に埋まり頭が前に出る。小さく丸い）
+const POSE_SQUARE := 1   # いかり肩（肩が張って高い。大柄）
+const POSE_PETITE := 2   # 小柄（背が低く頭が相対的に大きい）
+
+# 体格倍率（±25%以上振らないと別人にならない。±7%では同じ人の呼吸に見えた）
+const POSE_H := [0.98, 1.18, 0.74]
+const POSE_W := [0.98, 1.36, 0.80]
+const POSE_HEAD := [1.00, 0.96, 1.16]
+const POSE_NECK := [0.40, 1.25, 0.85]   # 首の長さ
+const POSE_SLOPE := [10.0, -5.0, 4.0]   # 肩の下がり（負＝いかり肩）
+const POSE_HEADDX := [4.5, 0.0, 0.0]    # 頭の前傾
+
+const PROP_NONE := -1
+const PROP_UMBRELLA := 0
+const PROP_HAT := 1
+const PROP_SMOKE := 2
+
+
 func _cust_spec(c: Dictionary) -> Dictionary:
 	var sd := int(c.get("seed", 0))
 	var is_reg := bool(c.get("regular", false))
+	var seat := int(c.get("seat", 0))
+	var pose := sd % 3
+	var jitter := float((sd / 3) % 5) * 0.035 - 0.07
+	var style := (sd / 11) % 6
+	var prop := [PROP_UMBRELLA, PROP_HAT, PROP_SMOKE, PROP_NONE][(sd / 13) % 4]
+	if prop == PROP_HAT and style == 3:
+		prop = PROP_NONE                      # 鳥打帽の上に笠は被らない
+	# 目線：隣を見る／店番を見る／うつむく の3状態。全員正面だと「客」ではなく「的」に見える。
+	var gaze := (sd / 23) % 3
+	var look := 0.0
+	var down := false
+	match gaze:
+		0:  look = 1.0 if seat < 2 else -1.0                              # 隣を見る
+		1:  look = signf(KEEPER_X - float(SEAT_XS[seat]))                 # 店番を見る
+		_:  down = true                                                   # うつむく
 	return {
-		"h": CUST_H + float(sd % 3) * 9.0 - 9.0,
-		"sw": 27.0 + float((sd / 3) % 3) * 3.0,
-		"hr": 21.0 + float((sd / 9) % 3) * 1.5,
+		"h": CUST_H * (float(POSE_H[pose]) + jitter),
+		"sw": 27.0 * (float(POSE_W[pose]) + jitter * 0.6),
+		"hr": 21.0 * float(POSE_HEAD[pose]) * (0.96 + float((sd / 9) % 3) * 0.04),
+		"pose": pose,
+		"look": look,
+		"down": down,
+		"prop": prop,
 		"hair": HAIRS[sd % HAIRS.size()],
 		"cloth": CLOTHS[(sd / 5) % CLOTHS.size()] if not is_reg else CLOTHS[(sd / 5) % CLOTHS.size()].lightened(0.10),
 		"skin": SKINS[(sd / 7) % SKINS.size()],
-		"style": (sd / 11) % 6,
+		"style": style,
 		"accent": c["scarf"],
+		"eat": 0.0,
+		"reach": Vector2.ZERO,
 	}
 
 
@@ -658,6 +713,12 @@ func _draw_customer(c: Dictionary, cy: float) -> void:
 	var bob: float = round(absf(sin(_t * 8.0)) * 2.0) * U if walk else round(absf(sin(_t * 1.6)) * 0.6) * U
 	var base: float = q(cy + 9.0) - bob
 	var sp := _cust_spec(c)
+	# 食べている間は腕の終点を皿へ寄せる。腕が届くだけで「その皿はこの人のもの」になる。
+	if st == "eat":
+		sp["eat"] = clampf((float(c["t"]) - 0.12) / 0.34, 0.0, 1.0)
+		sp["reach"] = _plate_pos(c, cy) + Vector2(-9.0, 3.0)
+		sp["look"] = 0.0
+		sp["down"] = true
 	# 影（天面に落ちる接地影）
 	draw_rect(Rect2(x - float(sp["sw"]) - 6, cy - SLAB_H, float(sp["sw"]) * 2.0 + 12, 3), Color(0, 0, 0, 0.35))
 	# 濃い輪郭 → 暖色のリムライト → 本体
@@ -818,6 +879,15 @@ func _draw_keeper(sz: Vector2, cy: float) -> void:
 
 
 ## 高解像度スプライトをドット絵化（縮小＋α2値化）。3pxモジュールに密度を揃える。
+##
+## マゼンタ矩形が出ていた原因はここ。素材の「抜いた」画素は α=0 でも RGB に
+## マゼンタが残っている。素の resize は透明画素の RGB まで平均に混ぜるので、
+## 縮小で生まれた中間 α が 0.42 を超えた瞬間、不透明なマゼンタとして焼き付く。
+## 対策は 3 段構え：
+##   (1) 焼き込みの不透明地は _strip_matte で resize の前に抜く（縮小後だと
+##       隅の色が混ざって判定が落ちるので、必ず convert 直後）。
+##   (2) 乗算済みαで縮小する＝透明画素は色を持ち込まない（にじみの根治）。
+##   (3) それでも残った異常は _warm_up 側で捨てる。
 func _pix(path: String, pix_h: int) -> Texture2D:
 	var key := "%s:%d" % [path, pix_h]
 	if _pix_cache.has(key):
@@ -831,16 +901,125 @@ func _pix(path: String, pix_h: int) -> Texture2D:
 			if img.is_compressed():
 				img.decompress()
 			img.convert(Image.FORMAT_RGBA8)
-			var w := maxi(int(round(img.get_width() * float(pix_h) / maxf(img.get_height(), 1.0))), 1)
+			_strip_matte(img)
+			# 乗算済みαへ（透明画素の RGB を 0 にしてから縮小する）
+			var sw := img.get_width()
+			var sh := img.get_height()
+			for y in sh:
+				for x in sw:
+					var sc := img.get_pixel(x, y)
+					img.set_pixel(x, y, Color(sc.r * sc.a, sc.g * sc.a, sc.b * sc.a, sc.a))
+			var w := maxi(int(round(sw * float(pix_h) / maxf(sh, 1.0))), 1)
 			img.resize(w, pix_h, Image.INTERPOLATE_BILINEAR)
 			for y in img.get_height():
 				for x in w:
 					var col := img.get_pixel(x, y)
-					col.a = 1.0 if col.a > 0.42 else 0.0
-					img.set_pixel(x, y, col)
+					if col.a > 0.42:
+						# 乗算済みを戻す。α で割らないと縁が黒ずむ。
+						var inv := 1.0 / maxf(col.a, 0.001)
+						img.set_pixel(x, y, Color(clampf(col.r * inv, 0.0, 1.0),
+								clampf(col.g * inv, 0.0, 1.0), clampf(col.b * inv, 0.0, 1.0), 1.0))
+					else:
+						img.set_pixel(x, y, Color(0, 0, 0, 0))
 			t = ImageTexture.create_from_image(img)
 	_pix_cache[key] = t
 	return t
+
+
+## 一部の生成フレームは背景（マゼンタ/白）が不透明で焼き込まれており、そのまま描くと
+## キャラの後ろに色板が出る。bbox の4隅が同色なら「地」とみなし、画像の縁から連結した
+## 同色だけを抜く（キャラ内部の同系色は残る）。dive_side_view.gd と同等の処理。
+func _strip_matte(img: Image) -> void:
+	var w := img.get_width()
+	var h := img.get_height()
+	if w < 6 or h < 6:
+		return
+	var x0 := w
+	var y0 := h
+	var x1 := -1
+	var y1 := -1
+	for y in h:
+		for x in w:
+			if img.get_pixel(x, y).a > 0.5:
+				x0 = mini(x0, x)
+				y0 = mini(y0, y)
+				x1 = maxi(x1, x)
+				y1 = maxi(y1, y)
+	if x1 - x0 < 4 or y1 - y0 < 4:
+		return
+	# 「地」は矩形なので bbox の4隅が同色なら焼き込み背景。
+	# （キャラのシルエットなら隅は透明か色がばらけるので誤爆しない）
+	var corners := [Vector2i(x0 + 1, y0 + 1), Vector2i(x1 - 1, y0 + 1),
+			Vector2i(x0 + 1, y1 - 1), Vector2i(x1 - 1, y1 - 1)]
+	var counts := {}
+	var seeds := {}
+	for p: Vector2i in corners:
+		var c := img.get_pixel(p.x, p.y)
+		if c.a < 0.5:
+			continue
+		var k := "%d_%d_%d" % [int(c.r * 12), int(c.g * 12), int(c.b * 12)]
+		counts[k] = int(counts.get(k, 0)) + 1
+		seeds[k] = c
+	var best := ""
+	var bestn := 0
+	for k in counts:
+		if int(counts[k]) > bestn:
+			bestn = int(counts[k])
+			best = k
+	if best == "" or bestn < 3:
+		return
+	var sd: Color = seeds[best]
+	var seen := PackedByteArray()
+	seen.resize(w * h)
+	var qq: Array[Vector2i] = []
+	for x in w:
+		qq.append(Vector2i(x, 0))
+		qq.append(Vector2i(x, h - 1))
+	for y in h:
+		qq.append(Vector2i(0, y))
+		qq.append(Vector2i(w - 1, y))
+	var i := 0
+	while i < qq.size():
+		var p: Vector2i = qq[i]
+		i += 1
+		if p.x < 0 or p.y < 0 or p.x >= w or p.y >= h:
+			continue
+		var key2 := p.y * w + p.x
+		if seen[key2] != 0:
+			continue
+		var c := img.get_pixel(p.x, p.y)
+		if c.a > 0.5 and absf(c.r - sd.r) + absf(c.g - sd.g) + absf(c.b - sd.b) > 0.28:
+			continue
+		seen[key2] = 1
+		img.set_pixel(p.x, p.y, Color(c.r, c.g, c.b, 0.0))
+		qq.append(Vector2i(p.x + 1, p.y))
+		qq.append(Vector2i(p.x - 1, p.y))
+		qq.append(Vector2i(p.x, p.y + 1))
+		qq.append(Vector2i(p.x, p.y - 1))
+
+
+## 生成済みフレームの健全性検査。四隅が不透明＝地が抜けていないので使わない。
+func _frame_ok(t: Texture2D) -> bool:
+	if t == null:
+		return false
+	var img := t.get_image()
+	if img == null:
+		return false
+	var w := img.get_width()
+	var h := img.get_height()
+	if w < 4 or h < 4:
+		return false
+	for p in [Vector2i(0, 0), Vector2i(w - 1, 0), Vector2i(0, h - 1), Vector2i(w - 1, h - 1),
+			Vector2i(w / 2, 0), Vector2i(w / 2, h - 1)]:
+		if img.get_pixel(p.x, p.y).a > 0.5:
+			return false
+	# 画面いっぱいのべた板（＝地が残っている）も弾く
+	var opq := 0
+	for y in range(0, h, 2):
+		for x in range(0, w, 2):
+			if img.get_pixel(x, y).a > 0.5:
+				opq += 1
+	return float(opq) / float(maxi((h / 2) * (w / 2), 1)) < 0.88
 
 
 # ── 土間 ──────────────────────────────────────────────────────────────
