@@ -648,7 +648,12 @@ func _draw() -> void:
 		# 潜航中の寄り道：背景絵は敷かず暗幕だけ＝下で戦い続けるステージが透ける
 		draw_rect(Rect2(Vector2.ZERO, sz), Color(0.02, 0.02, 0.05, 0.84 + 0.12 * dip))
 	else:
-		Kit.backdrop(self, sz, String(PANEL_BG_ART.get(panel, "")), accent, 0.64 + 0.30 * dip)
+		# 背景アートがある画面は地が明るく浮く（実測 11〜12 に対し、無地の画面は 7.6〜7.8）。
+		# 同じアプリの別ページとして並べたときに地の明るさが割れて見えるので、
+		# アートのある画面だけ暗幕を一段強くして揃える。
+		var art := String(PANEL_BG_ART.get(panel, ""))
+		var veil := (0.74 if art != "" else 0.64) + 0.30 * dip
+		Kit.backdrop(self, sz, art, accent, veil)
 
 	_set_xf(h_ofs)
 	_draw_header(font, sz)
