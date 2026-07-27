@@ -457,6 +457,27 @@ func _emissive_box(pos: Vector3, sz: Vector3, col: Color, energy: float = 3.0, y
 
 
 
+
+## 円柱の小物（蒸籠・丼・鍋）。箱ばかりだと什器がすべて同じ形に見えるので、
+## 曲面を混ぜてシルエットに変化を出す。
+func _add_cylinder(pos: Vector3, radius: float, height: float, col: Color,
+		rough: float = 0.8) -> void:
+	var mi := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = radius
+	cm.bottom_radius = radius * 0.94
+	cm.height = height
+	cm.radial_segments = 12
+	cm.rings = 1
+	mi.mesh = cm
+	mi.position = pos
+	var m := StandardMaterial3D.new()
+	m.albedo_color = col
+	m.roughness = rough
+	mi.material_override = m
+	_sub.add_child(mi)
+
+
 ## 赤提灯1個（紡錘形の胴＋上下の口金＋吊り紐＋白い芯）。
 ## 発光する箱は「光る板」にしか見えないので、シルエットで提灯だと分かる形にする。
 func _add_lantern(pos: Vector3, col: Color) -> void:
@@ -868,6 +889,18 @@ func _build_props_home() -> void:
 	_neon_light(Vector3(0.0, 2.0, -2.8), WARM, 1.8, 5.5)
 	_neon_light(Vector3(-2.6, 2.4, -0.4), NEON_RED, 1.8, 5.0)
 	_neon_light(Vector3(2.6, 2.4, -0.4), PINK, 1.8, 5.0)
+
+	# ── カウンター上の什器（蒸籠の山・丼・中華鍋）──
+	# 面が空いていると「置いただけの台」に見える。湯気の出どころを実体として置く。
+	for i in 3:   # 蒸籠を3段重ね（左）
+		_add_cylinder(Vector3(-2.2, 1.28 + i * 0.17, -1.1), 0.30, 0.15,
+				Color(0.42, 0.30, 0.17), 0.85)
+	for i in 2:   # 蒸籠2段（右）
+		_add_cylinder(Vector3(2.2, 1.28 + i * 0.17, -1.1), 0.30, 0.15,
+				Color(0.42, 0.30, 0.17), 0.85)
+	_add_cylinder(Vector3(0.0, 1.30, -1.1), 0.34, 0.16, Color(0.10, 0.09, 0.10), 0.5)  # 中華鍋
+	for x in [-1.15, -0.55, 0.55, 1.15]:   # 客前の丼
+		_add_cylinder(Vector3(x, 1.26, -0.85), 0.16, 0.10, Color(0.86, 0.84, 0.80), 0.6)
 
 	# ── 厨房の湯気（鍋・蒸籠から立ち上る。中華飯店の象徴）──
 	_build_steam(Vector3(-2.2, 1.2, -1.1), Vector3(0.45, 0.05, 0.25), Color(1.0, 0.85, 0.6, 0.5), 16, 1.0)
