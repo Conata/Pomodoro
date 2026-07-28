@@ -701,6 +701,24 @@ func _test_sync_level() -> void:
 	var s0 := _fresh(90)
 	check((s0.state["events_seen"] as Array).is_empty(), "新規セーブは既読ゼロ")
 	check(int(s0.state["best_floor"]) < 3, "新規は B3 未到達＝節目はまだ来ない")
+	# 終幕の条件は「メモリ全収集 ＋ B10到達」（docs/STORY.md 8節の確定）。
+	# 深度だけで出すと、掘らなかった人にも像が結ばないまま結末が来る。
+	check(KuroMemories.MEMORIES.size() >= 10, "メモリが10本以上ある（%d本）" % KuroMemories.MEMORIES.size())
+	var floors := {}
+	for m in KuroMemories.MEMORIES:
+		floors[int(m["floor"])] = true
+	check(floors.size() >= 5, "メモリの出現階が散っている（%d通り）" % floors.size())
+	# 深度ドリブンで重複せずに配られること
+	var got: Array = []
+	for f in range(1, 13):
+		for i in 3:
+			var nm := KuroMemories.next_for(f, got)
+			if nm.is_empty():
+				break
+			check(not String(nm["id"]) in got, "同じメモリを二度配らない: %s" % String(nm["id"]))
+			got.append(String(nm["id"]))
+	check(got.size() == KuroMemories.MEMORIES.size(), "B12まで潜れば全部拾える（%d/%d）"
+			% [got.size(), KuroMemories.MEMORIES.size()])
 	# 店番は6人から選べる。誰を選んでも精算が通ること（台詞プールの取りこぼしで落ちていた）
 	for kid in KuroData.GIRL_ORDER:
 		var sk := _fresh(90)

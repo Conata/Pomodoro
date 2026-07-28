@@ -537,6 +537,7 @@ func _next_event_id() -> String:
 	var day := int(sim.state["day"])
 	var best := int(sim.state["best_floor"])
 	var dives := int(sim.state["stats"].get("dives", 0))
+	var mem := (sim.state["memories"] as Array).size()
 	# 順序が意味を持つので、上から順に見る（導入 → 説明 → 初浮上 → 深度 → 日数 → 終幕）
 	var table := [
 		["intro_kiriko", true],
@@ -546,7 +547,10 @@ func _next_event_id() -> String:
 		["story_b6", best >= 6],
 		["story_b10", best >= 10],
 		["story_day3", day >= 3],
-		["story_finale", best >= 12],
+		# 終幕は docs/STORY.md 8節の確定どおり「メモリ全収集 ＋ B10到達」。
+		# 深度だけで出すと、掘らなかった人にも像が結ばないまま結末が来てしまう。
+		# 謎は掘った人にだけ像を結ぶ、というのがこの作品の設計。
+		["story_finale", best >= 10 and mem >= KuroMemories.MEMORIES.size()],
 	]
 	for row in table:
 		var id := String(row[0])
