@@ -689,6 +689,18 @@ func _test_sync_level() -> void:
 		vary_tot += function_gold.call(vary_deck, 200 + i)
 	var ratio := float(maxi(same_tot, vary_tot)) / float(maxi(mini(same_tot, vary_tot), 1))
 	check(ratio < 1.20, "同じ味で固める戦略と4種そろえる戦略が拮抗する（比 %.2f）" % ratio)
+	# 物語イベント：台本が揃っていて、進行の条件が一意に決まること
+	# （main の _next_event_id と同じ順序をここで固定する。台本だけあって
+	#  発火しない状態に戻さないための番人）
+	for eid in ["intro_kiriko", "tutorial", "first_surface",
+			"story_b3", "story_b6", "story_b10", "story_day3", "story_finale"]:
+		check(EventData.EVENTS.has(eid), "台本がある: %s" % eid)
+		var ev: Dictionary = EventData.EVENTS[eid]
+		check((ev.get("lines", []) as Array).size() > 0, "台詞がある: %s" % eid)
+		check(String(ev.get("speaker", "")) != "", "話者がいる: %s" % eid)
+	var s0 := _fresh(90)
+	check((s0.state["events_seen"] as Array).is_empty(), "新規セーブは既読ゼロ")
+	check(int(s0.state["best_floor"]) < 3, "新規は B3 未到達＝節目はまだ来ない")
 	# 店番は6人から選べる。誰を選んでも精算が通ること（台詞プールの取りこぼしで落ちていた）
 	for kid in KuroData.GIRL_ORDER:
 		var sk := _fresh(90)

@@ -166,6 +166,20 @@ def report_proportions():
     return out
 
 
+def check_portraits():
+    """立ち絵の重複を検出する。VNの話者と絵が食い違うと、物語がまるごと嘘になる。
+
+    実際に kiriko / kiriko_npc / mil の3枚がバイト単位で同一で、
+    オープニングで「キリコ」と名乗る場面にミルの絵が出ていた。
+    """
+    import hashlib
+    seen = {}
+    for f in sorted(glob.glob(os.path.join(ROOT, "assets/portraits/*.png"))):
+        h = hashlib.md5(open(f, "rb").read()).hexdigest()
+        seen.setdefault(h, []).append(os.path.basename(f)[:-4])
+    return [ids for ids in seen.values() if len(ids) > 1]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", action="store_true")
@@ -177,6 +191,10 @@ def main():
         for cid, m, ok in report_proportions():
             print("  %-10s %.3f    %s" % (cid, m, "OK" if ok else "帯の外"))
         return 0
+
+    dup = check_portraits()
+    for ids in dup:
+        print("立ち絵が重複: %s が同じ絵（VNで話者と絵が食い違う）" % " / ".join(ids))
 
     found = {}
     for f in sorted(glob.glob(os.path.join(SPRITE_DIR, "*/*.png"))):
@@ -195,7 +213,7 @@ def main():
                 print("  %s" % f)
                 for p in probs:
                     print("     - %s" % p)
-    return 1 if found else 0
+    return 1 if (found or dup) else 0
 
 
 if __name__ == "__main__":

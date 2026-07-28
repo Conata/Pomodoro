@@ -113,6 +113,9 @@ func _ready() -> void:
 		_refresh_home_data("「いらっしゃい。今日はどこで仕入れる？」")
 		_goto(HOME)
 	_save()                           # last_seen / 安息分を確定保存
+	# 物語の導入（コールドオープン→説明）。台本は EventData にあり、
+	# 初回起動でここから入る。以降の節目は _sync_home_stage から拾う。
+	_maybe_event()
 
 
 ## 全画面シート（メニュー／夜営業／精算）が世界を覆っている間は 3D の描画を止める。
@@ -499,7 +502,13 @@ func _start_result_talk() -> void:
 
 
 ## 会話終了：好感度・既読を確定し、リザルトの会話ボタンを消す。
+## イベント（kind=event）は好感度を動かさない——物語は報酬ではないので。
 func _on_talk_finished(meta: Dictionary) -> void:
+	if String(meta.get("kind", "")) == "event":
+		if _talk_view != null:
+			_talk_view.visible = false
+		_maybe_event()   # 続けて出すものがあれば連鎖させる（導入→説明の順）
+		return
 	var gid := String(meta.get("girl", ""))
 	if gid != "" and sim != null:
 		sim.complete_talk(gid, int(meta.get("tier", 0)))
@@ -510,6 +519,63 @@ func _on_talk_finished(meta: Dictionary) -> void:
 		_talk_view.visible = false
 	if _result_overlay != null and _result_overlay.visible:
 		_result_overlay.clear_talk()
+
+
+# ── 物語イベント（EventData）─────────────────────────────────────────────
+# 導入・チュートリアル・深度の節目・終幕は EventData に台本が揃っているのに、
+# 新メインが一度も参照しておらず（旧 main_legacy.gd だけが呼んでいた）、
+# 新規プレイヤーには一度も出ていなかった。ここで発火させる。
+#
+# 条件は「今の状態を見て決める」形にする（フラグを別に持たない）。
+# 一度出したものは state["events_seen"] に積むので二度は出ない。
+
+## 今の状態で出すべきイベント id を返す。無ければ空文字。
+func _next_event_id() -> String:
+	if sim == null:
+		return ""
+	var seen: Array = sim.state["events_seen"]
+	var day := int(sim.state["day"])
+	var best := int(sim.state["best_floor"])
+	var dives := int(sim.state["stats"].get("dives", 0))
+	# 順序が意味を持つので、上から順に見る（導入 → 説明 → 初浮上 → 深度 → 日数 → 終幕）
+	var table := [
+		["intro_kiriko", true],
+		["tutorial", true],
+		["first_surface", dives >= 1 and not bool(sim.state["run"]["active"])],
+		["story_b3", best >= 3],
+		["story_b6", best >= 6],
+		["story_b10", best >= 10],
+		["story_day3", day >= 3],
+		["story_finale", best >= 12],
+	]
+	for row in table:
+		var id := String(row[0])
+		if not bool(row[1]) or id in seen:
+			continue
+		if not EventData.EVENTS.has(id):
+			continue
+		return id
+	return ""
+
+
+## 出すべきイベントがあれば再生する。会話や全画面シートが出ている間は割り込まない。
+func _maybe_event() -> bool:
+	if _talk_view == null or _talk_view.visible or sim == null:
+		return false
+	if (_menu_overlay != null and _menu_overlay.visible) \
+			or (_night_overlay != null and _night_overlay.visible) \
+			or (_result_overlay != null and _result_overlay.visible):
+		return false
+	var id := _next_event_id()
+	if id == "":
+		return false
+	var ev: Dictionary = EventData.EVENTS[id]
+	(sim.state["events_seen"] as Array).append(id)
+	_save()
+	_talk_view.position = Vector2.ZERO
+	_talk_view.size = size
+	_talk_view.play(ev, String(ev.get("speaker", "mil")), {"kind": "event", "id": id})
+	return true
 
 
 ## 固定ステップのキャッチアップ（now － anchor 分だけ step を回す）。
@@ -817,6 +883,7 @@ func _launch_dive(mode: String) -> void:
 func _sync_home_stage() -> void:
 	if _screen != HOME or _current == null or sim == null:
 		return
+	_maybe_event()   # 深度・日数の節目に達していれば物語を挟む
 	var stage := _current.get_node_or_null("DinerStage")
 	if stage != null and stage.has_method("set_home_state"):
 		stage.set_home_state({
