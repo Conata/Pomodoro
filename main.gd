@@ -39,6 +39,8 @@ var _bgm_dive: AudioStreamPlayer = null    # 潜航ドローン
 var _bgm_battle: AudioStreamPlayer = null  # 戦闘レイヤー
 var _sfx_pool: Array = []
 var _sfx_i := 0
+var _sfx_router: SfxRouter = SfxRouter.new()  # 潜航イベント→効果音の割り当て＋間引き
+var _dive_clock := 0.0                        # 潜航の経過秒（クールダウンの時計。早送りも織り込む）
 
 
 func _ready() -> void:
@@ -233,17 +235,35 @@ func _make_loop(path: String, vol_db: float) -> AudioStreamPlayer:
 	return p
 
 
+## 効果音の基準音量。プールの各プレイヤーはここを起点に vol_db を足し引きする。
+## 将来ミュート／音量設定を付けるなら、触るのはこの1箇所だけで済む
+## （効果音の再生経路は _sfx() 一本に絞ってある）。
+const SFX_BASE_DB := -8.0
+
 ## 効果音を1発（mp3優先→生成wav→サードパーティwav）。プールを巡回。
-func _sfx(name: String) -> void:
+## vol_db は基準からの増減、pitch は再生ピッチ（0 以下は 1.0 扱い）。
+## 25分鳴り続ける画面なので、呼び出し側はピッチを ±5% ほど散らして単調さを避ける。
+## 既存の呼び出し（名前だけ）は今までどおり基準音量・等倍ピッチで鳴る。
+func _sfx(name: String, vol_db: float = 0.0, pitch: float = 1.0) -> void:
 	if _sfx_pool.is_empty():
 		return
 	var path := _audio_pick("sfx/" + name, "res://assets/third_party/sfx/%s.wav" % name)
 	if not ResourceLoader.exists(path):
-		return
+		return   # 音が無くても落ちない（生成前・差し替え中でも安全）
 	var p: AudioStreamPlayer = _sfx_pool[_sfx_i]
 	_sfx_i = (_sfx_i + 1) % _sfx_pool.size()
 	p.stream = load(path)
+	p.volume_db = SFX_BASE_DB + vol_db
+	p.pitch_scale = clampf(pitch, 0.05, 4.0) if pitch > 0.0 else 1.0
 	p.play()
+
+
+## 潜航イベントを効果音へ（割り当てと間引きは SfxRouter が決める）。
+func _sfx_event(e: Dictionary) -> void:
+	if _sfx_router == null:
+		return
+	for play in _sfx_router.route(e, _dive_clock):
+		_sfx(String(play["name"]), float(play["vol"]), float(play["pitch"]))
 
 
 ## Webの自動再生制限対策：最初のユーザー操作で店テーマを開始する。
@@ -296,7 +316,14 @@ func _process(delta: float) -> void:
 		_dive_overlay.add_events(evs)
 	if _dive_stage != null and _dive_stage.has_method("add_events"):
 		_dive_stage.add_events(evs)   # 実体アンカーの戦闘FX（数字・斬撃・バースト）
+	# 効果音のクールダウンはこの時計で測る。早送り中は世界も早く進むので
+	# 同じだけ進めておく（×3 で潜っている間だけ音が詰まる、という事故を防ぐ）。
+	# 逆に裏タブから戻った直後は、数分ぶんのイベントが1フレームに固まって届く。
+	# その時この時計はほとんど進まない＝クールダウンが全部生きて、
+	# 「戻った瞬間に数十発鳴る」という最悪の事故が構造的に起きない。
+	_dive_clock += delta * float(_speed)
 	for e in evs:
+		_sfx_event(e)   # 命中／会心／撃破／被弾／スキル／レベルアップ／階層突破の音
 		match String(e.get("kind", "")):
 			"run_complete":
 				_last_summary = e.get("summary", {})
@@ -497,6 +524,9 @@ func _goto(path: String) -> void:
 		_fade_tween.tween_property(_fade_rect, "modulate:a", 0.0, 0.32) \
 				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	if _in_dive:
+		# 潜航に入る／戻るたびに効果音のクールダウンを畳み直す（時計も0から）
+		_dive_clock = 0.0
+		_sfx_router.reset()
 		_dive_stage = _current.get_node_or_null("Stage")
 	var overlay := _current.get_node_or_null("Overlay")
 	if overlay != null:
@@ -677,8 +707,9 @@ func _on_menu_action(id: String) -> void:
 			var gid := parts[2]
 			if not KuroData.GIRLS.has(gid):
 				return
-			toast = "%s に装備" % String(KuroData.GIRLS[gid]["name"]) \
-					if sim.equip_from_storage(int(parts[1]), gid) else "装備できない"
+			var equipped := sim.equip_from_storage(int(parts[1]), gid)
+			_sfx("ui_equip" if equipped else "ui_denied")
+			toast = "%s に装備" % String(KuroData.GIRLS[gid]["name"]) if equipped else "装備できない"
 		"unequip":
 			# メンバー画面の装備枠から外して倉庫へ（倉庫満杯なら廃材化はシム側の判断）。
 			# 未知の id で GIRLS/SLOTS を引くと落ちるので、引く前に必ず存在を確かめる。
@@ -686,13 +717,20 @@ func _on_menu_action(id: String) -> void:
 			var uslot := parts[2]
 			if not KuroData.GIRLS.has(ug) or not SimItems.SLOTS.has(uslot):
 				return
+			var removed := sim.unequip_to_storage(ug, uslot)
+			# 外す音は着ける音を少し低く＝同じ所作の裏返しとして聞こえる
+			_sfx("ui_equip" if removed else "ui_denied", 0.0, 0.86 if removed else 1.0)
 			toast = "%s の%sを外した" % [String(KuroData.GIRLS[ug]["name"]),
 					String((SimItems.SLOTS[uslot] as Dictionary)["name"])] \
-					if sim.unequip_to_storage(ug, uslot) else "外せる装備が無い"
+					if removed else "外せる装備が無い"
 		"socket_storage":
-			toast = "装飾を嵌めた" if sim.socket_gem(int(parts[1]), parts[2]) else "装飾できない"
+			var socketed := sim.socket_gem(int(parts[1]), parts[2])
+			_sfx("ui_equip" if socketed else "ui_denied", 0.0, 1.12 if socketed else 1.0)
+			toast = "装飾を嵌めた" if socketed else "装飾できない"
 		"remove_gem":
-			toast = "装飾を外した" if sim.remove_gem(int(parts[1]), int(parts[2])) else "外せない"
+			var pulled := sim.remove_gem(int(parts[1]), int(parts[2]))
+			_sfx("ui_equip" if pulled else "ui_denied", 0.0, 0.9 if pulled else 1.0)
+			toast = "装飾を外した" if pulled else "外せない"
 		_:
 			print("[menu] action: ", id)
 			return
@@ -865,3 +903,136 @@ func _update_dive_ui() -> void:
 		"skill_label": String(sim.next_ready_skill().get("name", "")),
 		"boss_name": boss_name if bool(sim.state["in_combat"]) else "",
 	})
+
+
+## 潜航イベント → 効果音の割り当て（純ロジック・再生はしない）。
+##
+## 分けてある理由は2つ。
+##  1) 25分のあいだ、命中は0.8秒に1回・撃破は2.5秒に1回起きる。素直に鳴らすと
+##     1500回の連打になって耳が潰れるので、種類ごとの最小間隔（クールダウン）で
+##     必ず間引く。ここが効いているかは数字で確かめたい。
+##  2) 実際の AudioStreamPlayer を持たないので、tests から素で回して
+##     「何がいつ何回鳴るか」を実測できる（tests/_sfx_count.gd）。
+##
+## route() は {"why": 瞬間の名前, "name": 音名, "vol": 基準からのdB, "pitch": 再生ピッチ}
+## の配列を返す（"why" は集計・ログ用。再生には使わない）。
+## 鳴らさない時は空配列。音そのものが存在しない場合の守りは _sfx() 側（ResourceLoader.exists）。
+class SfxRouter extends RefCounted:
+	# 戦闘の地の音（頻発するもの）の最小間隔。長いほど静かになる。
+	# 実測（tests/_sfx_count.gd）で決めた値。25分の交戦は約200秒だが、それが
+	# 1秒未満の小競り合い約280回に散っているので、素直に鳴らすと撃破だけで
+	# 700発になる。ここを絞って全体を「10秒に1つ何か鳴る」程度に落としている。
+	const CD_HIT := 14.0        # 通常命中（slash / sword を交互）
+	const CD_CRIT := 12.0       # 会心。通常命中とは別枠＝会心だけは通りやすい
+	const CD_KILL := 18.0      # 雑魚撃破。一番数が多いので一番きつく絞る
+	const CD_ELITE := 9.0      # エリート撃破（25分で40回前後しか出ない）
+	const CD_HURT := 18.0       # 被弾
+	const CD_SKILL := 8.0      # 攻撃スキル（爆発／雷）
+	const CD_SONG := 30.0      # ムュウの歌。交戦中ずっと抽選されるので特に長く
+	const CD_HEAL := 15.0      # 回復スキル。数が多いうえ地味なので特に間引く
+	# どの戦闘音どうしも最低これだけは空ける。_sfx_pool は4本しかないので、
+	# 同じ瞬間に重なると古い音が途中で切られて汚くなる。
+	const FLOOR_GAP := 0.22
+
+	# スキルの見た目名（SKILL_DB の "fx"）→ 効果音。表に無い fx は鳴らさない。
+	const FX_SFX := {
+		"explosion": "fire",
+		"lightning": "thunder",
+		"song": "teleport",     # ムュウの歌＝上昇シマー。回復の合図として通りがいい
+		"heal": "heal",
+	}
+
+	var _next := {}          # 分類 -> 次に鳴らしてよい時刻
+	var _last_battle := -999.0
+	var _blade := 0          # slash / sword の交互カウンタ
+
+	func reset() -> void:
+		_next.clear()
+		_last_battle = -999.0
+
+	## key の音を now に鳴らしてよいか。よければクールダウンを張って true。
+	## battle=true の音は FLOOR_GAP による全体の間引きも受ける。
+	func _ok(key: String, now: float, cd: float, battle: bool) -> bool:
+		if battle and now - _last_battle < FLOOR_GAP:
+			return false
+		if now < float(_next.get(key, -999.0)):
+			return false
+		_next[key] = now + cd
+		if battle:
+			_last_battle = now
+		return true
+
+	func _jit(lo: float = 0.95, hi: float = 1.05) -> float:
+		return randf_range(lo, hi)   # ピッチを散らして「同じ音の連打」に聞こえないように
+
+	## 節目の音のために、戦闘の地の音を sec 秒だけ黙らせる。
+	## resonance は2.8秒の長い音で、_sfx_pool は4本しかない＝
+	## 直後に戦闘音が4発入ると鳴りきる前に横取りされる。間も演出のうち。
+	func _hush(now: float, sec: float) -> void:
+		for key in ["hit", "crit", "kill", "elite", "hurt", "skill", "song", "heal"]:
+			_next[key] = maxf(float(_next.get(key, -999.0)), now + sec)
+		_last_battle = now + sec - FLOOR_GAP
+
+	func route(e: Dictionary, now: float) -> Array:
+		match String(e.get("kind", "")):
+			"dmg_pop":
+				if String(e.get("at", "")) == "enemy":
+					if bool(e.get("crit", false)):
+						# 会心：同じ剣の音を高く・強く＝通常命中と一段違って聞こえる
+						if _ok("crit", now, CD_CRIT, true):
+							return [{"why": "会心", "name": "sword", "vol": -3.0, "pitch": _jit(1.16, 1.26)}]
+						return []
+					if _ok("hit", now, CD_HIT, true):
+						_blade = 1 - _blade
+						return [{"why": "命中", "name": ("slash" if _blade == 0 else "sword"),
+								"vol": -12.0, "pitch": _jit()}]
+					return []
+				# 被弾（味方）
+				if _ok("hurt", now, CD_HURT, true):
+					return [{"why": "被弾", "name": "damage", "vol": -7.0, "pitch": _jit(0.94, 1.04)}]
+				return []
+			"kill":
+				if bool(e.get("boss", false)):
+					# ボス撃破は必ず鳴らす（1ランに数回）。低いピッチで格を出す。
+					# 直後に explosion の fx が来るので、そちらは少し黙らせて団子を防ぐ。
+					_next["skill"] = now + 1.4
+					_next["kill"] = now + CD_KILL      # 雑魚の音を後ろに重ねない
+					_next["elite"] = now + CD_ELITE
+					_last_battle = now
+					return [{"why": "撃破:ボス", "name": "enemy_death", "vol": 0.0, "pitch": 0.68}]
+				if bool(e.get("elite", false)):
+					if _ok("elite", now, CD_ELITE, true):
+						_next["kill"] = now + CD_KILL  # 格上を鳴らしたら雑魚は黙る
+						return [{"why": "撃破:エリート", "name": "enemy_death", "vol": -3.0, "pitch": _jit(0.82, 0.90)}]
+					return []
+				if _ok("kill", now, CD_KILL, true):
+					return [{"why": "撃破:雑魚", "name": "enemy_death", "vol": -10.0, "pitch": _jit(0.97, 1.09)}]
+				return []
+			"fx":
+				var fx := String(e.get("fx", ""))
+				if not FX_SFX.has(fx):
+					return []
+				if fx == "heal":
+					if _ok("heal", now, CD_HEAL, true):
+						return [{"why": "スキル:回復", "name": "heal", "vol": -13.0, "pitch": _jit()}]
+					return []
+				if fx == "song":
+					if _ok("song", now, CD_SONG, true):
+						return [{"why": "スキル:歌", "name": "teleport", "vol": -12.0, "pitch": _jit()}]
+					return []
+				if _ok("skill", now, CD_SKILL, true):
+					return [{"why": "スキル:" + fx, "name": String(FX_SFX[fx]), "vol": -8.0, "pitch": _jit()}]
+				return []
+			"levelup":
+				# 節目は間引かない（25分で10回前後・共鳴は4回まで）。
+				# 共鳴の獲得はレベルアップより格上の音にする。
+				if String(e.get("res_name", "")) != "":
+					_hush(now, 1.6)   # 2.8秒の鐘。せめて前半は横取りさせない
+					return [{"why": "共鳴の獲得", "name": "resonance", "vol": -1.0, "pitch": 1.0}]
+				_hush(now, 0.6)
+				return [{"why": "同期率Lv上昇", "name": "sync_up", "vol": -5.0, "pitch": 1.0}]
+			"gate":
+				# 階層突破。1ランで数回しか無い到達の合図。
+				_hush(now, 0.8)
+				return [{"why": "階層突破", "name": "floor_clear", "vol": -3.0, "pitch": 1.0}]
+		return []
