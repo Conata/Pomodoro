@@ -25,6 +25,20 @@ const LINES := {
 			"今日のログの、一行目を書きます",
 		],
 		"idle": [
+			# 実時刻に反応する（深夜／早朝）
+			{"t": "…三時です。店長、そろそろ休んでください", "when": {"hour": [1, 5]}},
+			{"t": "朝ですね。夜のうちに、洗い物は済ませました", "when": {"hour": [5, 9]}},
+			# 連続完走に反応する
+			{"t": "三日、続けて来ていますね。記録しています", "when": {"streak": 3}},
+			{"t": "七日。…あなたのほうが、わたしより規則正しい", "when": {"streak": 7}},
+			# 直前の出来事に反応する
+			{"t": "さっきの、大きいの。手が少し震えました", "when": {"after": "boss"}},
+			{"t": "…一度、途切れました。もう平気です", "when": {"after": "wipe"}},
+			# 物語の進行度に反応する（B6で自分の設計図を見た後）
+			{"t": "設計図を見てから、自分の手をよく見ます", "when": {"chapter": 6}},
+			{"t": "同じ図面の子が、どこかにいます。会いたくはありません", "when": {"chapter": 6}},
+			# 終幕の後（世界の見え方が変わる）
+			{"t": "今日も、わたしの席がありました。事実です", "when": {"chapter": 99}},
 			"店長。この階の照度は、店の厨房と同じです",
 			"歩数を数えています。意味はありません",
 			"雨の音は、ここにも届くのですね",
@@ -1264,6 +1278,77 @@ const EXCHANGES := [
 
 ## 状況 cat の中から、潜行中の誰かのセリフを1つ返す。
 ## divers: 今潜っている girl_id 配列。rng: UI側の非決定論RNG（ゲームに影響しない）。
+# ── 文脈タグ ────────────────────────────────────────────────────────────
+# セリフは文字列のままなら「無条件」。辞書にすると条件付きになる：
+#     {"t": "…もう三時です。寝ましょう", "when": {"hour": [0, 4]}}
+# 既存の1107本は全部そのまま生きる（文字列＝無条件）。
+#
+# when のキーは AND。指定が無いキーは判定しない。
+#   "hour"     [開始, 終了]  実時刻の時間帯（0-23。終了<開始なら日をまたぐ）
+#   "streak"   最小の連続完走日数
+#   "day"      最小の日数
+#   "floor"    最小の到達階
+#   "chapter"  最小の物語進行度（下の CHAPTER を参照）
+#   "memories" 最小の記憶収集数
+#   "after"    直前の出来事："boss" / "wipe" / "levelup" / "loot" / "gate"
+#
+# **条件付きの行は、条件が合ったとき優先して選ばれる**（PRIO_MATCHED）。
+# そうしないと1107本の無条件行に埋もれて、書いても一生出てこない。
+const PRIO_MATCHED := 0.62
+
+## 物語の進行度。events_seen から導出する（数字が大きいほど先）。
+## 節目を見た後にだけ言えることがある＝ストーリー深度でセリフが変わる、の軸。
+const CHAPTER := {
+	"intro_kiriko": 1, "tutorial": 1, "first_surface": 2,
+	"story_b3": 3, "story_b6": 6, "story_b10": 10, "story_finale": 99,
+}
+
+
+## 物語の進行度を1つの数字にする。UI からは sim.banter_context() 経由で渡る。
+static func chapter_of(events_seen: Array) -> int:
+	var c := 0
+	for e in events_seen:
+		var id := String(e)
+		if CHAPTER.has(id):
+			c = maxi(c, int(CHAPTER[id]))
+		elif id.begins_with("story_b"):
+			# story_b4 のように後から足された深度イベントも拾う（表に足し忘れても効く）
+			var n := id.substr(7)
+			if n.is_valid_int():
+				c = maxi(c, int(n))
+	return c
+
+
+## 行が文字列でも辞書でも本文を取り出す。
+static func text_of(line) -> String:
+	return String(line.get("t", "")) if line is Dictionary else String(line)
+
+
+## その行が今の文脈で言えるか。条件が無ければ常に true。
+static func _matches(line, ctx: Dictionary) -> bool:
+	if not (line is Dictionary):
+		return true
+	var w: Dictionary = line.get("when", {})
+	if w.is_empty():
+		return true
+	if w.has("hour"):
+		var h := int(ctx.get("hour", -1))
+		var a := int((w["hour"] as Array)[0])
+		var b := int((w["hour"] as Array)[1])
+		if h < 0:
+			return false
+		# 終了 < 開始 は日をまたぐ帯（例 22時〜4時）
+		var inside := (h >= a and h < b) if a <= b else (h >= a or h < b)
+		if not inside:
+			return false
+	for key in ["streak", "day", "floor", "memories", "chapter"]:
+		if w.has(key) and int(ctx.get(key, 0)) < int(w[key]):
+			return false
+	if w.has("after") and String(ctx.get("after", "")) != String(w["after"]):
+		return false
+	return true
+
+
 ## 直近に言ったセリフを避けて1本選ぶ。
 ## recent には「最近しゃべった本文」を新しい順で渡す（呼び出し側が保持する）。
 ##
@@ -1272,7 +1357,7 @@ const EXCHANGES := [
 ## 「さっき言ったことをもう一度言わない」だけで体感は大きく変わる。
 ## デスクトップの端に置きっぱなしにする作品なので、繰り返しは寿命に直結する。
 static func pick(cat: String, divers: Array, rng: RandomNumberGenerator,
-		recent: Array = []) -> Dictionary:
+		recent: Array = [], ctx: Dictionary = {}) -> Dictionary:
 	if divers.is_empty():
 		return {}
 	# 話者も直近を避ける（同じ子が続けて独り言を言わない）
@@ -1287,17 +1372,27 @@ static func pick(cat: String, divers: Array, rng: RandomNumberGenerator,
 	var pool: Array = LINES.get(gid, {}).get(cat, [])
 	if pool.is_empty():
 		return {}
-	# 直近で言った本文を除く。全部除かれるなら諦めて素の乱択（沈黙させない）
+	# ① 言えない行を落とす（条件付きで条件が合わないもの）
+	var sayable: Array = pool.filter(func(l): return _matches(l, ctx))
+	if sayable.is_empty():
+		sayable = pool.filter(func(l): return not (l is Dictionary))
+	if sayable.is_empty():
+		return {}
+	# ② 条件付きで「いま条件が合っている」行は優先する。
+	#    そうしないと大量の無条件行に埋もれて、文脈行を書いても出てこない。
+	var tagged: Array = sayable.filter(func(l): return l is Dictionary)
+	var chosen_pool: Array = sayable
+	if not tagged.is_empty() and rng.randf() < PRIO_MATCHED:
+		chosen_pool = tagged
+	# ③ 直近で言った本文を除く。全部除かれるなら諦める（沈黙させない）
 	var recent_texts := {}
 	for r in recent:
-		if r is Dictionary:
-			recent_texts[String(r.get("text", ""))] = true
-		else:
-			recent_texts[String(r)] = true
-	var fresh: Array = pool.filter(func(t): return not recent_texts.has(String(t)))
+		recent_texts[String(r.get("text", "")) if r is Dictionary else String(r)] = true
+	var fresh: Array = chosen_pool.filter(
+			func(l): return not recent_texts.has(text_of(l)))
 	if fresh.is_empty():
-		fresh = pool
-	return {"girl": gid, "text": String(fresh[rng.randi() % fresh.size()])}
+		fresh = chosen_pool
+	return {"girl": gid, "text": text_of(fresh[rng.randi() % fresh.size()])}
 
 
 ## 二人の掛け合いを1本返す（話者が全員潜行中のものから）。無ければ {}。

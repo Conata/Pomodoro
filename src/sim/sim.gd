@@ -1075,6 +1075,19 @@ func night_profit(d: Dictionary) -> int:
 	return int(d.get("gold", 0)) - int(d.get("served", 0)) * KuroData.MAT_COST
 
 
+## セリフ選択に渡す文脈。「大量のランダム」を「見てくれている」に変える軸。
+## 実時刻（hour）と直前の出来事（after）は UI 側が足す——シムは実時刻を持たないし、
+## 「さっき何が起きたか」は表示層の関心なので。
+func banter_context() -> Dictionary:
+	return {
+		"streak": int(state.get("streak", 0)),
+		"day": int(state["day"]),
+		"floor": current_floor() + 1,          # 表示と同じ1始まり
+		"memories": (state["memories"] as Array).size(),
+		"chapter": Banter.chapter_of(state["events_seen"]),
+	}
+
+
 func add_tips(amount: int) -> int:
 	amount = maxi(amount, 0)
 	state["gold"] = int(state["gold"]) + amount

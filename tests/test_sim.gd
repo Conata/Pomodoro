@@ -719,6 +719,30 @@ func _test_sync_level() -> void:
 			got.append(String(nm["id"]))
 	check(got.size() == KuroMemories.MEMORIES.size(), "B12まで潜れば全部拾える（%d/%d）"
 			% [got.size(), KuroMemories.MEMORIES.size()])
+	# 文脈でセリフが変わること。「大量のランダム」と「見てくれている」の差はここ。
+	var rngc := RandomNumberGenerator.new()
+	rngc.seed = 7
+	var day_ctx := {"hour": 14, "streak": 0, "day": 1, "chapter": 0, "after": ""}
+	var night_ctx := {"hour": 3, "streak": 0, "day": 1, "chapter": 0, "after": ""}
+	var late_ctx := {"hour": 14, "streak": 0, "day": 1, "chapter": 99, "after": ""}
+	var seen_day := {}
+	var seen_night := {}
+	var seen_late := {}
+	for i in 60:
+		seen_day[String(Banter.pick("idle", ["mil"], rngc, [], day_ctx).get("text", ""))] = true
+		seen_night[String(Banter.pick("idle", ["mil"], rngc, [], night_ctx).get("text", ""))] = true
+		seen_late[String(Banter.pick("idle", ["mil"], rngc, [], late_ctx).get("text", ""))] = true
+	check(seen_night.has("…三時です。店長、そろそろ休んでください"), "深夜には時刻の行が出る")
+	check(not seen_day.has("…三時です。店長、そろそろ休んでください"), "昼には深夜の行が出ない")
+	check(seen_late.has("今日も、わたしの席がありました。事実です"), "終幕の後の行が出る")
+	check(not seen_day.has("今日も、わたしの席がありました。事実です"),
+			"物語が進む前に終幕後の行が出ない（ネタバレ防止）")
+	check(not seen_day.has("設計図を見てから、自分の手をよく見ます"),
+			"B6より前に設計図の行が出ない")
+	# 章の導出：後から足した story_b4 のような id も拾う
+	check(Banter.chapter_of(["intro_kiriko"]) == 1, "導入だけなら章1")
+	check(Banter.chapter_of(["story_b4"]) == 4, "表に無い story_b4 も章4として拾う")
+	check(Banter.chapter_of(["story_finale", "story_b3"]) == 99, "終幕が最優先")
 	# 店番は6人から選べる。誰を選んでも精算が通ること（台詞プールの取りこぼしで落ちていた）
 	for kid in KuroData.GIRL_ORDER:
 		var sk := _fresh(90)

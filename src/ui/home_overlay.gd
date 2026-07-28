@@ -63,6 +63,11 @@ var _banter_rng := RandomNumberGenerator.new()
 ## ここに積んで Banter 側で避けてもらう。長さは在庫の目安（1キャラ16本×人数）より
 ## 小さくしないと候補が枯れて逆効果になる。
 var _banter_recent: Array = []
+## 直前に起きた出来事（"boss"/"wipe"/"levelup"/"loot"/"gate"）。
+## 少し経ったら空へ戻す＝「さっきの話」でいられる時間だけ反応させる。
+var _last_event := ""
+var _last_event_t := 0.0
+const LAST_EVENT_SEC := 25.0
 const BANTER_RECENT_MAX := 32
 
 # ── 登場（画面遷移に乗る）─────────────────────────────────────────────
@@ -99,6 +104,8 @@ func set_data(d: Dictionary) -> void:
 
 func _process(delta: float) -> void:
 	_t += delta
+	if _last_event != "" and _t - _last_event_t > LAST_EVENT_SEC:
+		_last_event = ""
 	_banter_t += delta
 	var interval := EXCHANGE_STEP if not _banter_q.is_empty() else BANTER_INTERVAL
 	if _banter_t >= interval:
@@ -178,7 +185,7 @@ func _advance_banter() -> void:
 			_banter_q = (ex["lines"] as Array).duplicate()
 			_advance_banter()
 			return
-	var pick := Banter.pick("idle", HOME_CAST, _banter_rng, _banter_recent)
+	var pick := Banter.pick("idle", HOME_CAST, _banter_rng, _banter_recent, _ctx())
 	if pick.is_empty():
 		return
 	var gid := String(pick["girl"])
@@ -550,3 +557,26 @@ func _footer(font: Font, sz: Vector2) -> void:
 		_txt(font, Vector2(cx - _tw(font, glyph, DS.T_SUB) * 0.5, fy + 30.0 - near * 2.0), glyph, DS.T_SUB, gcol)
 		var label := String(e["label"])
 		_txt(font, Vector2(cx - _tw(font, label, DS.T_MICRO) * 0.5, fy + 50), label, DS.T_MICRO, gcol)
+
+
+## セリフ選択へ渡す文脈。シムの進行度に、表示層しか知らない2つを足す。
+##   hour  … 実時刻（深夜に「まだ起きてるんですか」と言えるように）
+##   after … 直前の出来事（ボスの直後・全滅の直後に反応できるように）
+func _ctx() -> Dictionary:
+	var c := {}
+	var s := _find_sim()
+	if s != null and s.has_method("banter_context"):
+		c = s.banter_context()
+	c["hour"] = Time.get_datetime_dict_from_system().get("hour", 12)
+	c["after"] = _last_event
+	return c
+
+
+## 祖先から KuroSim を持つノードを探す（このビューは sim を直接持たない）。
+func _find_sim():
+	var n: Node = self
+	while n != null:
+		if n.get("sim") != null:
+			return n.get("sim")
+		n = n.get_parent()
+	return null

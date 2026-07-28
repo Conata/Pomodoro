@@ -162,6 +162,11 @@ var _banter_rng := RandomNumberGenerator.new()
 ## ここに積んで Banter 側で避けてもらう。長さは在庫の目安（1キャラ16本×人数）より
 ## 小さくしないと候補が枯れて逆効果になる。
 var _banter_recent: Array = []
+## 直前に起きた出来事（"boss"/"wipe"/"levelup"/"loot"/"gate"）。
+## 少し経ったら空へ戻す＝「さっきの話」でいられる時間だけ反応させる。
+var _last_event := ""
+var _last_event_t := 0.0
+const LAST_EVENT_SEC := 25.0
 const BANTER_RECENT_MAX := 32
 var _banter_wait := 3.0            # 次の自発バンターまでの秒
 var _banter_cd: Dictionary = {}    # カテゴリ別クールダウン（最終発話時刻）
@@ -202,6 +207,9 @@ static func _e_recoil(u: float) -> float:
 
 func _process(delta: float) -> void:
 	_t += delta
+	# 出来事の時効。ずっと「さっきボスがいた」と言い続けないように。
+	if _last_event != "" and _t - _last_event_t > LAST_EVENT_SEC:
+		_last_event = ""
 	# ヒットストップ：実時間で数えて、戦闘時計だけを止める。
 	# delta のうち「止まっていた分」だけを差し引く（フレームが長い端末で
 	# 1フレーム丸ごと止めてしまわない＝止める長さが fps に依存しない）。
@@ -236,7 +244,7 @@ func _process(delta: float) -> void:
 					if not ex.is_empty():
 						_start_exchange(ex)
 				else:
-					var pick := Banter.pick("combat" if in_combat else "idle", cast, _banter_rng, _banter_recent)
+					var pick := Banter.pick("combat" if in_combat else "idle", cast, _banter_rng, _banter_recent, _ctx())
 					if not pick.is_empty():
 						_say(String(pick["girl"]), String(pick["text"]))
 	queue_redraw()
@@ -295,7 +303,7 @@ func _banter_event(cat: String, chance: float, interrupt := false) -> void:
 			_bubble = {}
 			_start_exchange(ex)
 			return
-	var pick := Banter.pick(cat, cast, _banter_rng, _banter_recent)
+	var pick := Banter.pick(cat, cast, _banter_rng, _banter_recent, _ctx())
 	if pick.is_empty():
 		return
 	_banter_cd[cat] = _t
@@ -422,7 +430,12 @@ func set_view(d: Dictionary) -> void:
 ## 「誰が殴って→誰に当たって→いくら出たか」の因果を1画面で読めるようにする。
 func add_events(events: Array) -> void:
 	for e in events:
-		match String(e.get("kind", "")):
+		# 「さっき何が起きたか」を控える。セリフの文脈に使う（after）。
+		var k := String(e.get("kind", ""))
+		if k in ["boss", "resync", "levelup", "loot", "gate"]:
+			_last_event = "wipe" if k == "resync" else k
+			_last_event_t = _t
+		match k:
 			"dmg_pop":
 				var val := int(e.get("val", 0))
 				if String(e.get("at", "enemy")) == "enemy":
@@ -2078,3 +2091,26 @@ func _draw_pips(top: Vector2, ready: int, slots: int) -> void:
 		_octagon(pc, 3.2, GOLD if i < ready else Color(0.32, 0.33, 0.40))
 		if i < ready:
 			_octagon(pc, 1.4, NEON_CORE)
+
+
+## セリフ選択へ渡す文脈。シムの進行度に、表示層しか知らない2つを足す。
+##   hour  … 実時刻（深夜に「まだ起きてるんですか」と言えるように）
+##   after … 直前の出来事（ボスの直後・全滅の直後に反応できるように）
+func _ctx() -> Dictionary:
+	var c := {}
+	var s := _find_sim()
+	if s != null and s.has_method("banter_context"):
+		c = s.banter_context()
+	c["hour"] = Time.get_datetime_dict_from_system().get("hour", 12)
+	c["after"] = _last_event
+	return c
+
+
+## 祖先から KuroSim を持つノードを探す（このビューは sim を直接持たない）。
+func _find_sim():
+	var n: Node = self
+	while n != null:
+		if n.get("sim") != null:
+			return n.get("sim")
+		n = n.get_parent()
+	return null
