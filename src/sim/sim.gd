@@ -82,6 +82,9 @@ static func new_state(seed_value: int) -> Dictionary:
 		"ship": {"stock": [], "rotated": 0.0},
 		"stats": {"days": 0, "focus_min": 0.0, "dives": 0},
 		"events_seen": [],
+		# 終幕でどちらを選んだか（"" 未到達 / "a" まだいてほしい / "b" わかった）。
+		# 選んだ後の日常のセリフが変わる。
+		"finale_pick": "",
 		"difficulty": 0,        # 難易度（0..3＝ノーマル..トーメント）
 		"stage_sel": -1,        # 選択ステージ（0始まりの階。-1＝従来のチェックポイント続行）
 		"stage_clear": {"0": -1, "1": -1, "2": -1, "3": -1},  # 難易度別クリア済み最深階
@@ -1085,6 +1088,7 @@ func banter_context() -> Dictionary:
 		"floor": current_floor() + 1,          # 表示と同じ1始まり
 		"memories": (state["memories"] as Array).size(),
 		"chapter": Banter.chapter_of(state["events_seen"]),
+		"pick": String(state.get("finale_pick", "")),
 	}
 
 

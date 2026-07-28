@@ -743,6 +743,28 @@ func _test_sync_level() -> void:
 	check(Banter.chapter_of(["intro_kiriko"]) == 1, "導入だけなら章1")
 	check(Banter.chapter_of(["story_b4"]) == 4, "表に無い story_b4 も章4として拾う")
 	check(Banter.chapter_of(["story_finale", "story_b3"]) == 99, "終幕が最優先")
+	# 文脈の仕組みそのものが生きていること（並列編集で消えやすいので番人を置く）
+	check(Banter.PRIO_MATCHED > 0.0, "条件が合った行を優先する仕組みがある")
+	check(Banter.text_of("そのまま") == "そのまま", "文字列の行は本文をそのまま返す")
+	check(Banter.text_of({"t": "辞書の行"}) == "辞書の行", "辞書の行も本文を返せる")
+	# 終幕の選択が文脈に効くこと
+	var lp := [{"t": "A専用", "when": {"pick": "a"}}, {"t": "B専用", "when": {"pick": "b"}}]
+	var hit_a := 0
+	var hit_b := 0
+	for l in lp:
+		if Banter._matches(l, {"pick": "a"}):
+			hit_a += 1
+		if Banter._matches(l, {"pick": "b"}):
+			hit_b += 1
+	check(hit_a == 1 and hit_b == 1, "終幕の答えでセリフが振り分けられる")
+	# 終幕は2択を持ち、どちらも返答を持つこと
+	var fin: Dictionary = EventData.EVENTS["story_finale"]
+	check(fin.has("a") and fin.has("b"), "終幕に2択がある")
+	for k in ["a", "b"]:
+		check((fin[k].get("r", []) as Array).size() >= 3, "終幕の%sに返答がある" % k)
+		check(String(fin[k].get("t", "")) != "", "終幕の%sに選択肢の文言がある" % k)
+	# 新規セーブは終幕未到達
+	check(String(_fresh(91).state.get("finale_pick", "x")) == "", "新規セーブは終幕の答えが空")
 	# 店番は6人から選べる。誰を選んでも精算が通ること（台詞プールの取りこぼしで落ちていた）
 	for kid in KuroData.GIRL_ORDER:
 		var sk := _fresh(90)

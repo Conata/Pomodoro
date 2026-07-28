@@ -19,7 +19,7 @@ var _fail := 0
 var _log: Array = []
 var _errors_before := 0
 
-const PANELS := ["management", "member", "market", "workshop", "renov", "map", "memory"]
+const PANELS := ["management", "member", "market", "workshop", "renov", "map", "memory", "settings"]
 
 
 func _ck(cond: bool, label: String) -> void:

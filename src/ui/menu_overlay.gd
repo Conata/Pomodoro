@@ -38,6 +38,7 @@ const PANEL_TITLES := {
 	"renov": "経営 — 改装ツリー",
 	"workshop": "工房 — Cube 装備加工",
 	"memory": "記憶 — 拾った断片",
+	"settings": "設定 — 音",
 }
 # パネル毎の背景アートとアクセント（世界観の奥行き。Kit.backdrop で敷く）
 const PANEL_BG_ART := {
@@ -55,6 +56,8 @@ const PANEL_ACCENT := {
 	"map": CYAN, "member": PINK, "market": GOLD, "management": PURPLE, "renov": PURPLE, "workshop": CYAN,
 	# 記憶＝キリコの色（DS の3軸のうち紫）。物語のために色は増やさない。
 	"memory": PURPLE,
+	# 設定＝ホーム上部の「設定」アイコンと同じ色（同じ物には同じ色）。
+	"settings": CYAN,
 }
 
 var sim = null                 # KuroSim 参照（main.gd が bind() で渡す）
@@ -631,6 +634,36 @@ func _segment2(font: Font, r: Rect2, a: String, b: String, first: bool,
 			_hit(cell, String(ids[i]))
 
 
+## N択のセグメント（_segment2 の一般形）。見た目は同じ約束：
+## 選ばれている升＝識別色のベタ板＋影、選ばれていない升＝暗い板＋細い縁。
+## 音量の5段（0/25/50/75/100）とミュートの2択がこれを使う。
+func _segment_n(font: Font, r: Rect2, labels: Array, ids: Array, on_i: int, ac: Color,
+		size := DS.T_SUB) -> void:
+	var n := labels.size()
+	if n <= 0:
+		return
+	var gap := float(DS.SP_1)
+	var cw := (r.size.x - gap * (n - 1)) / float(n)
+	for i in n:
+		var cell := Rect2(r.position.x + i * (cw + gap), r.position.y, cw, r.size.y)
+		var on := i == on_i
+		var pv := _begin_sink(cell)
+		if on:
+			Kit.slab(self, Rect2(cell.position.x + 5.0, cell.position.y + 6.0, cell.size.x - 5.0, cell.size.y),
+					Color(0, 0, 0, 0.72), 10.0)
+			Kit.slab(self, cell, ac, 10.0)
+		else:
+			Kit.slab(self, cell, Color(0.03, 0.028, 0.05, 0.88), 10.0)
+			Kit.slab_edge(self, cell, Color(1, 1, 1, 0.14), 10.0, 1.0)
+		var lbl := String(labels[i])
+		_txt(font, Vector2(cell.position.x + (cell.size.x - _tw(font, lbl, size)) * 0.5,
+				cell.position.y + r.size.y * 0.5 + size * 0.36), lbl, size,
+				DS.on(ac) if on else DS.TEXT_2)
+		_end_sink(pv)
+		if not on:
+			_hit(cell, String(ids[i]))
+
+
 func _draw() -> void:
 	var sz := size
 	var font := get_theme_default_font()
@@ -688,6 +721,7 @@ func _draw() -> void:
 			"renov": _draw_renov(font, sz)
 			"workshop": _draw_workshop(font, sz)
 			"memory": _draw_memory(font, sz)
+			"settings": _draw_settings(font, sz)
 		_set_xf(Vector2.ZERO)
 		_draw_enter_wipe(sz, accent)
 	_set_xf(f_ofs)
@@ -2302,6 +2336,135 @@ func _mem_ledger(font: Font, r: Rect2, ac: Color) -> void:
 		msg = "条件は満たされている。"
 		col = DS.SUCCESS
 	_strip(font, Rect2(body.position.x + 12.0, body.end.y - 54.0, body.size.x - 24.0, 42.0), msg, col)
+
+
+# ── 設定（音）────────────────────────────────────────────────────────────────
+# 効果音とBGMは別々の段階（0/25/50/75/100）で、全体ミュートは Master で落とす。
+# **画面は状態を持たない**：値はセーブ（sim.state["audio"]）、実際の音量は
+# AudioServer のバス。ここは「セーブの段階」を出し、「バスの実測 dB」を並べて
+# 見せるだけ＝設定が効いていることを、言葉ではなく数字で示す。
+# main.gd と同じバス名（main.gd は class_name を持たないので定数は引けない）。
+const BUS_SFX := "SFX"
+const BUS_BGM := "BGM"
+
+
+func _draw_settings(font: Font, sz: Vector2) -> void:
+	var ac := CYAN
+	var w := sz.x - M * 2.0
+	var bot := sz.y - FOOTER_H
+	var a: Dictionary = SaveGame.normalize_audio(sim.state)
+	var steps: Array = SaveGame.AUDIO_STEPS
+	var labels: Array = []
+	for s in steps:
+		labels.append("%d%%" % int(s))
+	var y := HEADER_H + 12.0
+
+	# ① 効果音（1日387発の出口。ここが最優先）--------------------------------
+	_stag()
+	y = _sec(font, y, w, "効果音 音量", ac, "命中・撃破・UI・夜営業")
+	var ids: Array = []
+	for s in steps:
+		ids.append("vol:sfx:%d" % int(s))
+	_segment_n(font, Rect2(M, y, w, 72.0), labels, ids, steps.find(int(a["sfx"])), ac)
+	y += 88.0
+	# 試聴＝いまの段階のまま鳴らし直す（同じ値を送るので設定は動かない）
+	_stag()
+	_btn(font, Rect2(M, y, w, 52.0), "▶ この音量で鳴らしてみる", ac,
+			"vol:sfx:%d" % int(a["sfx"]), int(a["sfx"]) > 0 and not bool(a["mute"]))
+	y += 76.0
+
+	# ② BGM（店／潜航／戦闘レイヤーの3本まとめて）----------------------------
+	_stag()
+	y = _sec(font, y, w, "BGM 音量", ac, "店・潜航・戦闘の3本")
+	var bids: Array = []
+	for s in steps:
+		bids.append("vol:bgm:%d" % int(s))
+	_segment_n(font, Rect2(M, y, w, 72.0), labels, bids, steps.find(int(a["bgm"])), ac)
+	y += 96.0
+
+	# ③ 全体ミュート（段階ではなく2択）--------------------------------------
+	_stag()
+	y = _sec(font, y, w, "全体ミュート", ac, "Master でまとめて落とす")
+	var muted := bool(a["mute"])
+	_segment_n(font, Rect2(M, y, w, 72.0), ["鳴らす", "ミュート"],
+			["mute:0", "mute:1"], 1 if muted else 0, DS.DANGER if muted else ac)
+	y += 96.0
+
+	# ④ 結論ブロック：音の経路（AudioServer の実測値をそのまま出す）---------
+	_stag()
+	_route_block(font, Rect2(M, y, w, bot - 12.0 - y), ac, muted)
+
+
+## 「音の経路」＝この画面の結論。プレイヤー→バス→Master をそのまま3行で置き、
+## 各行の dB は AudioServer から読む（UI が計算し直さない＝嘘をつけない）。
+func _route_block(font: Font, r: Rect2, ac: Color, muted: bool) -> void:
+	var body := _conc(font, r, "音の経路", "AudioServer", ac)
+	var rows := [
+		{"tag": "音", "title": "効果音 ×4", "sub": "_sfx() の唯一の出口", "bus": BUS_SFX, "key": "bus_sfx"},
+		{"tag": "曲", "title": "BGM ×3", "sub": "店・潜航・戦闘レイヤー", "bus": BUS_BGM, "key": "bus_bgm"},
+	]
+	var gap := float(DS.SP_2)
+	var strip_h := 42.0
+	# 3行（SFX / BGM / Master）で結論ブロックを埋め切る。縦が余ったら行が伸びる
+	# ＝画面の下半分に穴が空かない（結論ブロックは下端固定で高さ可変）。
+	var rh := clampf((body.size.y - 24.0 - strip_h - 12.0 - gap * rows.size()) / (rows.size() + 1),
+			64.0, 152.0)
+	var y := body.position.y + 16.0
+	for row in rows:
+		_route_row(font, Rect2(body.position.x + 14.0, y, body.size.x - 28.0, rh), row, ac)
+		y += rh + gap
+	# Master は合流点。数値ではなく状態（ミュートかどうか）だけを言う
+	var mr := Rect2(body.position.x + 14.0, y, body.size.x - 28.0, rh)
+	var mcol := DS.DANGER if muted else DS.SUCCESS
+	_panel(mr, Color(mcol.r * 0.16, mcol.g * 0.14, mcol.b * 0.18, 0.9), Color(mcol.r, mcol.g, mcol.b, 0.6))
+	_route_tag(font, Rect2(mr.position.x + 10.0, mr.position.y + 10.0, 56.0, mr.size.y - 20.0), "主", mcol)
+	var mid := mr.position.y + mr.size.y * 0.5
+	_txt(font, Vector2(mr.position.x + 84.0, mid - 2.0), "Master", DS.T_SUB, TEXT)
+	_txt(font, Vector2(mr.position.x + 84.0, mid + 22.0), "2本のバスが合流する", DS.T_MICRO, TEXT_DIM)
+	var ms := "ミュート中" if muted else "鳴っている"
+	_txt(font, Vector2(mr.end.x - _tw(font, ms, DS.T_SUB) - 20.0, mid + 8.0), ms, DS.T_SUB, mcol)
+	# 締めの一行（設定はその場で効く、を明言する）
+	_strip(font, Rect2(body.position.x + 12.0, body.end.y - strip_h - 12.0, body.size.x - 24.0, strip_h),
+			"変更はその場で反映され、そのまま保存される", ac if not muted else mcol)
+
+
+## 経路の1行：黒板の札 → 名前 → そのバスの実測 dB。
+func _route_row(font: Font, r: Rect2, row: Dictionary, ac: Color) -> void:
+	var idx := AudioServer.get_bus_index(String(row["bus"]))
+	var db := AudioServer.get_bus_volume_db(idx) if idx >= 0 else -80.0
+	var off := idx < 0 or AudioServer.is_bus_mute(idx)
+	var col := TEXT_DIM if off else ac
+	_panel(r, Color(0.05, 0.05, 0.08, 0.92), Color(col.r, col.g, col.b, 0.45))
+	_route_tag(font, _tag_rect(r),
+			String(row["tag"]), col)
+	var mid := r.position.y + r.size.y * 0.5
+	_txt(font, Vector2(r.position.x + 84.0, mid - 2.0), String(row["title"]), DS.T_SUB, TEXT)
+	_txt(font, Vector2(r.position.x + 84.0, mid + 22.0), String(row["sub"]), DS.T_MICRO, TEXT_DIM)
+	# 右端に「→ バス名」と実測 dB（無音の段は数字ではなく無音と言う）
+	var bl := "→ %s" % String(row["bus"])
+	_txt(font, Vector2(r.end.x - 190.0, mid - 2.0), bl, DS.T_MICRO, TEXT_DIM)
+	if off:
+		_txt(font, Vector2(r.end.x - _tw(font, "無音", DS.T_SUB) - 20.0, mid + 22.0), "無音", DS.T_SUB, TEXT_DIM)
+	else:
+		# dB は小数第1位まで出す（-2.5 を -3 と丸めたら、それはもう実測ではない）
+		var s := "%.1f" % db
+		var uw := _tw(font, "dB", DS.T_MICRO)
+		_txt(font, Vector2(r.end.x - uw - 18.0, mid + 22.0), "dB", DS.T_MICRO, TEXT_DIM)
+		_txt(font, Vector2(r.end.x - uw - 26.0 - _tw(font, s, DS.T_SUB), mid + 22.0), s, DS.T_SUB, col)
+
+
+## 札の位置：行が縦に伸びても札は伸ばさない（縦長の黒板にしない）。
+func _tag_rect(r: Rect2) -> Rect2:
+	var h := minf(r.size.y - 20.0, 64.0)
+	return Rect2(r.position.x + 10.0, r.position.y + (r.size.y - h) * 0.5, 56.0, h)
+
+
+## 経路の札（記憶の階票と同じ黒板）。
+func _route_tag(font: Font, r: Rect2, glyph: String, col: Color) -> void:
+	Kit.slab(self, r, Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.95), 6.0)
+	Kit.slab_edge(self, r, Color(col.r, col.g, col.b, 0.6), 6.0, 1.0)
+	_txt(font, Vector2(r.position.x + (r.size.x - _tw(font, glyph, DS.T_SUB)) * 0.5 + 2.0,
+			r.position.y + r.size.y * 0.5 + 9.0), glyph, DS.T_SUB, TEXT)
 
 
 # ── フッター・トースト ────────────────────────────────────────────────────────

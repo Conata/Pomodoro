@@ -147,6 +147,7 @@ func _announce_current_line() -> void:
 
 func _on_choice(which: String) -> void:
 	picked = true
+	_meta["pick"] = which   # どちらを選んだかを終了時に持ち帰る（終幕の分岐を記録するため）
 	queue = scene_data[which]["r"].duplicate()
 	choice_a.visible = false
 	choice_b.visible = false

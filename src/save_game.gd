@@ -5,6 +5,13 @@ extends RefCounted
 
 const PATH := "user://kuroneko-v3.json"
 
+# ── 音の設定 ────────────────────────────────────────────────────────────────
+# スライダーはこのプロジェクトに無いので、音量は5段の段階選択で持つ。
+# ここは「何を保存するか」だけを決める。実際にどう鳴らすか（バスの dB）は
+# main.gd の _apply_audio() が1箇所で受け持つ。
+const AUDIO_STEPS := [0, 25, 50, 75, 100]
+const AUDIO_DEFAULT := {"sfx": 100, "bgm": 75, "mute": false}
+
 
 static func save_state(state: Dictionary) -> void:
 	var f := FileAccess.open(PATH, FileAccess.WRITE)
@@ -133,6 +140,8 @@ static func normalize(s: Dictionary) -> Dictionary:
 		s["ship"] = {"stock": [], "rotated": 0.0}
 	if not s.has("events_seen"):
 		s["events_seen"] = []
+	if not s.has("finale_pick"):
+		s["finale_pick"] = ""
 	if not s.has("memories"):
 		s["memories"] = []
 	if not s.get("stage_clear") is Dictionary:
@@ -141,7 +150,49 @@ static func normalize(s: Dictionary) -> Dictionary:
 		s["stage_clear"][str(d)] = int((s["stage_clear"] as Dictionary).get(str(d), -1))
 	s["difficulty"] = int(s.get("difficulty", 0))
 	s["stage_sel"] = int(s.get("stage_sel", -1))
+	normalize_audio(s)   # 音の設定が無い古いセーブでも既定値で通す
 	return s
+
+
+## 音の設定を既定値で補い、段階に吸着させて返す（戻り値＝正規化後の辞書）。
+## normalize から呼ぶほか、main.gd が新規開始時にも直接呼ぶ
+## （新規状態は KuroSim.new_state が作り、normalize を通らないため）。
+## JSON 経由で int が float になる・型が壊れている・未知の値が入っている、の
+## どれでも落ちないこと＝ここに来る値は一切信用しない。
+static func normalize_audio(s: Dictionary) -> Dictionary:
+	var raw: Dictionary = s["audio"] if s.get("audio") is Dictionary else {}
+	var a := {
+		"sfx": audio_snap(raw.get("sfx", AUDIO_DEFAULT["sfx"]), int(AUDIO_DEFAULT["sfx"])),
+		"bgm": audio_snap(raw.get("bgm", AUDIO_DEFAULT["bgm"]), int(AUDIO_DEFAULT["bgm"])),
+		"mute": _audio_bool(raw.get("mute", AUDIO_DEFAULT["mute"])),
+	}
+	s["audio"] = a
+	return a
+
+
+## 真偽値の復元。bool("yes") は Godot 4 に存在せず落ちるので、型を見てから畳む。
+static func _audio_bool(v: Variant) -> bool:
+	if v is bool:
+		return v
+	if v is int or v is float:
+		return float(v) != 0.0
+	if v is String:
+		return String(v).to_lower() in ["true", "1", "yes", "on"]
+	return false
+
+
+## 任意の値を AUDIO_STEPS のいずれかへ吸着（範囲外は最寄りの段、数値でなければ既定）。
+static func audio_snap(v: Variant, def := 100) -> int:
+	var n := def
+	if v is int or v is float:
+		n = int(round(float(v)))
+	elif v is String and (v as String).is_valid_float():
+		n = int(round(float(v)))
+	var best: int = AUDIO_STEPS[0]
+	for step in AUDIO_STEPS:
+		if absi(int(step) - n) < absi(best - n):
+			best = int(step)
+	return best
 
 
 static func _normalize_items(items: Array) -> void:

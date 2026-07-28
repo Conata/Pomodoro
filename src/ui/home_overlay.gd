@@ -573,7 +573,7 @@ func _ctx() -> Dictionary:
 
 
 ## 祖先から KuroSim を持つノードを探す（このビューは sim を直接持たない）。
-func _find_sim():
+func _find_sim() -> Variant:
 	var n: Node = self
 	while n != null:
 		if n.get("sim") != null:

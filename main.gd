@@ -76,6 +76,7 @@ func _ready() -> void:
 		sim = KuroSim.new()           # 新規（gold 120 / day 1）
 	else:
 		sim = KuroSim.new(loaded)     # セーブから再開
+	_apply_audio()   # セーブの音設定をバスへ（新規なら既定値を state に入れて反映）
 	# 常駐シート：メニュー（6パネル）とリザルト。世界の上の CanvasLayer に載せ、
 	# visible の開閉だけで使い回す（シーン切替しない＝下の世界は生きたまま）。
 	var sheet_layer := CanvasLayer.new()
@@ -205,10 +206,57 @@ func _mmss(sec: float) -> String:
 
 # ── オーディオ（旧メイン同方式・簡約）────────────────────────────────────────
 
+## オーディオバス。Master の下に SFX / BGM の2本を置き、プレイヤーはそこへ流す。
+## 音量・ミュートは**バスの側だけ**を触る＝_sfx() の呼び出し（十数箇所）も
+## _fade() のクロスフェードも一切知らなくてよく、音が増えても壊れない。
+const BUS_SFX := "SFX"
+const BUS_BGM := "BGM"
+const MUTE_DB := -80.0   # 0% は無音（linear_to_db(0) は -inf でバスに入れられない）
+
+
+## SFX / BGM バスを用意する（既にあれば何もしない）。
+## project.godot にバスレイアウトを置かず実行時に組むので、
+## エクスポート先・テスト・エディタのどれで起動しても同じ構成になる。
+func _ensure_buses() -> void:
+	for bus_name in [BUS_SFX, BUS_BGM]:
+		if AudioServer.get_bus_index(bus_name) >= 0:
+			continue
+		var idx := AudioServer.bus_count
+		AudioServer.add_bus(idx)
+		AudioServer.set_bus_name(idx, bus_name)
+		AudioServer.set_bus_send(idx, "Master")
+
+
+## 段階（0/25/50/75/100）→ バスの dB。0 は -80dB（＋バス自体もミュート）。
+static func _vol_db(pct: int) -> float:
+	if pct <= 0:
+		return MUTE_DB
+	return linear_to_db(clampf(float(pct) / 100.0, 0.0, 1.0))
+
+
+## セーブの音設定を AudioServer へ流し込む。設定を変えた直後にも呼ぶ＝
+## 次回起動を待たずにその場で音量が変わる。
+func _apply_audio() -> void:
+	_ensure_buses()
+	var a: Dictionary = SaveGame.normalize_audio(sim.state) if sim != null \
+			else (SaveGame.AUDIO_DEFAULT as Dictionary).duplicate()
+	for pair in [[BUS_SFX, int(a["sfx"])], [BUS_BGM, int(a["bgm"])]]:
+		var idx := AudioServer.get_bus_index(String(pair[0]))
+		if idx < 0:
+			continue
+		var pct := int(pair[1])
+		AudioServer.set_bus_volume_db(idx, _vol_db(pct))
+		AudioServer.set_bus_mute(idx, pct <= 0)
+	# 全体ミュートは Master で落とす＝将来バスが増えても取りこぼさない
+	AudioServer.set_bus_mute(0, bool(a["mute"]))
+
+
 func _build_audio() -> void:
+	_ensure_buses()
 	for i in 4:
 		var p := AudioStreamPlayer.new()
-		p.volume_db = -8.0
+		p.volume_db = SFX_BASE_DB
+		p.bus = BUS_SFX
 		add_child(p)
 		_sfx_pool.append(p)
 	# ElevenLabs(mp3) > 手続き生成(wav) > CC0 の順で優先（旧メインと同じ選好）
@@ -243,13 +291,14 @@ func _make_loop(path: String, vol_db: float) -> AudioStreamPlayer:
 		stream.loop_end = int(stream.get_length() * stream.mix_rate)
 	p.stream = stream
 	p.volume_db = vol_db
+	p.bus = BUS_BGM   # クロスフェード（_fade）はプレイヤー側、ユーザー設定はバス側
 	add_child(p)
 	return p
 
 
-## 効果音の基準音量。プールの各プレイヤーはここを起点に vol_db を足し引きする。
-## 将来ミュート／音量設定を付けるなら、触るのはこの1箇所だけで済む
-## （効果音の再生経路は _sfx() 一本に絞ってある）。
+## 効果音の基準音量（ミックス上の定位）。プールの各プレイヤーはここを起点に
+## vol_db を足し引きする。**ユーザー設定はここではなく SFX バス**が持つ＝
+## 呼び出し側の dB はミックスの意図のまま、音量調整だけが後から乗る。
 const SFX_BASE_DB := -8.0
 
 ## 効果音を1発（mp3優先→生成wav→サードパーティwav）。プールを巡回。
@@ -505,6 +554,12 @@ func _start_result_talk() -> void:
 ## イベント（kind=event）は好感度を動かさない——物語は報酬ではないので。
 func _on_talk_finished(meta: Dictionary) -> void:
 	if String(meta.get("kind", "")) == "event":
+		# 終幕でどちらを選んだかを控える。以降の日常のセリフがこれで変わる。
+		if String(meta.get("id", "")) == "story_finale" and sim != null:
+			var pick := String(meta.get("pick", ""))
+			if pick != "":
+				sim.state["finale_pick"] = pick
+				_save()
 		if _talk_view != null:
 			_talk_view.visible = false
 		_maybe_event()   # 続けて出すものがあれば連鎖させる（導入→説明の順）
@@ -544,7 +599,12 @@ func _next_event_id() -> String:
 		["tutorial", true],
 		["first_surface", dives >= 1 and not bool(sim.state["run"]["active"])],
 		["story_b3", best >= 3],
+		["story_b4", best >= 4],
+		["story_b5", best >= 5],
 		["story_b6", best >= 6],
+		["story_b7", best >= 7],
+		["story_b8", best >= 8],
+		["story_b9", best >= 9],
 		["story_b10", best >= 10],
 		["story_day3", day >= 3],
 		# 終幕は docs/STORY.md 8節の確定どおり「メモリ全収集 ＋ B10到達」。
@@ -689,8 +749,11 @@ func _on_home_action(id: String) -> void:
 		"menu", "cat":
 			# ホーム上部の ≡／猫 はメニュー（メンバー）への近道。
 			_open_menu("member")
-		"settings", "bell":
-			# 設定・通知は未実装（旧版から未移植）。
+		"settings":
+			# ホーム上部の「設定」＝音の設定（効果音／BGM／全体ミュート）。
+			_open_menu("settings")
+		"bell":
+			# 通知は未実装（旧版から未移植）。
 			print("[home] action(未実装): ", id)
 		_:
 			_on_menu_action(id)
@@ -730,6 +793,7 @@ func _on_menu_action(id: String) -> void:
 		"socket_storage": 3, "remove_gem": 3, "stage": 2, "diff": 2,
 		"unequip": 3,
 		"restock": 2,
+		"vol": 3, "mute": 2,
 	}
 	if need.has(verb) and parts.size() < int(need[verb]):
 		return
@@ -845,6 +909,25 @@ func _on_menu_action(id: String) -> void:
 			var socketed := sim.socket_gem(int(parts[1]), parts[2])
 			_sfx("ui_equip" if socketed else "ui_denied", 0.0, 1.12 if socketed else 1.0)
 			toast = "装飾を嵌めた" if socketed else "装飾できない"
+		"vol":
+			# "vol:sfx:50" / "vol:bgm:75"。段階はセーブ側（SaveGame.audio_snap）が決める。
+			var ch := String(parts[1])
+			if ch != "sfx" and ch != "bgm":
+				return
+			var a: Dictionary = SaveGame.normalize_audio(sim.state)
+			a[ch] = SaveGame.audio_snap(parts[2])
+			_apply_audio()          # 次回起動を待たせない＝この場でバスが変わる
+			if ch == "sfx":
+				_sfx("ui_confirm")  # 変えた音量でその場で1発鳴らす（耳で確かめられる）
+			toast = "%s 音量 %d%%" % ["効果音" if ch == "sfx" else "BGM", int(a[ch])]
+		"mute":
+			# "mute:1" / "mute:0"（トグルではなく行き先を送る＝連打しても迷子にならない）
+			var am: Dictionary = SaveGame.normalize_audio(sim.state)
+			am["mute"] = int(parts[1]) != 0
+			_apply_audio()
+			if not bool(am["mute"]):
+				_sfx("ui_confirm")  # 解除した瞬間だけ鳴らす（ミュート側で鳴らしたら嘘になる）
+			toast = "全体ミュート" if bool(am["mute"]) else "ミュート解除"
 		"remove_gem":
 			var pulled := sim.remove_gem(int(parts[1]), int(parts[2]))
 			_sfx("ui_equip" if pulled else "ui_denied", 0.0, 0.9 if pulled else 1.0)
