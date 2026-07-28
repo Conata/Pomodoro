@@ -183,19 +183,46 @@ const EXCHANGES := [
 
 ## 状況 cat の中から、潜行中の誰かのセリフを1つ返す。
 ## divers: 今潜っている girl_id 配列。rng: UI側の非決定論RNG（ゲームに影響しない）。
-static func pick(cat: String, divers: Array, rng: RandomNumberGenerator) -> Dictionary:
+## 直近に言ったセリフを避けて1本選ぶ。
+## recent には「最近しゃべった本文」を新しい順で渡す（呼び出し側が保持する）。
+##
+## なぜ要るか：素の乱択だと、25分の潜航で 286本しゃべって種類は81種、
+## 重複72%（同じセリフが最大10回）だった。在庫を増やす前に、まず
+## 「さっき言ったことをもう一度言わない」だけで体感は大きく変わる。
+## デスクトップの端に置きっぱなしにする作品なので、繰り返しは寿命に直結する。
+static func pick(cat: String, divers: Array, rng: RandomNumberGenerator,
+		recent: Array = []) -> Dictionary:
 	if divers.is_empty():
 		return {}
-	var gid: String = divers[rng.randi() % divers.size()]
+	# 話者も直近を避ける（同じ子が続けて独り言を言わない）
+	var speakers: Array = divers.duplicate()
+	if recent.size() > 0 and speakers.size() > 1:
+		var last_g := String((recent[0] as Dictionary).get("girl", "")) if recent[0] is Dictionary else ""
+		if last_g != "":
+			var alt := speakers.filter(func(g): return String(g) != last_g)
+			if not alt.is_empty():
+				speakers = alt
+	var gid: String = speakers[rng.randi() % speakers.size()]
 	var pool: Array = LINES.get(gid, {}).get(cat, [])
 	if pool.is_empty():
 		return {}
-	return {"girl": gid, "text": String(pool[rng.randi() % pool.size()])}
+	# 直近で言った本文を除く。全部除かれるなら諦めて素の乱択（沈黙させない）
+	var recent_texts := {}
+	for r in recent:
+		if r is Dictionary:
+			recent_texts[String(r.get("text", ""))] = true
+		else:
+			recent_texts[String(r)] = true
+	var fresh: Array = pool.filter(func(t): return not recent_texts.has(String(t)))
+	if fresh.is_empty():
+		fresh = pool
+	return {"girl": gid, "text": String(fresh[rng.randi() % fresh.size()])}
 
 
 ## 二人の掛け合いを1本返す（話者が全員潜行中のものから）。無ければ {}。
 ## 返りは {"lines": [[girl, text], ...]}（main がbubbleを順に流す）。
-static func pick_exchange(divers: Array, rng: RandomNumberGenerator) -> Dictionary:
+static func pick_exchange(divers: Array, rng: RandomNumberGenerator,
+		recent: Array = []) -> Dictionary:
 	var avail := []
 	for ex in EXCHANGES:
 		var ok := true
@@ -207,4 +234,12 @@ static func pick_exchange(divers: Array, rng: RandomNumberGenerator) -> Dictiona
 			avail.append(ex)
 	if avail.is_empty():
 		return {}
+	# 直近に流した掛け合いを避ける（1本目の本文で同一視する）
+	var rt := {}
+	for r in recent:
+		rt[String(r.get("text", "")) if r is Dictionary else String(r)] = true
+	var fresh: Array = avail.filter(
+			func(e): return not rt.has(String(((e["lines"] as Array)[0] as Array)[1])))
+	if not fresh.is_empty():
+		avail = fresh
 	return avail[rng.randi() % avail.size()]

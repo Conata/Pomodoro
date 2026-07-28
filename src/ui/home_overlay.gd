@@ -59,6 +59,11 @@ var _gold_pos := Vector2(120.0, 38.0)
 var _banter_t   := 0.0
 var _banter_q: Array = []
 var _banter_rng := RandomNumberGenerator.new()
+## 直近にしゃべった本文（新しい順）。素の乱択だと25分で重複72%になるので、
+## ここに積んで Banter 側で避けてもらう。長さは在庫の目安（1キャラ16本×人数）より
+## 小さくしないと候補が枯れて逆効果になる。
+var _banter_recent: Array = []
+const BANTER_RECENT_MAX := 32
 
 # ── 登場（画面遷移に乗る）─────────────────────────────────────────────
 # main.gd の暗幕は 0.32s で明ける。こちらはそれに合わせて、上から順に
@@ -162,22 +167,31 @@ func _advance_banter() -> void:
 		var gid := String(ln[0])
 		speaker = String((KuroData.GIRLS.get(gid, {}) as Dictionary).get("name", gid))
 		line = String(ln[1])
+		_note_said(gid, line)
 		return
 	# 30% 確率で掛け合い、70% で独り言
 	if _banter_rng.randf() < 0.3:
-		var ex := Banter.pick_exchange(HOME_CAST, _banter_rng)
+		var ex := Banter.pick_exchange(HOME_CAST, _banter_rng, _banter_recent)
 		if not ex.is_empty():
 			# Array(x) は参照をそのまま返すので duplicate 必須
 			# （const の掛け合いデータに pop_front すると Nil が返り続ける）
 			_banter_q = (ex["lines"] as Array).duplicate()
 			_advance_banter()
 			return
-	var pick := Banter.pick("idle", HOME_CAST, _banter_rng)
+	var pick := Banter.pick("idle", HOME_CAST, _banter_rng, _banter_recent)
 	if pick.is_empty():
 		return
 	var gid := String(pick["girl"])
 	speaker = String((KuroData.GIRLS.get(gid, {}) as Dictionary).get("name", gid))
 	line = String(pick["text"])
+	_note_said(gid, line)
+
+
+## しゃべった本文を直近履歴へ積む（新しいものが先頭）。
+func _note_said(gid: String, text: String) -> void:
+	_banter_recent.push_front({"girl": gid, "text": text})
+	while _banter_recent.size() > BANTER_RECENT_MAX:
+		_banter_recent.pop_back()
 
 
 # ── モーションの下ごしらえ（原点の平行移動だけで動かす）──────────────────

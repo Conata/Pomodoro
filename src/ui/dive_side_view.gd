@@ -158,6 +158,11 @@ var _lv_res := false         # その回が共鳴（Lv3/6/9/12）かどうか＝
 var _bubble: Dictionary = {}       # 表示中の吹き出し {gid, text, t0, dur}
 var _bubble_q: Array = []          # 掛け合いの残り行 [[gid, text], ...]
 var _banter_rng := RandomNumberGenerator.new()
+## 直近にしゃべった本文（新しい順）。素の乱択だと25分で重複72%になるので、
+## ここに積んで Banter 側で避けてもらう。長さは在庫の目安（1キャラ16本×人数）より
+## 小さくしないと候補が枯れて逆効果になる。
+var _banter_recent: Array = []
+const BANTER_RECENT_MAX := 32
 var _banter_wait := 3.0            # 次の自発バンターまでの秒
 var _banter_cd: Dictionary = {}    # カテゴリ別クールダウン（最終発話時刻）
 var _was_combat := false
@@ -227,11 +232,11 @@ func _process(delta: float) -> void:
 			var cast := _alive_cast()
 			if not cast.is_empty():
 				if _banter_rng.randf() < (0.5 if in_combat else 0.3):
-					var ex := Banter.pick_exchange(cast, _banter_rng)
+					var ex := Banter.pick_exchange(cast, _banter_rng, _banter_recent)
 					if not ex.is_empty():
 						_start_exchange(ex)
 				else:
-					var pick := Banter.pick("combat" if in_combat else "idle", cast, _banter_rng)
+					var pick := Banter.pick("combat" if in_combat else "idle", cast, _banter_rng, _banter_recent)
 					if not pick.is_empty():
 						_say(String(pick["girl"]), String(pick["text"]))
 	queue_redraw()
@@ -250,6 +255,14 @@ func _alive_cast() -> Array:
 func _say(gid: String, text: String, delay := 0.0) -> void:
 	_bubble = {"gid": gid, "text": text, "t0": _t + delay,
 			"dur": clampf(text.length() * 0.13, 1.9, 4.6)}
+	_note_said(gid, text)
+
+
+## しゃべった本文を直近履歴へ積む（新しいものが先頭）。
+func _note_said(gid: String, text: String) -> void:
+	_banter_recent.push_front({"girl": gid, "text": text})
+	while _banter_recent.size() > BANTER_RECENT_MAX:
+		_banter_recent.pop_back()
 
 
 ## 掛け合い（2〜3行の応酬）を開始。
@@ -276,13 +289,13 @@ func _banter_event(cat: String, chance: float, interrupt := false) -> void:
 		return
 	# 戦闘開始は35%で掛け合いに発展（戦いながら会話が広がる）
 	if cat == "combat" and _banter_rng.randf() < 0.35:
-		var ex := Banter.pick_exchange(cast, _banter_rng)
+		var ex := Banter.pick_exchange(cast, _banter_rng, _banter_recent)
 		if not ex.is_empty():
 			_banter_cd[cat] = _t
 			_bubble = {}
 			_start_exchange(ex)
 			return
-	var pick := Banter.pick(cat, cast, _banter_rng)
+	var pick := Banter.pick(cat, cast, _banter_rng, _banter_recent)
 	if pick.is_empty():
 		return
 	_banter_cd[cat] = _t
