@@ -36,6 +36,7 @@ const NAV := [
 	{"id": "market",     "icon": "市", "label": "市場",     "col": GOLD},
 	{"id": "management", "icon": "店", "label": "経営",     "col": PURPLE},
 	{"id": "workshop",   "icon": "工", "label": "工房",     "col": CYAN},
+	{"id": "memory",     "icon": "記", "label": "記憶",     "col": PURPLE},
 ]
 
 # ── 表示データ（main.gd から set_data()）──
@@ -268,6 +269,10 @@ func _draw() -> void:
 	_topbar_wallet(font, Rect2(0, TOPBAR_H * 0.5, sz.x, TOPBAR_H * 0.5))
 
 	_stag()
+	# ===== キリコの依頼（長期目標。常にそこにある小さな面） =====
+	_quest_card(font, sz)
+
+	_stag()
 	# ===== 探索入口ポータル（右端・縦書き＋紫の渦） =====
 	var pc := Vector2(sz.x - 56, sz.y * 0.47)
 	_hit(Rect2(pc.x - 52, pc.y - 56, 104, 170), "depart")
@@ -357,6 +362,40 @@ func _topbar_wallet(font: Font, bar: Rect2) -> void:
 		else:
 			Kit.fly_add(_flies, _gold_pos, _last_tap, "-%dG" % int(-d), DS.DANGER, _t)
 	_fx["gold_seen"] = g
+
+
+## キリコの依頼（STORY.md 5節＝店モードに置く長期目標）。
+## ホームは世界を見せる画面なので、3Dディオラマ（看板・カウンター・皆の立ち位置）と
+## 既存の仕込みカード／CTA／VN帯には触れない。トップバー直下・左肩の空だけを借りる。
+## 進捗は記憶の収集率だけで示し、UI 側で物語を足さない。タップで記憶タブへ。
+func _quest_card(font: Font, sz: Vector2) -> void:
+	if sim == null:
+		return
+	var seen: Array = sim.state.get("events_seen", [])
+	if not ("intro_kiriko" in seen):
+		return   # まだ頼まれていない夜には出さない（依頼より先に依頼板は出さない）
+	var total: int = KuroMemories.MEMORIES.size()
+	var got := (sim.state["memories"] as Array).size()
+	var done: bool = "story_finale" in seen
+	var r := Rect2(M, TOPBAR_H + DS.SP_3, 348.0, 86.0)
+	_begin_sink(r)
+	_panel(r, Color(0.04, 0.03, 0.08, 0.86), Color(PURPLE.r, PURPLE.g, PURPLE.b, 0.55))
+	_txt(font, Vector2(r.position.x + 16.0, r.position.y + 26.0), "キリコの依頼", DS.T_MICRO, PURPLE)
+	var st := "応えた" if done else "まだ応えられない"
+	_txt(font, Vector2(r.end.x - _tw(font, st, DS.T_MICRO) - 16.0, r.position.y + 26.0), st,
+			DS.T_MICRO, DS.SUCCESS if done else TEXT_DIM)
+	_txt(font, Vector2(r.position.x + 16.0, r.position.y + 52.0), "「私を、殺してほしいの」", DS.T_BODY, TEXT)
+	# 進捗＝記憶の収集率。数字とバーだけ（言葉で説明を足さない）
+	var ly := r.end.y - 14.0
+	_txt(font, Vector2(r.position.x + 16.0, ly), "記憶", DS.T_MICRO, TEXT_DIM)
+	var nx := r.position.x + 16.0 + _tw(font, "記憶", DS.T_MICRO) + DS.SP_2
+	nx += _num(font, Vector2(nx, ly), "q_mem", float(got), DS.T_BODY, PURPLE) + 2.0
+	nx += _unit(font, nx, ly, "/%d" % total) + DS.SP_3
+	Kit.bar(self, Rect2(nx, ly - 12.0, maxf(r.end.x - 46.0 - nx, 24.0), 12.0),
+			float(got) / float(total), PURPLE)
+	_txt(font, Vector2(r.end.x - 30.0, ly), "▸", DS.T_BODY, PURPLE)
+	_end_sink()
+	_hit(r, "memory")   # 当たりは最終位置のまま（登場アニメ中でも指の下が反応する）
 
 
 ## 朝の仕込みカード：予報・店番・扉・献立と「今夜の見込み」を出撃前に見せる。

@@ -28,6 +28,7 @@ const NAV := [
 	{"id": "market",     "icon": "市", "label": "市場",     "col": GOLD},
 	{"id": "management", "icon": "店", "label": "経営",     "col": PURPLE},
 	{"id": "workshop",   "icon": "工", "label": "工房",     "col": CYAN},
+	{"id": "memory",     "icon": "記", "label": "記憶",     "col": PURPLE},
 ]
 const PANEL_TITLES := {
 	"map": "深層マップ — ステージ選択",
@@ -36,6 +37,7 @@ const PANEL_TITLES := {
 	"management": "経営 — 今夜の仕込み",
 	"renov": "経営 — 改装ツリー",
 	"workshop": "工房 — Cube 装備加工",
+	"memory": "記憶 — 拾った断片",
 }
 # パネル毎の背景アートとアクセント（世界観の奥行き。Kit.backdrop で敷く）
 const PANEL_BG_ART := {
@@ -51,6 +53,8 @@ const PANEL_BG_ART := {
 }
 const PANEL_ACCENT := {
 	"map": CYAN, "member": PINK, "market": GOLD, "management": PURPLE, "renov": PURPLE, "workshop": CYAN,
+	# 記憶＝キリコの色（DS の3軸のうち紫）。物語のために色は増やさない。
+	"memory": PURPLE,
 }
 
 var sim = null                 # KuroSim 参照（main.gd が bind() で渡す）
@@ -59,6 +63,8 @@ var _sel_girl := "mil"         # メンバー画面で選択中の子
 var _work_view := "storage"     # 工房: storage / bag
 var _work_item_id := -1         # 工房で選択中の装備ID
 var _work_gem := "em_core"      # 工房で選択中のソケット素材
+var _mem_open := ""            # 記憶: 開いて読んでいるメモリの id（"" ＝一覧）
+var _mem_t := -99.0            # その本文を開いた時刻（迫り上がる動きの起点）
 var _toast := ""
 var _toast_t := 0.0
 var _panel_t := 9.0            # パネル切替からの経過秒（登場トランジション用）
@@ -156,6 +162,7 @@ func set_panel(id: String) -> void:
 		mouse_filter = Control.MOUSE_FILTER_STOP
 	if panel != id:
 		_panel_t = 0.0
+		_mem_open = ""   # 画面を移ったら本文は閉じる（次に開いた時は一覧から）
 	panel = id
 	queue_redraw()
 
@@ -230,7 +237,15 @@ func _local(id: String) -> void:
 	elif id.begins_with("_panel:"):
 		if panel != id.substr(7):
 			_panel_t = 0.0
+			_mem_open = ""
 		panel = id.substr(7)
+		queue_redraw()
+	elif id.begins_with("_mem:"):
+		_mem_open = id.substr(5)
+		_mem_t = _t
+		queue_redraw()
+	elif id == "_memclose":
+		_mem_open = ""
 		queue_redraw()
 	elif id.begins_with("_work:"):
 		_work_view = id.substr(6)
@@ -672,6 +687,7 @@ func _draw() -> void:
 			"management": _draw_management(font, sz)
 			"renov": _draw_renov(font, sz)
 			"workshop": _draw_workshop(font, sz)
+			"memory": _draw_memory(font, sz)
 		_set_xf(Vector2.ZERO)
 		_draw_enter_wipe(sz, accent)
 	_set_xf(f_ofs)
@@ -2147,6 +2163,145 @@ func _rv_ledger(font: Font, r: Rect2, ac: Color) -> void:
 	_stat(font, Vector2(x + 380.0, y2), "所持金", "renov_g", float(int(sim.state["gold"])), "G", GOLD)
 	_strip(font, Rect2(body.position.x + 12.0, body.end.y - 54.0, body.size.x - 24.0, 42.0),
 			"緑＝解放済 ／ 金＝今買える ／ 紫＝前提達成 ／ 灰＝未開放", ac)
+
+
+# ── 記憶（道中で拾った短文小説を読み返す）────────────────────────────────────
+# この画面の仕事は「本文をそのまま読ませる」こと。UI は物語を要約も解説もしない。
+# 未収集は伏せ字で「まだ拾っていない」ことだけを言う（中身を先に見せない）。
+# 並びは階の順＝深いものほど下（深いほど核心へ、という取得順とそのまま噛み合う）。
+
+func _draw_memory(font: Font, sz: Vector2) -> void:
+	var ac := PURPLE                   # この画面の識別色（キリコの紫）
+	var w := sz.x - M * 2.0
+	var top := HEADER_H
+	var bot := sz.y - FOOTER_H
+	Kit.hatch(self, Rect2(0, top, sz.x, bot - top), Color(ac.r, ac.g, ac.b, 0.05), 26.0, 9.0)
+	var got: Array = sim.state["memories"]
+	var ordered := _mem_ordered()
+	var y := top + 12.0
+
+	_stag()
+	# ① 一覧（何本あるかは常に見せる＝それが目標になる）------------------
+	y = _sec(font, y, w, "記憶", ac, "階の順に並ぶ　全 %d 本" % ordered.size())
+
+	# ② 下端固定：収集の見立て（この画面の結論）
+	var conc_h := 150.0
+	var conc_top := bot - 12.0 - conc_h
+
+	_stag()
+	var n := ordered.size()
+	var gap := float(DS.SP_2)
+	var rh := clampf((conc_top - 16.0 - y - gap * (n - 1)) / float(n), 52.0, 96.0)
+	var reading := _mem_open != ""
+	for i in n:
+		var m: Dictionary = ordered[i]
+		_mem_row(font, Rect2(M, y + i * (rh + gap), w, rh), m,
+				String(m["id"]) in got, ac, not reading)
+
+	_stag()
+	_mem_ledger(font, Rect2(M, conc_top, w, conc_h), ac)
+
+	# ③ 本文（読んでいる間は一覧を伏せる。読むこと以外はさせない）--------
+	if reading:
+		_mem_reader(font, sz, ac)
+
+
+## 階の順に並べたメモリ（データ側の並びに寄りかからず、ここで必ず揃える）。
+func _mem_ordered() -> Array:
+	var list: Array = (KuroMemories.MEMORIES as Array).duplicate()
+	list.sort_custom(func(p, q): return int(p["floor"]) < int(q["floor"]))
+	return list
+
+
+## 一覧の1行。左端の黒板＝拾える階、右は拾ったかどうかで役割が変わる。
+func _mem_row(font: Font, r: Rect2, m: Dictionary, got: bool, ac: Color, tappable: bool) -> void:
+	var pv := _begin_sink(r)
+	_panel(r, Color(0.05, 0.05, 0.08, 0.93 if got else 0.70),
+			Color(ac.r, ac.g, ac.b, 0.55) if got else Color(0.4, 0.4, 0.46, 0.32),
+			1.5 if got else 1.0)
+	# 階票（黒板に B3）。未収集でも階は出す＝どこまで潜れば届くかが分かる
+	var tag := Rect2(r.position.x + 8.0, r.position.y + 8.0, 60.0, r.size.y - 16.0)
+	Kit.slab(self, tag, Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.95), 6.0)
+	Kit.slab_edge(self, tag, Color(ac.r, ac.g, ac.b, 0.6 if got else 0.22), 6.0, 1.0)
+	var fs := "B%d" % int(m["floor"])
+	_txt(font, Vector2(tag.position.x + (tag.size.x - _tw(font, fs, DS.T_BODY)) * 0.5 + 2.0,
+			tag.position.y + tag.size.y * 0.5 + 6.0), fs, DS.T_BODY, TEXT if got else TEXT_DIM)
+	var tx := tag.end.x + 16.0
+	var mid := r.position.y + r.size.y * 0.5
+	var title := String(m["title"])
+	if got:
+		_txt(font, Vector2(tx, mid - 2.0), title, DS.T_SUB, TEXT)
+		# 冒頭の一行だけ添える（拾った物なので伏せない。続きは開いて読む）
+		_txt(font, Vector2(tx, mid + 24.0), String(m["text"]).split("\n")[0], DS.T_MICRO, TEXT_DIM)
+		var rd := "読む ▸"
+		_txt(font, Vector2(r.end.x - _tw(font, rd, DS.T_MICRO) - 20.0, mid + 6.0), rd, DS.T_MICRO, ac)
+	else:
+		# 伏せ字。字数だけが残る＝シルエットとしてそこに在ることは分かる
+		var mask := "■".repeat(title.length())
+		_txt(font, Vector2(tx, mid - 2.0), mask, DS.T_SUB, Color(0.32, 0.32, 0.38))
+		_txt(font, Vector2(tx, mid + 24.0), "まだ拾っていない", DS.T_MICRO, TEXT_DIM)
+	_end_sink(pv)
+	if got and tappable:
+		_hit(r, "_mem:%s" % String(m["id"]))
+
+
+## 本文。画面の仕事はこれ1つ＝短文小説をそのまま置く。注釈も要約も足さない。
+func _mem_reader(font: Font, sz: Vector2, ac: Color) -> void:
+	var m: Dictionary = KuroMemories.get_by_id(_mem_open)
+	if m.is_empty():
+		return
+	var top := HEADER_H
+	var bot := sz.y - FOOTER_H
+	var k := Kit.out_quint(clampf((_t - _mem_t) / 0.26, 0.0, 1.0))
+	# 一覧を伏せる（読んでいる間、目に入るのは本文だけ）
+	draw_rect(Rect2(0, top, sz.x, bot - top), Color(0.02, 0.02, 0.05, 0.96 * k))
+	_hit(Rect2(0, top, sz.x, bot - top), "_memclose")   # 当たりは最終位置で固定
+	var lines: PackedStringArray = String(m["text"]).split("\n")
+	var h := CONC_HEAD + 44.0 + lines.size() * 44.0 + 52.0
+	var r := Rect2(M, top + (bot - top - h) * 0.5, sz.x - M * 2.0, h)
+	_hit(r, "_memclose")
+	# 迫り上がり（線形補間ではなく out_quint。動いている間も当たりは動かさない）
+	var kb := Kit.out_back(clampf((_t - _mem_t) / 0.32, 0.0, 1.0), 1.5)
+	Kit.set_xf(self, _xf_now + Vector2(0.0, (1.0 - kb) * 40.0))
+	# 一枚の紙が手前に浮く：影 → 面（伏せた一覧より一段明るい無彩色）→ 識別色の縁
+	Kit.slab(self, Rect2(r.position.x + 9.0, r.position.y + 10.0, r.size.x - 9.0, r.size.y),
+			Color(0, 0, 0, 0.85), 10.0)
+	var body := _conc(font, r, String(m["title"]), "B%d" % int(m["floor"]), ac)
+	Kit.slab(self, body, Color(0.085, 0.08, 0.11, 1.0), 10.0)
+	Kit.hatch(self, body.grow(-6.0), Color(ac.r, ac.g, ac.b, 0.05), 22.0, 7.0)
+	Kit.slab_edge(self, r, Color(ac.r, ac.g, ac.b, 0.5), 10.0, 1.5)
+	var ly := body.position.y + 56.0
+	for ln in lines:
+		_txt(font, Vector2(body.position.x + 26.0, ly), ln, DS.T_SUB, TEXT)
+		ly += 44.0
+	_txt(font, Vector2(body.position.x + 26.0, body.end.y - 20.0), "タップで閉じる", DS.T_MICRO, TEXT_DIM)
+	Kit.set_xf(self, _xf_now)
+
+
+## 収集の見立て（この画面の結論）。収集率と、まだ満たしていない終幕の条件を置く。
+func _mem_ledger(font: Font, r: Rect2, ac: Color) -> void:
+	var total: int = KuroMemories.MEMORIES.size()
+	var got := (sim.state["memories"] as Array).size()
+	var best := int(sim.state["best_floor"])
+	var body := _conc(font, r, "記憶の見立て", "%d/%d" % [got, total], ac)
+	var x := body.position.x + 24.0
+	var y1 := body.position.y + 36.0
+	_stat(font, Vector2(x, y1), "収集", "mem_got", float(got), "/%d" % total)
+	_stat(font, Vector2(x + 220.0, y1), "到達", "mem_best", float(best), "階")
+	_stat(font, Vector2(x + 440.0, y1), "未収集", "mem_left", float(total - got), "本",
+			DS.PAPER if got >= total else Color(ac.r, ac.g, ac.b, 0.95))
+	# 終幕の条件（main.gd の _next_event_id と同じ2つ）。満たしていない側だけ名指す。
+	var lack: Array = []
+	if best < 10:
+		lack.append("B10到達")
+	if got < total:
+		lack.append("記憶 %d/%d" % [got, total])
+	var msg := "終幕まで： %s" % " ／ ".join(PackedStringArray(lack))
+	var col := ac
+	if lack.is_empty():
+		msg = "条件は満たされている。"
+		col = DS.SUCCESS
+	_strip(font, Rect2(body.position.x + 12.0, body.end.y - 54.0, body.size.x - 24.0, 42.0), msg, col)
 
 
 # ── フッター・トースト ────────────────────────────────────────────────────────

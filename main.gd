@@ -641,7 +641,7 @@ func _goto(path: String) -> void:
 
 
 ## ホーム／メニューのUI操作。
-## フッターナビ（home/member/market/management/workshop）＝画面遷移、
+## フッターナビ（home/member/market/management/workshop/memory）＝画面遷移、
 ## それ以外の "動詞:パラメータ" はメニュー各パネルの操作（KuroSim を実際に駆動）。
 func _on_home_action(id: String) -> void:
 	_ensure_audio_started()   # 最初のタップで店テーマ開始（Web自動再生制限対策）
@@ -679,7 +679,9 @@ func _on_home_action(id: String) -> void:
 					_goto(DIVE)
 			else:
 				_say_home("「おかえり。今日も飯店、開けるよ。」")
-		"member", "market", "management", "workshop":
+		"member", "market", "management", "workshop", "memory":
+			# 記憶＝拾ったメモリ（短文小説）を読み返す場所。ホームの
+			# 「キリコの依頼」からもここへ来る（長期目標 → その進捗の中身）。
 			_open_menu(id)
 		"prep_card":
 			# 仕込みカードの余白タップ＝経営パネル（献立・店番・扉の詳細編集）へ
