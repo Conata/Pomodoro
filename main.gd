@@ -41,6 +41,11 @@ var _sfx_pool: Array = []
 var _sfx_i := 0
 var _sfx_router: SfxRouter = SfxRouter.new()  # 潜航イベント→効果音の割り当て＋間引き
 var _dive_clock := 0.0                        # 潜航の経過秒（クールダウンの時計。早送りも織り込む）
+var _ui_clock := 0.0                          # 画面まわりの経過秒（潜航外でも進む。UI音のクールダウン用）
+## 実測用：鳴らした音の種類別カウント。音を足すたび「鳴らしすぎていないか」は
+## 机上ではなく必ずこの数字で確かめる（検証スクリプトはこれを読んで集計する）。
+## 本番でも回るが辞書1本の加算だけ＝実質ゼロコスト。
+var sfx_counts: Dictionary = {}
 
 
 func _ready() -> void:
@@ -52,6 +57,8 @@ func _ready() -> void:
 	_talk_view = TalkView.new()
 	_talk_view.visible = false
 	_talk_view.finished.connect(_on_talk_finished)
+	# 会話を送る＝行が1つ進んだ瞬間（地の文は line_shown を出さないので黙る）
+	_talk_view.line_shown.connect(func(_gid: String, _text: String): _sfx_cue("talk_next"))
 	talk_layer.add_child(_talk_view)
 	# 画面遷移フェード（会話より上・入力は素通し）
 	var fade_layer := CanvasLayer.new()
@@ -83,10 +90,12 @@ func _ready() -> void:
 	_night_overlay.visible = false
 	_night_overlay.finished.connect(_on_night_finished)
 	_night_overlay.tip_tapped.connect(func(): _sfx("ui_buy"))
+	_night_overlay.sfx_cue.connect(_sfx_cue)   # 配膳・伝票・追い返し・締めの一幕
 	sheet_layer.add_child(_night_overlay)
 	_result_overlay = ResultOverlay.new()
 	_result_overlay.visible = false
 	_result_overlay.action_pressed.connect(_on_home_action)
+	_result_overlay.sfx_cue.connect(_sfx_cue)  # 箱開封の瞬間・三行精算のパネル
 	sheet_layer.add_child(_result_overlay)
 	# CanvasLayer 直下の Control はアンカーが効かない（TalkView と同じ罠）ので
 	# 画面サイズを明示し、リサイズにも追従させる
@@ -250,6 +259,7 @@ func _sfx(name: String, vol_db: float = 0.0, pitch: float = 1.0) -> void:
 	var path := _audio_pick("sfx/" + name, "res://assets/third_party/sfx/%s.wav" % name)
 	if not ResourceLoader.exists(path):
 		return   # 音が無くても落ちない（生成前・差し替え中でも安全）
+	sfx_counts[name] = int(sfx_counts.get(name, 0)) + 1   # 実測用（種類別の発音回数）
 	var p: AudioStreamPlayer = _sfx_pool[_sfx_i]
 	_sfx_i = (_sfx_i + 1) % _sfx_pool.size()
 	p.stream = load(path)
@@ -263,6 +273,16 @@ func _sfx_event(e: Dictionary) -> void:
 	if _sfx_router == null:
 		return
 	for play in _sfx_router.route(e, _dive_clock):
+		_sfx(String(play["name"]), float(play["vol"]), float(play["pitch"]))
+
+
+## 画面まわりの合図（箱開封・夜営業・経営・横断）を効果音へ。
+## オーバーレイ（Control）は _sfx を直接持たないので、シグナルでここへ集める＝
+## **音の出口は _sfx ひとつのまま**。割り当て・音量・間引きは SfxRouter に閉じている。
+func _sfx_cue(cue: String) -> void:
+	if _sfx_router == null:
+		return
+	for play in _sfx_router.route_ui(cue, _ui_clock):
 		_sfx(String(play["name"]), float(play["vol"]), float(play["pitch"]))
 
 
@@ -301,6 +321,9 @@ func _notification(what: int) -> void:
 func _process(delta: float) -> void:
 	_update_bgm(delta)   # フェーズに応じた店⇄潜航クロスフェード（潜航外でも動かす）
 	_sync_world_render()  # 全画面シートで隠れている間は3Dの描画を止める
+	# 画面まわりの音のクールダウンはこの時計で測る。潜航の内外を問わず進む
+	# （夜営業も精算も潜航の外で起きるので、_dive_clock では測れない）。
+	_ui_clock += delta
 	if not _in_dive or sim == null:
 		return
 	# 早送り：アンカーを余分に巻き戻して「より多くの時間が経った」ことにする
@@ -380,6 +403,7 @@ func _surface() -> void:
 	# ポモドーロ完走を日課に記録（デイリー/ストリーク/週間）＋完走通知。
 	# 切断（クイック全滅など）はカウントしない＝旧メインと同じ規律。
 	_cancel_scheduled_notify()   # 早期浮上なら未来の予約を破棄（tagで二重発火も無害）
+	var streak_before := int(sim.state["streak"])
 	if String(_last_summary.get("mode", "")) == "pomo" and not bool(_last_summary.get("disconnected", false)):
 		sim.register_completion(Time.get_date_string_from_system(), float(_last_summary.get("minutes", 0.0)))
 		_notify("浮上。%d分の集中、おつかれさま" % int(round(float(_last_summary.get("minutes", 0.0)))))
@@ -406,6 +430,9 @@ func _surface() -> void:
 	_refresh_home_data("「お疲れさま。今夜は %dG の売上だったよ」" % int(night.get("gold", 0)))
 	_save()             # 精算・開封・翌朝の確定を保存
 	_sfx("chest_open" if not box_results.is_empty() else "teleport")   # 浮上の音
+	# 連続完走が伸びた夜だけ、浮上の音の上に一段重ねる（伸びない夜は黙る）
+	if int(sim.state["streak"]) > streak_before:
+		_sfx_cue("streak_up")
 	# 皿が出た夜は、精算の前に夜営業シアターを上演（スキップ可・放置でも完走）
 	if script.is_empty():
 		_show_result(result_data)
@@ -565,7 +592,7 @@ func _on_home_action(id: String) -> void:
 		"claim":
 			# デイリー報酬（3完走で+500G・1日1回）
 			if sim.claim_daily():
-				_sfx("chest_open")
+				_sfx_cue("daily_done")
 				sim.drain_events()
 				_save()
 				if _result_overlay.visible:
@@ -613,6 +640,7 @@ func _open_menu(panel: String) -> void:
 	if not _menu_overlay.visible:
 		_menu_overlay.visible = true
 		_menu_overlay._panel_t = 0.0   # 開いた時も登場トランジションを出す
+		_sfx_cue("sheet_open")         # 窓が開く音。パネル切替（タブ感覚）では鳴らさない
 	_menu_overlay.set_panel(panel)
 
 
@@ -661,7 +689,13 @@ func _on_menu_action(id: String) -> void:
 			m["door"] = "closed" if m["door"] == "open" else "open"
 			toast = "扉の方針：%s" % ("開ける" if m["door"] == "open" else "見送る")
 		"renov":
-			toast = "改装「%s」を解放" % KuroData.RENOV_NODES[parts[1]]["name"] if sim.unlock_renov(parts[1]) else "ゴールドが足りない"
+			# 改装の解放＝ノードが爆ぜて前提から光の線が走る瞬間。金を払っただけの
+			# 「買った音」ではなく、店が一段変わった合図を当てる。
+			if sim.unlock_renov(parts[1]):
+				_sfx_cue("renov_unlock")
+				toast = "改装「%s」を解放" % KuroData.RENOV_NODES[parts[1]]["name"]
+			else:
+				toast = "ゴールドが足りない"
 		"skill":
 			toast = "スキルを更新" if sim.equip_skill(parts[1], parts[2]) else "スキル枠がいっぱい"
 		"tree":
@@ -685,6 +719,8 @@ func _on_menu_action(id: String) -> void:
 			toast = "倉庫へ移動" if sim.bag_to_storage(int(parts[1])) else "倉庫がいっぱい（廃材化）"
 		"synth_bag":
 			var made_bag := sim.synthesize_all()
+			if made_bag > 0:
+				_sfx_cue("craft_ok")   # バッグ合成に大成功は無い＝既存の確定音のまま
 			toast = "バッグ合成 %d件" % made_bag if made_bag > 0 else "合成できる装備がない"
 		"bulk_salvage_bag":
 			var rb: Dictionary = sim.bulk_salvage()
@@ -693,7 +729,17 @@ func _on_menu_action(id: String) -> void:
 			var dust_bag := sim.salvage_item(int(parts[1]))
 			toast = "分解 → 廃材%d" % dust_bag if dust_bag > 0 else "分解できない"
 		"synth_storage":
+			# 10%で「★大成功★」（2ランク上）が出る。確率で当たる要素なので、
+			# ここだけは通常成功と音を変える＝引きの良し悪しが耳で分かる。
+			# 大成功かどうかはログにしか残らないので、末尾で捨てる前にここで拾う。
 			var made_storage := sim.synthesize_storage()
+			if made_storage > 0:
+				var great := false
+				for ev in sim.drain_events():
+					if String(ev.get("kind", "")) == "loot" \
+							and String(ev.get("msg", "")).begins_with("★大成功★"):
+						great = true
+				_sfx_cue("craft_great" if great else "craft_ok")
 			toast = "倉庫合成 %d件" % made_storage if made_storage > 0 else "合成できる装備がない"
 		"bulk_salvage_storage":
 			var rs: Dictionary = sim.bulk_salvage_storage()
@@ -745,13 +791,16 @@ func _on_menu_action(id: String) -> void:
 
 ## 出撃：選択中のステージ×難易度でダイブを開始する（pomo/quick 共通）。
 func _launch_dive(mode: String) -> void:
-	_sfx("ui_confirm")
 	if bool(sim.state["run"]["active"]):
-		# すでに潜航中（編成の寄り道から出撃ボタン）→ シートを閉じて復帰のみ
+		# すでに潜航中（編成の寄り道から出撃ボタン）→ シートを閉じて復帰のみ。
+		# 復帰は「儀式」ではないので、始まりの音は鳴らさない。
+		_sfx("ui_confirm")
 		_menu_overlay.visible = false
 		if _screen != DIVE:
 			_goto(DIVE)
 		return
+	# 25分の始まりの儀式。スイッチを入れる音を1発だけ置いて、画面フェードに重ねる。
+	_sfx_cue("focus_start")
 	sim.drain_events()    # ホーム/メニューの残存イベントを捨ててから開始
 	if mode == "pomo":
 		_request_notify_permission()   # 完走通知の許可（ユーザー操作起点）
@@ -930,6 +979,9 @@ class SfxRouter extends RefCounted:
 	const CD_SKILL := 8.0      # 攻撃スキル（爆発／雷）
 	const CD_SONG := 30.0      # ムュウの歌。交戦中ずっと抽選されるので特に長く
 	const CD_HEAL := 15.0      # 回復スキル。数が多いうえ地味なので特に間引く
+	const CD_LOOT := 20.0      # 装備の発見。自動装着のたびに来る（実測 12秒だと25分で47発）
+	const CD_BOSS := 6.0       # ボス出現。階ごとに1回だが、同じ階で再抽選される
+	const CD_MEM := 4.0        # 記憶のかけら。1ランに数個の節目
 	# どの戦闘音どうしも最低これだけは空ける。_sfx_pool は4本しかないので、
 	# 同じ瞬間に重なると古い音が途中で切られて汚くなる。
 	const FLOOR_GAP := 0.22
@@ -942,13 +994,57 @@ class SfxRouter extends RefCounted:
 		"heal": "heal",
 	}
 
+	# ── 画面まわり（潜航の外）の割り当て表 ────────────────────────────
+	# cue -> [音名, 基準からの dB, 最小間隔（秒）]
+	# 頻度が高いものほど絞る。夜営業は1回の上演で配膳11・伝票11が来るので、
+	# ここを甘くすると劇場が「効果音の連打」になる。伝票は最も数が多く、
+	# 絵としても脇役（下端のスロットが埋まるだけ）なので一番小さい。
+	const UI_SFX := {
+		# 箱開封（等級ごと）。音の長さ 0.13/0.29/0.35/0.76 秒が、
+		# 開封後の尺 0.24/0.34/0.54/0.82 秒（開封＋着地）にそれぞれ収まる。
+		"box_0":        ["box_wood",    -13.0, 0.08],
+		"box_1":        ["box_iron",     -9.0, 0.08],
+		"box_2":        ["box_silver",   -5.0, 0.08],
+		"box_3":        ["box_gold",     -1.0, 0.08],
+		# 経営
+		"renov_unlock": ["renov_unlock", -4.0, 0.30],
+		"craft_great":  ["craft_great",   0.0, 0.30],
+		"craft_ok":     ["ui_confirm",    0.0, 0.30],
+		# 夜営業（頻発。音量はここで絞りきる）
+		# 最小間隔は「同じ瞬間に重ならない」ぶんだけ。店番の手は KEEPER_CD=0.28 秒
+		# 間隔なので、それより長くすると配膳が理由なく黙る（実測 0.45 で 8回中3回が消えた）。
+		"serve":        ["serve_dish",  -15.0, 0.25],
+		"guest_leave":  ["guest_leave", -11.0, 0.60],
+		"ticket":       ["ticket",      -22.0, 0.55],
+		"night_close":  ["night_close",  -5.0, 2.00],
+		# 横断
+		"focus_start":  ["focus_start",  -5.0, 0.50],
+		"sheet_open":   ["sheet_open",  -12.0, 0.30],
+		"talk_next":    ["talk_next",   -17.0, 0.10],
+		"daily_done":   ["daily_done",   -3.0, 1.00],
+		"streak_up":    ["streak_up",    -5.0, 1.00],
+	}
+	# 夜営業の3種は互いにこれだけ空ける。配膳と伝票は 1.7 秒ずれて交互に来るが、
+	# 席が5つあるので同じフレームに複数そろうことがある（＝4本のプールを食い潰す）。
+	const NIGHT_KEYS := ["serve", "ticket", "guest_leave"]
+	const NIGHT_GAP := 0.14
+	# 節目（box_3 / craft_great）の前後で黙らせる相手。
+	const HUSH_UI := ["box_0", "box_1", "box_2", "serve", "ticket", "guest_leave",
+			"craft_ok", "talk_next", "sheet_open"]
+	# 戦闘の地の音（_hush が黙らせる相手）。拾得とボスもここに含める＝
+	# 節目の音の直後に「拾った」が刺さらない。
+	const HUSH_BATTLE := ["hit", "crit", "kill", "elite", "hurt", "skill", "song",
+			"heal", "loot", "boss"]
+
 	var _next := {}          # 分類 -> 次に鳴らしてよい時刻
 	var _last_battle := -999.0
+	var _last_night := -999.0
 	var _blade := 0          # slash / sword の交互カウンタ
 
 	func reset() -> void:
 		_next.clear()
 		_last_battle = -999.0
+		_last_night = -999.0
 
 	## key の音を now に鳴らしてよいか。よければクールダウンを張って true。
 	## battle=true の音は FLOOR_GAP による全体の間引きも受ける。
@@ -969,9 +1065,13 @@ class SfxRouter extends RefCounted:
 	## resonance は2.8秒の長い音で、_sfx_pool は4本しかない＝
 	## 直後に戦闘音が4発入ると鳴りきる前に横取りされる。間も演出のうち。
 	func _hush(now: float, sec: float) -> void:
-		for key in ["hit", "crit", "kill", "elite", "hurt", "skill", "song", "heal"]:
-			_next[key] = maxf(float(_next.get(key, -999.0)), now + sec)
+		_hush_keys(HUSH_BATTLE, now, sec)
 		_last_battle = now + sec - FLOOR_GAP
+
+	## 指定した分類だけを sec 秒黙らせる（画面まわりの節目でも使う）。
+	func _hush_keys(keys: Array, now: float, sec: float) -> void:
+		for key in keys:
+			_next[key] = maxf(float(_next.get(key, -999.0)), now + sec)
 
 	func route(e: Dictionary, now: float) -> Array:
 		match String(e.get("kind", "")):
@@ -1035,4 +1135,55 @@ class SfxRouter extends RefCounted:
 				# 階層突破。1ランで数回しか無い到達の合図。
 				_hush(now, 0.8)
 				return [{"why": "階層突破", "name": "floor_clear", "vol": -3.0, "pitch": 1.0}]
+			"boss":
+				# ボス出現。バナーだけでは雑魚の接近と区別が薄いので、
+				# 低く濁った一撃を当てて「格が違う」を耳で先に伝える。
+				if not _ok("boss", now, CD_BOSS, false):
+					return []
+				_hush(now, 0.7)
+				return [{"why": "ボス出現", "name": "boss_appear", "vol": -2.0, "pitch": 1.0}]
+			"resync":
+				# 全滅→緊急再同期。25分が途切れない設計なので画は静かだが、
+				# 何が起きたかは音で必ず言う（ログ行は流れて消える）。
+				_hush(now, 0.8)
+				return [{"why": "緊急再同期", "name": "wipe_out", "vol": -4.0, "pitch": 1.0}]
+			"loot", "door_loot":
+				# 装備の発見。自動装着のたびに来るので序盤は数が多い＝強く間引く。
+				if _ok("loot", now, CD_LOOT, false):
+					return [{"why": "装備の発見", "name": "pickup", "vol": -14.0, "pitch": _jit()}]
+				return []
+			"memory":
+				# 記憶のかけら＝物語の断片。1ランに数個の節目なので、
+				# 共鳴と同じ扱いで前後を黙らせて山を立てる。
+				if not _ok("memory", now, CD_MEM, false):
+					return []
+				_hush(now, 1.0)
+				return [{"why": "記憶のかけら", "name": "memory_get", "vol": -3.0, "pitch": 1.0}]
 		return []
+
+
+	## 画面まわりの合図 → 効果音。潜航と同じ考え方（表・音量・最小間隔）で間引く。
+	## now は main._ui_clock（潜航の内外を問わず進む時計）。
+	func route_ui(cue: String, now: float) -> Array:
+		if not UI_SFX.has(cue):
+			return []
+		var row: Array = UI_SFX[cue]
+		var night: bool = cue in NIGHT_KEYS
+		if night and now - _last_night < NIGHT_GAP:
+			return []
+		if now < float(_next.get(cue, -999.0)):
+			return []
+		_next[cue] = now + float(row[2])
+		if night:
+			_last_night = now
+		var pitch := 1.0
+		match cue:
+			"box_3", "craft_great":
+				# 節目。_sfx_pool は4本しかないので、前後を黙らせないと
+				# 1.2秒の演出のあいだに後ろの箱の音が食い込んで山が潰れる。
+				_hush_keys(HUSH_UI, now, 0.55)
+			"box_0", "box_1":
+				pitch = _jit(0.97, 1.03)   # 木箱が12個続く日がある。同じ音の連打にしない
+			"serve", "ticket":
+				pitch = _jit(0.94, 1.06)
+		return [{"why": cue, "name": String(row[0]), "vol": float(row[1]), "pitch": pitch}]

@@ -14,9 +14,12 @@ extends Control
 ##   5. 型は DS の5段（16/24/32/48）だけ、面は斜めカット（Kit.slab_panel）だけ。
 ##      有彩色は識別色1つ（暖炉オレンジ）＋状態色（危険=赤／成功=緑／獲得=金）＋等級色。
 ##
-## 効果音は別担当が付ける。ここでは「[SFX]」コメントで鳴るべき瞬間だけ残す。
+## 効果音：ここは Control なので main.gd の _sfx を直接は呼べない。
+## 「鳴るべき瞬間」だけを sfx_cue で外へ出し、割り当て・音量・間引きは
+## main.gd の SfxRouter が決める＝**音の出口は main._sfx ひとつのまま**。
 
 signal action_pressed(id: String)
+signal sfx_cue(id: String)   # 音の合図（"box_0".."box_3" ＝開封の瞬間 / "sheet_open"）
 
 const M := DS.SP_4          # 外側マージン（全画面共通の16）
 
@@ -56,6 +59,8 @@ var _ripples: Array = []       # タップ波紋（Kit.ripples）
 var _press: Dictionary = {}    # 直近の押下（押した板が沈む＝3状態目）
 var _box_tex: Dictionary = {}  # grade -> Texture2D（キャッシュ）
 var _wrap_cache: Dictionary = {}   # 折り返しの結果（毎フレーム測り直さない）
+var _cued_ledger := false      # 三行精算のパネルが開く音を出したか
+var _cued: Array = []          # 箱ごとに開封の音を出したか
 
 
 func _ready() -> void:
@@ -73,6 +78,8 @@ func set_data(d: Dictionary) -> void:
 	_press = {}
 	_ripples.clear()
 	_wrap_cache.clear()
+	_cued_ledger = false
+	_cued.clear()
 	queue_redraw()
 
 
@@ -93,7 +100,38 @@ func _process(delta: float) -> void:
 	if not visible:
 		return   # 常駐シート：閉じている間は演出時計も再描画も止める
 	_t += delta
+	_fire_cues()
 	queue_redraw()
+
+
+## 音の合図を「1回だけ」出す。_draw ではなく _process で判定する理由：
+## 描画は隠れたフレームで飛ぶことがあるが、音の一回性はそれに引きずられてはいけない。
+##
+## 開封の瞬間＝溜め（LEAD）が終わって板が開く時刻。等級で音を変える。
+## タップで送ると _t が一気に終端まで飛び、残り全部が同じフレームで開く。
+## その時は**最上位の1個だけ**鳴らす（12個ぶん連打しない）。
+func _fire_cues() -> void:
+	if not _cued_ledger and _t >= T_LEDGER:
+		_cued_ledger = true
+		sfx_cue.emit("sheet_open")   # 三行精算の板が開く＝紙を置く音
+	if boxes.is_empty():
+		return
+	var rows: Array = _plan()["rows"]
+	if _cued.size() != rows.size():
+		_cued.resize(rows.size())
+		_cued.fill(false)
+	var best := -1
+	for i in rows.size():
+		if bool(_cued[i]):
+			continue
+		var r: Dictionary = rows[i]
+		if _t < float(r["t0"]) + float(r["lead"]):
+			continue
+		_cued[i] = true
+		if best < 0 or int(r["g"]) > int((rows[best] as Dictionary)["g"]):
+			best = i
+	if best >= 0:
+		sfx_cue.emit("box_%d" % int((rows[best] as Dictionary)["g"]))
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -118,7 +156,8 @@ func _gui_input(event: InputEvent) -> void:
 	var e := _end_time()
 	Kit.ripple_add(_ripples, p, _t)
 	if _t < e:
-		_t = e   # [SFX] スキップ＝ui_confirm を短く
+		# 送り＝残りの箱が一斉に開く。_fire_cues が最上位の1個だけ鳴らす。
+		_t = e
 		queue_redraw()
 	elif _t > e + 0.35:
 		action_pressed.emit("continue")
@@ -297,7 +336,8 @@ func _draw() -> void:
 
 	# ── 売上（この画面の主役の数字）──
 	# 0 から数え上げ、着地で一度だけ弾む。線形ではなく out_quint＝最後の1桁が静かに止まる。
-	# [SFX] 数え始め＝コインの擦れ（ループ）／着地の瞬間に ui_confirm を1発
+	# [SFX未] 数え始め＝コインの擦れ（ループ）。ループ音は _sfx_pool（4本・一発撃ち）
+	# では鳴らせないので、素材と再生経路を足すまで保留。
 	var ga := _rise(T_GOLD, 0.26)
 	var gk := clampf((_t - T_GOLD) / T_GOLD_DUR, 0.0, 1.0)
 	var gv := int(round(float(gold) * Kit.out_quint(gk)))
@@ -336,7 +376,7 @@ func _draw() -> void:
 					_txt(font, Vector2(sz.x - float(M) - 200.0, y + 14.0), "ご祝儀 +500G 受領",
 							DS.T_BODY, Color(DS.GOLD.r, DS.GOLD.g, DS.GOLD.b, da))
 			else:
-				# [SFX] ここが光ったら短いチャイム（受け取れる物がある合図）
+				# 受け取れる物がある合図。押した瞬間の daily_done は main 側で鳴る。
 				var cb := Rect2(sz.x - float(M) - 232.0, y - 8.0, 232.0, 36.0)
 				var cd := Kit.sunk(cb, _press, _t)
 				var beat := Kit.heartbeat(_t, 2.2)
@@ -349,7 +389,8 @@ func _draw() -> void:
 		y += 38.0
 
 	# ── 三行精算（板が開いて、1行ずつ左から差し込む）──
-	# [SFX] パネルが開く＝紙を置く音、各行＝ごく小さいクリック
+	# パネルが開く＝紙を置く音（sheet_open）。_fire_cues が T_LEDGER で1回出す。
+	# 各行のクリックは入れない：11行の日があり、伝票と同じ「連打」になる。
 	var led: Array = []
 	for i in lines.size():
 		for w in _wrap(font, String(lines[i]), DS.T_BODY, sz.x - float(M) * 2.0 - 28.0):
@@ -453,7 +494,7 @@ func _draw() -> void:
 				Kit.hatch(self, dr, Color(gcol.r, gcol.g, gcol.b, 0.07 * (0.4 + 0.6 * u_open)), 22.0, 6.0)
 
 			# 開封の一閃（鉄以上）。板の上を白い帯が走り抜ける。
-			# [SFX] ここが「開いた」瞬間＝chest_open。等級が上がるほど低く長い音にしたい
+			# ここが「開いた」瞬間＝box_wood/iron/silver/gold（_fire_cues が出す）。
 			if opened and u_open < 1.0 and g >= 1:
 				var wx := dr.position.x + dr.size.x * Kit.out_cubic(u_open)
 				draw_rect(Rect2(wx - 20.0, dr.position.y, 40.0, dr.size.y),
@@ -584,7 +625,8 @@ func _draw() -> void:
 						Kit.burst(self, c, 15.0, col, clampf(u * 1.4 - 0.22, 0.0, 1.0))
 						Kit.burst(self, c, 10.0, col, clampf(u * 1.3 - 0.42, 0.0, 1.0))
 			"flash":
-				# [SFX] 画面が飛ぶ瞬間＝thunder（金箱）／短い金属音（銀箱）
+				# 画面が飛ぶ瞬間は開封と同じ時刻なので、音は箱の1発に集約する
+				# （閃光に別の音を重ねると、金箱の 0.76 秒が食われて山が潰れる）。
 				var fc: Color = f["col"]
 				draw_rect(Rect2(Vector2.ZERO, sz),
 						Color((1.0 + fc.r) * 0.5, (1.0 + fc.g) * 0.5, (1.0 + fc.b) * 0.5, float(f["a"])))

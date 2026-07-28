@@ -22,7 +22,12 @@ extends Control
 ##    IDLE_FORGIVE 秒で店番が全員を引き受ける＝席を外した人は絶対に損をしない。
 
 signal finished(tips: int, extra: int, walked_out: int)   # 劇場の終了（給仕の実績を持ち帰る）
-signal tip_tapped            # タップ給仕の瞬間（SFX用）
+signal tip_tapped            # タップ給仕の瞬間（SFX用・ui_buy）
+## 音の合図。ここは Control なので main.gd の _sfx を直接は呼べない。
+## "serve"＝店番が皿を出す／"ticket"＝伝票が1枚埋まる／
+## "guest_leave"＝待ちきれず帰る／"night_close"＝締めの一幕が始まる。
+## 割り当て・音量・間引きは main.gd の SfxRouter に閉じている。
+signal sfx_cue(id: String)
 
 # 状態色は一対一対応にする：CYAN=予報的中 だけ。金＝お金（売上・チップ）、赤＝素材切れ。
 # （マゼンタは「バグの色」として空けておく＝画に出たら異常と分かる）
@@ -424,6 +429,7 @@ func _process(delta: float) -> void:
 						_matched += 1
 					_plates.append({"kind": _dish_kind(String(s["dish"])),
 							"match": mt, "t": 0.0})
+					sfx_cue.emit("ticket")   # 伝票が1枚埋まる（1夜で11枚前後・最小音量）
 					_floats.append({"pos": Vector2(seat_x, cy - CUST_H + 12.0),
 							"text": ("追い客 +%dG" % g) if bns else ("+%dG" % g),
 							"col": GOLD, "t": 0.0})
@@ -473,6 +479,7 @@ func _process(delta: float) -> void:
 			if _close <= 0.0:
 				_burst(Vector2(size.x * 0.5, cy - 30.0), GOLD, 24.0, 210.0, 0.85)
 				_pop = POP_DUR
+				sfx_cue.emit("night_close")   # 拭く→のれん→木札→暗転 の入口
 			_close += delta
 			_wipe = _eio(clampf((_close - 0.10) / 0.95, 0.0, 1.0))
 			if _close >= CLOSE_DUR:
@@ -646,6 +653,10 @@ func _serve(c: Dictionary, tapped: bool) -> void:
 	# 店番が身を乗り出して出す
 	_keeper_lunge = 1.0
 	_keeper_dir = signf(seat_x - size.x * KEEPER_X)
+	# 皿を置く音。タップ給仕の時は tip_tapped（ui_buy＝コイン）が同じ瞬間に鳴るので
+	# 重ねない＝4本のプールを1回の給仕で2本食わない。
+	if not tapped:
+		sfx_cue.emit("serve")
 	if tapped:
 		_last_tap = _t
 		# 早出しで浮いた席の時間を貯める。SEAT_SEC ぶん貯まるごとに追い客がひとり入る。
@@ -693,6 +704,7 @@ func _walk_out(c: Dictionary) -> void:
 	_floats.append({"pos": Vector2(seat_x, cy - CUST_H + 12.0),
 			"text": "-%dG" % _per_plate, "col": DENY, "t": 0.0})
 	_burst(Vector2(seat_x, cy - CUST_H - 42.0), DENY, 12.0, 108.0, 0.46)
+	sfx_cue.emit("guest_leave")                         # 背を向けて出ていく音
 	c["angry"] = 1.5                                    # 去り際まで✕の吹き出しを残す
 	_leave(c)
 
