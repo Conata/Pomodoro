@@ -13,6 +13,53 @@ static var _vign_tex: ImageTexture = null       # ビネット（四隅の落ち
 static var _glow_tex: ImageTexture = null       # ラジアルグロー（アクセント下敷き）
 static var _bg_cache: Dictionary = {}           # path -> Texture2D|null
 static var _pix_cache: Dictionary = {}          # "path:h" -> Texture2D|null
+static var _cut_cache: Dictionary = {}          # path -> Texture2D|null（背景を抜いたアイコン）
+
+
+# ── イージング（唯一の真実。UI から線形補間を消すための最小セット）─────────
+# 原則：出るものは ease-out（速く出て、静かに着地）／消えるものは ease-in で短く。
+# 「戻り」だけ out_back で行き過ぎる＝物として重さが出る。
+# sin() の往復はここには置かない（等速に見える）。生気は heartbeat() を使う。
+
+static func out_cubic(k: float) -> float:
+	var f := 1.0 - clampf(k, 0.0, 1.0)
+	return 1.0 - f * f * f
+
+
+static func out_quart(k: float) -> float:
+	var f := 1.0 - clampf(k, 0.0, 1.0)
+	return 1.0 - f * f * f * f
+
+
+static func out_quint(k: float) -> float:
+	var f := 1.0 - clampf(k, 0.0, 1.0)
+	return 1.0 - f * f * f * f * f
+
+
+static func in_cubic(k: float) -> float:
+	var f := clampf(k, 0.0, 1.0)
+	return f * f * f
+
+
+## 行き過ぎて戻る（1.0 を最大 +10% ほど超えてから収束）。押下の戻り・板の着地に使う。
+static func out_back(k: float, s := 1.9) -> float:
+	var f := clampf(k, 0.0, 1.0) - 1.0
+	return f * f * ((s + 1.0) * f + s) + 1.0
+
+
+## i 番目の要素が step 秒ずつ遅れて立ち上がる 0..1（ease-out）。
+## 「同時に出さない」を1関数に閉じ込める。呼び出し側は index を渡すだけでよい。
+static func stag(age: float, i: int, step := 0.05, dur := 0.30) -> float:
+	return out_quart((age - float(i) * step) / maxf(dur, 0.001))
+
+
+## 心拍。ほとんど静止していて、周期ごとに短い二拍だけ打つ。
+## 常時揺れる sin() と違い「1箇所だけ生きている」ことを伝えられる。
+static func heartbeat(t: float, period := 2.4) -> float:
+	var u := fposmod(t, period) / period
+	var a := exp(-pow((u - 0.03) / 0.048, 2.0))
+	var b := exp(-pow((u - 0.16) / 0.058, 2.0)) * 0.6
+	return clampf(a + b, 0.0, 1.0)
 
 
 ## 高解像度の立ち絵/アニメフレームをドット絵化（縮小＋α2値化。拡大はニアレスト前提）。
@@ -40,6 +87,143 @@ static func pix_tex(path: String, pix_h: int) -> Texture2D:
 			t = ImageTexture.create_from_image(img)
 	_pix_cache[key] = t
 	return t
+
+
+## 生成アイコン（不透明な正方形で書き出されたもの）の地色を縁から塗り潰して抜く。
+## 白地の料理アイコンが「画面の最明部」になる事故を止め、丸皿バックプレートに乗せる。
+## 既に透過を持つ画像（顔など）はそのまま返す。
+static func cutout_tex(path: String, tol := 0.09) -> Texture2D:
+	if _cut_cache.has(path):
+		return _cut_cache[path]
+	var t: Texture2D = null
+	if ResourceLoader.exists(path):
+		var src: Texture2D = load(path)
+		var img := src.get_image()
+		if img != null:
+			img = img.duplicate()
+			if img.is_compressed():
+				img.decompress()
+			img.convert(Image.FORMAT_RGBA8)
+			var w := img.get_width()
+			var h := img.get_height()
+			if w > 0 and h > 0 and img.get_pixel(0, 0).a > 0.99:
+				# 縁から領域成長で「地」を抜く（隣接画素との差だけ見るのでグラデ地も剥がれ、
+				# 料理の中の白は残る）。
+				var seen := PackedByteArray()
+				seen.resize(w * h)
+				var q: Array[Vector2i] = []
+				for x in w:
+					q.append(Vector2i(x, 0))
+					q.append(Vector2i(x, h - 1))
+				for y in h:
+					q.append(Vector2i(0, y))
+					q.append(Vector2i(w - 1, y))
+				var lim := tol * 3.0
+				var i := 0
+				while i < q.size():
+					var p: Vector2i = q[i]
+					i += 1
+					if p.x < 0 or p.y < 0 or p.x >= w or p.y >= h:
+						continue
+					var key := p.y * w + p.x
+					if seen[key] != 0:
+						continue
+					var c := img.get_pixel(p.x, p.y)
+					var edge := p.x == 0 or p.y == 0 or p.x == w - 1 or p.y == h - 1
+					if not edge:
+						# 既に抜けた隣（=地）と色が近いか
+						var near := false
+						var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+						for d in dirs:
+							var n: Vector2i = p + d
+							if n.x < 0 or n.y < 0 or n.x >= w or n.y >= h:
+								continue
+							if seen[n.y * w + n.x] == 0:
+								continue
+							var nc := img.get_pixel(n.x, n.y)
+							if nc.a > 0.02:
+								continue
+							if absf(c.r - nc.r) + absf(c.g - nc.g) + absf(c.b - nc.b) < lim:
+								near = true
+								break
+						if not near:
+							continue
+					seen[key] = 1
+					img.set_pixel(p.x, p.y, Color(c.r, c.g, c.b, 0.0))
+					q.append(Vector2i(p.x + 1, p.y))
+					q.append(Vector2i(p.x - 1, p.y))
+					q.append(Vector2i(p.x, p.y + 1))
+					q.append(Vector2i(p.x, p.y - 1))
+				t = ImageTexture.create_from_image(img)
+			else:
+				t = src
+	_cut_cache[path] = t
+	return t
+
+
+# ── 斜めの板（P5流：面そのものを傾け、無情報の平面を作らない）─────────────
+
+## 平行四辺形の板。skew>0 で上辺が右へ寄る。rect の外へはみ出さない。
+static func slab(ci: CanvasItem, rect: Rect2, col: Color, skew := 10.0) -> void:
+	ci.draw_colored_polygon(PackedVector2Array([
+		Vector2(rect.position.x + skew, rect.position.y),
+		Vector2(rect.end.x, rect.position.y),
+		Vector2(rect.end.x - skew, rect.end.y),
+		Vector2(rect.position.x, rect.end.y)]), col)
+
+
+## 斜めの板の輪郭だけ（非選択＝罫、選択＝ベタ、の対比に使う）。
+static func slab_edge(ci: CanvasItem, rect: Rect2, col: Color, skew := 10.0, width := 1.5) -> void:
+	var p := PackedVector2Array([
+		Vector2(rect.position.x + skew, rect.position.y),
+		Vector2(rect.end.x, rect.position.y),
+		Vector2(rect.end.x - skew, rect.end.y),
+		Vector2(rect.position.x, rect.end.y),
+		Vector2(rect.position.x + skew, rect.position.y)])
+	ci.draw_polyline(p, col, width)
+
+
+## 斜めカットの「面」。角丸パネル panel() の置き換えで、全画面の面はこれに寄せる。
+## 影（黒板を1枚ずらす）→ 面 → 縦グラデ → 天面ハイライト → 罫 の順。
+## skew<0 で DS.skew(高さ) を使う＝傾き量を各描画点で決めさせない。
+static func slab_panel(ci: CanvasItem, rect: Rect2, bg: Color, border: Color, skew := -1.0,
+		bw := 1.5) -> void:
+	var sk := DS.skew(rect.size.y) if skew < 0.0 else skew
+	# 影：ぼかしではなく黒い板を1枚ずらす（紙を叩きつけた感じ＝形が一致する）
+	if bg.a >= 0.55 and rect.size.y > 20.0:
+		slab(ci, Rect2(rect.position + Vector2(0.0, 5.0), rect.size), Color(0, 0, 0, 0.45), sk)
+	slab(ci, rect, bg, sk)
+	# 縦グラデ（上＝面の折り返し／下＝影に沈む）。矩形テクスチャだと角がはみ出すので頂点色で。
+	ci.draw_polygon(PackedVector2Array([
+			Vector2(rect.position.x + sk, rect.position.y),
+			Vector2(rect.end.x, rect.position.y),
+			Vector2(rect.end.x - sk, rect.end.y),
+			Vector2(rect.position.x, rect.end.y)]),
+			PackedColorArray([Color(1, 1, 1, 0.06), Color(1, 1, 1, 0.06),
+			Color(0, 0, 0, 0.16), Color(0, 0, 0, 0.16)]))
+	# 天面ハイライト（1pxの折り返し）
+	ci.draw_line(Vector2(rect.position.x + sk + 3.0, rect.position.y + 1.5),
+			Vector2(rect.end.x - 3.0, rect.position.y + 1.5), Color(1, 1, 1, 0.07), 1.0)
+	if border.a > 0.02:
+		slab_edge(ci, rect, border, sk, bw)
+
+
+## 斜めの地紋。無情報の平面を1cmも残さないための縞。
+static func hatch(ci: CanvasItem, rect: Rect2, col: Color, spacing := 26.0, width := 9.0) -> void:
+	var h := rect.size.y
+	var k := rect.position.x - h
+	while k < rect.end.x:
+		var a := maxf(0.0, rect.position.x - k)
+		var b := minf(h, rect.end.x - k)
+		if b > a + 1.0:
+			ci.draw_line(Vector2(k + a, rect.position.y + a), Vector2(k + b, rect.position.y + b), col, width)
+		k += spacing
+
+
+## アイコンの丸皿バックプレート（最明部を作らせない共通の受け皿）。
+static func plate(ci: CanvasItem, center: Vector2, radius: float, tint := Color(1, 1, 1, 1)) -> void:
+	ci.draw_circle(center, radius, Color(0.035, 0.03, 0.055, 0.92))
+	ci.draw_arc(center, radius - 1.0, 0.0, TAU, 32, Color(tint.r, tint.g, tint.b, 0.45), 1.5)
 
 
 ## 9-patch ソフトシャドウ。角丸パネルの下に敷く。
@@ -86,8 +270,8 @@ static func _vignette() -> ImageTexture:
 		for y in n:
 			for x in n:
 				var v := Vector2(x / float(n - 1) - 0.5, y / float(n - 1) - 0.5).length() * 2.0
-				var a := clampf((v - 0.62) / 0.55, 0.0, 1.0)
-				img.set_pixel(x, y, Color(0, 0, 0, a * a * 0.42))
+				var a := clampf((v - 0.68) / 0.55, 0.0, 1.0)
+				img.set_pixel(x, y, Color(0, 0, 0, a * a * 0.26))
 		_vign_tex = ImageTexture.create_from_image(img)
 	return _vign_tex
 
@@ -141,12 +325,12 @@ static func panel(ci: CanvasItem, rect: Rect2, bg: Color, border: Color, radius 
 	ci.draw_style_box(line, rect)
 
 
-## アクセントの強い主役ボタン面（CTA）。panel＋強めの二重グロー。
-static func cta(ci: CanvasItem, rect: Rect2, bg: Color, accent: Color, pulse := 0.0, radius := 16.0) -> void:
+## アクセントの強い主役ボタン面（CTA）。斜めの面＋強めの二重グロー。
+static func cta(ci: CanvasItem, rect: Rect2, bg: Color, accent: Color, pulse := 0.0) -> void:
 	# 大きめの下敷きグロー
 	var g := Color(accent.r, accent.g, accent.b, 0.10 + 0.10 * pulse)
 	ci.draw_texture_rect(_glow(), rect.grow(26), false, g)
-	panel(ci, rect, bg, Color(accent.r, accent.g, accent.b, 0.65 + 0.3 * pulse), radius, 2.0)
+	slab_panel(ci, rect, bg, Color(accent.r, accent.g, accent.b, 0.65 + 0.3 * pulse), -1.0, 2.0)
 
 
 # ── 画面の地（背景・ビネット・ヘッダー帯）──────────────────────────────
@@ -164,16 +348,14 @@ static func backdrop(ci: CanvasItem, sz: Vector2, path: String, accent: Color, d
 		ci.draw_rect(Rect2(Vector2.ZERO, sz), Color(0.05, 0.05, 0.08, 1.0))
 	else:
 		var ts := tex.get_size()
-		var s := maxf(sz.x / ts.x, sz.y / ts.y)
-		var dst := ts * s
-		ci.draw_texture_rect(tex, Rect2((sz - dst) * 0.5, dst), false)
-	# 暗幕（上下を強めに落として中央に視線を集める）
+		# ドット絵は整数倍だけ（非整数倍はドットが溶けて崩れ字が汚く見える）
+		var s := ceilf(maxf(sz.x / ts.x, sz.y / ts.y))
+		var dst := (ts * s).round()
+		ci.draw_texture_rect(tex, Rect2(((sz - dst) * 0.5).round(), dst), false)
+	# 暗幕（多重掛けをやめ、地の1枚＋下側の一段だけ。UI が面積を持つ前提）
 	ci.draw_rect(Rect2(Vector2.ZERO, sz), Color(0.02, 0.02, 0.05, darken))
-	var pts := PackedVector2Array([Vector2(0, 0), Vector2(sz.x, 0), Vector2(sz.x, sz.y * 0.30), Vector2(0, sz.y * 0.30)])
-	var top_c := Color(0.01, 0.01, 0.04, 0.55)
-	ci.draw_polygon(pts, PackedColorArray([top_c, top_c, Color(0, 0, 0, 0), Color(0, 0, 0, 0)]))
-	var pts2 := PackedVector2Array([Vector2(0, sz.y * 0.62), Vector2(sz.x, sz.y * 0.62), Vector2(sz.x, sz.y), Vector2(0, sz.y)])
-	var bot_c := Color(0.01, 0.01, 0.04, 0.72)
+	var pts2 := PackedVector2Array([Vector2(0, sz.y * 0.66), Vector2(sz.x, sz.y * 0.66), Vector2(sz.x, sz.y), Vector2(0, sz.y)])
+	var bot_c := Color(0.01, 0.01, 0.04, 0.34)
 	ci.draw_polygon(pts2, PackedColorArray([Color(0, 0, 0, 0), Color(0, 0, 0, 0), bot_c, bot_c]))
 	# アクセントの底光り（画面下からネオンが差す）
 	ci.draw_texture_rect(_glow(), Rect2(sz.x * 0.5 - sz.x * 0.9, sz.y - sz.x * 0.55, sz.x * 1.8, sz.x * 0.9),
@@ -185,21 +367,62 @@ static func vignette(ci: CanvasItem, sz: Vector2) -> void:
 	ci.draw_texture_rect(_vignette(), Rect2(Vector2.ZERO, sz), false)
 
 
-## セクション見出し：アクセントのチップ＋ラベル＋ヘアライン。
-static func header(ci: CanvasItem, font: Font, pos: Vector2, label: String, accent: Color, width := 0.0, size := 15) -> void:
-	ci.draw_rect(Rect2(pos.x, pos.y - size + 3, 4, size), accent)
-	ci.draw_string(font, Vector2(pos.x + 12, pos.y + 1), label, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0, 0, 0, 0.6))
-	ci.draw_string(font, Vector2(pos.x + 11, pos.y), label, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0.96, 0.95, 0.98))
-	if width > 0.0:
-		var tw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
-		ci.draw_line(Vector2(pos.x + 22 + tw, pos.y - size * 0.35),
-				Vector2(pos.x + width, pos.y - size * 0.35), Color(1, 1, 1, 0.08), 1.0)
+## セクション見出し：傾いた黒い板に白抜きで叩き込む（P5流）。
+## pos は板の左上。高さは size+16。note は板の右へ流す小さな添え書き。
+static func header(ci: CanvasItem, font: Font, pos: Vector2, label: String, accent: Color,
+		width := 0.0, size := DS.T_SUB, note := "") -> void:
+	var h := float(size) + 16.0
+	var wd := width if width > 0.0 else 260.0
+	var rect := Rect2(pos.x, pos.y, wd, h)
+	var skew := 10.0
+	# 識別色の下敷き（板が2枚ずれて重なる＝紙を叩きつけた感じ）
+	slab(ci, Rect2(rect.position.x + 7.0, rect.position.y + 6.0, rect.size.x - 7.0, h),
+			Color(accent.r, accent.g, accent.b, 0.5), skew)
+	slab(ci, rect, Color(DS.INK.r, DS.INK.g, DS.INK.b, 0.97), skew)
+	slab(ci, Rect2(rect.position.x + 8.0, rect.position.y, 9.0, h), accent, skew)
+	var bx := rect.position.x + 30.0
+	var by := rect.position.y + h * 0.5 + size * 0.36
+	ci.draw_string_outline(font, Vector2(bx, by), label, HORIZONTAL_ALIGNMENT_LEFT, -1, size, 4,
+			Color(0, 0, 0, 0.9))
+	ci.draw_string(font, Vector2(bx, by), label, HORIZONTAL_ALIGNMENT_LEFT, -1, size, DS.PAPER)
+	if note != "":
+		var lw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+		ci.draw_string(font, Vector2(bx + lw + 16.0, by - 1.0), note, HORIZONTAL_ALIGNMENT_LEFT, -1,
+				DS.T_MICRO, Color(accent.r, accent.g, accent.b, 0.95))
 
 
 ## アクティブ項目の下敷きグロー（フッターの現在地など）。
 static func spot(ci: CanvasItem, center: Vector2, radius: float, accent: Color, alpha := 0.22) -> void:
 	ci.draw_texture_rect(_glow(), Rect2(center - Vector2(radius, radius), Vector2(radius * 2, radius * 2)),
 			false, Color(accent.r, accent.g, accent.b, alpha))
+
+
+# ── フッターの選択インジケータ（瞬間移動させない）───────────────────────
+const NAV_DUR := 0.28
+
+## 選択セルを追いかける台帳。store はオーバーレイが持つ Dictionary。
+## 目標が変わったら「いま居る場所」から数え直し、out_back で少し行き過ぎて座る。
+## 返り値 {"x": 追従中の左端, "col": 混色中の識別色, "k": 0..1（1=着地済み）}。
+static func nav_slide(store: Dictionary, x: float, col: Color, now: float) -> Dictionary:
+	if not store.has("gx"):
+		store["gx"] = x
+		store["ax"] = x
+		store["gc"] = col
+		store["ac"] = col
+		store["t0"] = now - 9.0
+	var k := clampf((now - float(store["t0"])) / NAV_DUR, 0.0, 1.0)
+	var cur_x := lerpf(float(store["ax"]), float(store["gx"]), out_back(k, 1.5))
+	var cur_c: Color = (store["ac"] as Color).lerp(store["gc"], out_cubic(k))
+	if absf(x - float(store["gx"])) > 0.5:
+		store["ax"] = cur_x                  # 途中でも「いま居る場所」から引き継ぐ
+		store["ac"] = cur_c
+		store["gx"] = x
+		store["gc"] = col
+		store["t0"] = now
+		k = 0.0
+		cur_x = float(store["ax"])
+		cur_c = store["ac"]
+	return {"x": cur_x, "col": cur_c, "k": k}
 
 
 # ── リップル（タップの波紋・押下フィードバック）──────────────────────────
@@ -227,6 +450,246 @@ static func ripples(ci: CanvasItem, list: Array, now: float) -> void:
 		ci.draw_circle(p, r, Color(1, 1, 1, (1.0 - k) * 0.06))
 		ci.draw_arc(p, r, 0, TAU, 40, Color(1, 1, 1, (1.0 - k) * 0.30), 2.0)
 		i += 1
+
+
+# ── 数値の生き物化（カウントアップ／拡大／差分フロート）────────────────────
+# クッキークリッカーの原則：状態が動いたら、画面が必ず何かを言う。
+# 「変化の検出」をここへ集約する。各オーバーレイは今の値を渡すだけでよく、
+# どこかの描画点を書き忘れない限り、黙って数字が入れ替わる箇所は生まれない。
+
+const NUM_SNAP := 0.5      # これ以下の差は吸着（端数を残さない）
+const POP_LIFE := 0.30     # 拡大の寿命（秒）
+const FLOAT_LIFE := 1.05   # 差分フロートの寿命（秒）
+const FLY_LIFE := 0.55     # 飛ぶ数値（支払い/収穫）の寿命（秒）
+const PRESS_LIFE := 0.34   # 押下（沈み→戻りのオーバーシュート）の寿命（秒）
+const PRESS_DOWN := 0.07   # そのうち「沈む」のにかける時間（残りが戻り）
+const BURST_LIFE := 0.85   # 解放バーストの寿命（秒）
+const NUM_MIN := 0.26      # カウントアップの最短（小さな増減）
+const NUM_MAX := 0.62      # カウントアップの最長（大きな増減）
+
+## 現在のキャンバス平行移動。set_xf() で設定すると num_draw が復元できる
+## （拡大描画のために transform を一時的に奪うので、元へ戻す先を覚えておく）。
+static var xf := Vector2.ZERO
+
+
+static func set_xf(ci: CanvasItem, ofs: Vector2) -> void:
+	xf = ofs
+	ci.draw_set_transform(ofs, 0.0, Vector2.ONE)
+
+
+## 桁数（負号は数えない）。桁が繰り上がる瞬間を捕まえるために使う。
+static func _digits(v: float) -> int:
+	return String.num_int64(absi(int(round(v)))).length()
+
+
+## 値を追いかける台帳。store はオーバーレイが持つ Dictionary。
+## 返り値 {"v": 表示値（カウントアップ中）, "pop": 0..1 拡大量, "d": 変化した瞬間の差分}。
+## 初回は目標値へ吸着（開いた瞬間に0から数え上げない）。
+##
+## カウントは指数減衰（v += (g-v)*dt*k）をやめ、開始値→目標値を out_quint で結ぶ。
+## 減衰は「いつまでも着かない尾」を引くうえフレームレートに依存する＝毎回違う速さになる。
+## 明示的な曲線なら、どの端末でも同じ長さで、最後の1桁がきちんと止まって見える。
+## 距離が大きいほど少しだけ長く数える（大金は数え応えがある）。
+static func num(store: Dictionary, key: String, target: float, now: float) -> Dictionary:
+	if not store.has(key):
+		store[key] = {"v": target, "a": target, "g": target, "pop": 0.0, "t0": now - 9.0,
+				"dur": NUM_MIN, "dig": _digits(target), "carry": now - 9.0}
+		return {"v": target, "pop": 0.0, "d": 0.0, "carry": 0.0}
+	var e: Dictionary = store[key]
+	var d := 0.0
+	if absf(target - float(e["g"])) > 0.0001:
+		d = target - float(e["g"])
+		e["a"] = float(e["v"])          # いま見えている値から数え直す（飛ばさない）
+		e["g"] = target
+		e["t0"] = now
+		# 桁が増えるほど長く。ただし上限で頭打ち（待たされてはいけない）
+		e["dur"] = clampf(NUM_MIN + log(1.0 + absf(d)) * 0.055, NUM_MIN, NUM_MAX)
+		e["pop"] = 1.0
+	var g := float(e["g"])
+	var k := (now - float(e["t0"])) / maxf(float(e["dur"]), 0.001)
+	var v := g
+	if k < 1.0:
+		v = lerpf(float(e["a"]), g, out_quint(k))
+		if absf(g - v) < NUM_SNAP:
+			v = g
+	e["v"] = v
+	# 桁が繰り上がった瞬間だけ、もう一度だけ弾ませる（99→100 が事件になる）
+	var dg := _digits(v)
+	if dg != int(e["dig"]):
+		e["dig"] = dg
+		e["carry"] = now
+	var carry := clampf(1.0 - (now - float(e["carry"])) / 0.34, 0.0, 1.0)
+	# pop は経過時間から引く（フレーム数に依らず必ず POP_LIFE で消える）
+	var pop := clampf(1.0 - (now - float(e["t0"])) / POP_LIFE, 0.0, 1.0) * float(e["pop"])
+	pop = maxf(pop, carry * 0.7)
+	return {"v": v, "pop": out_cubic(pop), "d": d, "carry": carry}
+
+
+## 数値を「一瞬だけ拡大して」描く。size は DS の段（16/24/32/48）から選ぶこと。
+## 拡大は transform で行う＝字の段数を増やさずに、変化した事実だけを見せる。
+static func num_draw(ci: CanvasItem, font: Font, pos: Vector2, s: String, size: int, col: Color,
+		pop := 0.0) -> void:
+	var at := pos
+	if pop > 0.001:
+		var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+		var c := Vector2(pos.x + w * 0.5, pos.y - size * 0.34)
+		var sc := 1.0 + 0.45 * pop * pop
+		ci.draw_set_transform(xf + c, 0.0, Vector2(sc, sc))
+		at = pos - c
+	ci.draw_string_outline(font, at, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, 4, Color(0, 0, 0, 0.85 * col.a))
+	ci.draw_string(font, at, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
+	if pop > 0.001:
+		ci.draw_set_transform(xf, 0.0, Vector2.ONE)
+
+
+## 取り消し線つきの旧値。罰の前の数字を「消された事実」として残す。
+## line は取り消し線の色（赤い面の上では地に沈むので、呼び出し側が指定できる）。
+static func struck(ci: CanvasItem, font: Font, pos: Vector2, s: String, size: int, col: Color,
+		line := DS.DANGER, outline := true) -> float:
+	var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	if outline:
+		ci.draw_string_outline(font, pos, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, 3, Color(0, 0, 0, 0.8))
+	ci.draw_string(font, pos, s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
+	ci.draw_line(Vector2(pos.x - 2.0, pos.y - size * 0.3), Vector2(pos.x + w + 2.0, pos.y - size * 0.3),
+			Color(line.r, line.g, line.b, 0.95), 2.0)
+	return w
+
+
+## 差分のフロート（+120G が上へ流れて消える）。
+static func float_add(list: Array, pos: Vector2, text: String, col: Color, now: float) -> void:
+	list.append({"p": pos, "s": text, "c": col, "t0": now})
+	while list.size() > 14:
+		list.pop_front()
+
+
+static func floats(ci: CanvasItem, font: Font, list: Array, now: float) -> void:
+	var i := 0
+	while i < list.size():
+		var e: Dictionary = list[i]
+		var k := (now - float(e["t0"])) / FLOAT_LIFE
+		if k >= 1.0:
+			list.remove_at(i)
+			continue
+		var ez := 1.0 - pow(1.0 - k, 2.2)
+		var p: Vector2 = (e["p"] as Vector2) + Vector2(0.0, -54.0 * ez)
+		var a := clampf((1.0 - k) * 1.8, 0.0, 1.0)
+		var c: Color = e["c"]
+		num_draw(ci, font, p, String(e["s"]), DS.T_BODY, Color(c.r, c.g, c.b, a),
+				clampf(1.0 - k * 6.0, 0.0, 1.0))
+		i += 1
+
+
+## 飛ぶ数値。購入＝所持金から実際に飛んでいく／収穫＝手元へ飛んでくる。
+static func fly_add(list: Array, from: Vector2, to: Vector2, text: String, col: Color, now: float) -> void:
+	list.append({"a": from, "b": to, "s": text, "c": col, "t0": now})
+	while list.size() > 10:
+		list.pop_front()
+
+
+static func flies(ci: CanvasItem, font: Font, list: Array, now: float) -> void:
+	var i := 0
+	while i < list.size():
+		var e: Dictionary = list[i]
+		var k := (now - float(e["t0"])) / FLY_LIFE
+		if k >= 1.0:
+			list.remove_at(i)
+			continue
+		var a: Vector2 = e["a"]
+		var b: Vector2 = e["b"]
+		var ctrl := (a + b) * 0.5 + Vector2(0.0, -120.0)
+		var u := k * k * (3.0 - 2.0 * k)
+		var p := a.lerp(ctrl, u).lerp(ctrl.lerp(b, u), u)
+		var c: Color = e["c"]
+		var al := clampf((1.0 - k) * 2.4, 0.0, 1.0)
+		ci.draw_texture_rect(_glow(), Rect2(p - Vector2(36, 36), Vector2(72, 72)), false,
+				Color(c.r, c.g, c.b, 0.40 * al))
+		var s := String(e["s"])
+		var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, DS.T_BODY).x
+		num_draw(ci, font, p - Vector2(w * 0.5, -6.0), s, DS.T_BODY, Color(c.r, c.g, c.b, al))
+		i += 1
+
+
+## 押下の沈み込み量（px）。押した直後は素早く沈み、離すと 0 を通り越して浮いてから座る。
+## 押せる要素を描く側がこの分だけ矩形を下げる＝「板が沈んだ」ように見える。
+## age は押してからの経過秒。
+static func press_sink(age: float, depth := 3.0) -> float:
+	if age <= 0.0 or age >= PRESS_LIFE:
+		return 0.0
+	if age < PRESS_DOWN:
+		return depth * out_cubic(age / PRESS_DOWN)
+	# 戻り：out_back が 1.0 を超える＝沈み位置より上へ浮いてから収まる
+	return depth * (1.0 - out_back((age - PRESS_DOWN) / (PRESS_LIFE - PRESS_DOWN), 2.2))
+
+
+## 押下中なら「沈んだ矩形」を返す（押されていなければそのまま返す）。
+## 即時モード描画の各点で1行呼べば、押し込みが全ヒット領域へ届く：
+##     var dr := Kit.sunk(r, _press, _t)   # 描くのは dr
+##     _hit(r, id)                          # 当たり判定は最終位置のまま
+## press は各オーバーレイが持つ直近の押下 {"rect": Rect2, "t0": float}。
+static func sunk(rect: Rect2, press: Dictionary, now: float, depth := 3.0) -> Rect2:
+	if press.is_empty():
+		return rect
+	var pr: Rect2 = press.get("rect", Rect2())
+	if not pr.position.is_equal_approx(rect.position) or not pr.size.is_equal_approx(rect.size):
+		return rect
+	var s := press_sink(now - float(press.get("t0", -9.0)), depth)
+	return rect if is_zero_approx(s) else Rect2(rect.position + Vector2(0.0, s), rect.size)
+
+
+## 押下フィードバック。押せる場所は押した瞬間に必ず応える（3状態目）。
+## 「点いて消える」だけにしないため、2相にする：
+##   相1（沈む）  枠が内側へ締まり、上端に影が差す＝指の下へ入り込む
+##   相2（戻る）  枠が外へ抜けて 1 度行き過ぎ、光の輪だけ残して消える
+## k は残り寿命 1→0（呼び出し側の既存式そのまま）。
+static func press(ci: CanvasItem, rect: Rect2, col: Color, k: float) -> void:
+	if k <= 0.0:
+		return
+	var age := (1.0 - clampf(k, 0.0, 1.0)) * PRESS_LIFE
+	var sink := press_sink(age)
+	var r := Rect2(rect.position + Vector2(0.0, sink), rect.size)
+	var sk := DS.skew(rect.size.y)
+	if age < PRESS_DOWN:
+		# 沈む：枠を内へ締めて、上端に落ち影（へこんだ面）
+		var t := out_cubic(age / PRESS_DOWN)
+		var inset := 2.4 * t
+		var ir := r.grow(-inset)
+		slab(ci, ir, Color(0, 0, 0, 0.20 * t), sk)
+		slab_edge(ci, ir, Color(col.r, col.g, col.b, 0.55 + 0.45 * t), sk, 2.0)
+		ci.draw_line(r.position + Vector2(sk + 4.0, 1.0), Vector2(r.end.x - 6.0, r.position.y + 1.0),
+				Color(0, 0, 0, 0.42 * t), 3.0)
+		return
+	# 戻る：out_back で外へ行き過ぎてから収束。白の面は素早く抜き、輪だけ残す
+	var u := clampf((age - PRESS_DOWN) / (PRESS_LIFE - PRESS_DOWN), 0.0, 1.0)
+	var grow := -2.4 + 8.2 * out_back(u, 2.2)
+	var a := 1.0 - out_cubic(u)
+	var gr := r.grow(grow)
+	slab(ci, gr, Color(1, 1, 1, 0.16 * a * a), sk)
+	slab_edge(ci, gr, Color(col.r, col.g, col.b, 0.95 * a), sk, 2.0)
+
+
+## 解放の瞬間。光の輪が拡がり、放射が飛ぶ（改装ノード・購入の着弾）。
+static func burst(ci: CanvasItem, center: Vector2, radius: float, col: Color, k: float) -> void:
+	if k <= 0.0 or k >= 1.0:
+		return
+	var e := 1.0 - pow(1.0 - k, 2.0)
+	var a := 1.0 - k
+	ci.draw_texture_rect(_glow(), Rect2(center - Vector2(radius * 2.6, radius * 2.6),
+			Vector2(radius * 5.2, radius * 5.2)), false, Color(col.r, col.g, col.b, 0.55 * a))
+	ci.draw_arc(center, radius * (0.7 + 2.2 * e), 0.0, TAU, 42, Color(col.r, col.g, col.b, a), 3.0 * a + 0.5)
+	for i in 6:
+		var ang := TAU * i / 6.0 + e * 1.2
+		var d := Vector2(cos(ang), sin(ang))
+		ci.draw_line(center + d * radius * (1.1 + 1.3 * e), center + d * radius * (1.5 + 2.0 * e),
+				Color(col.r, col.g, col.b, a), 2.0)
+
+
+## 線を「繋がる」ように描く（改装ツリーの解放直後：光が前提ノードから流れてくる）。
+static func wire(ci: CanvasItem, a: Vector2, b: Vector2, col: Color, lit: bool, k := -1.0) -> void:
+	ci.draw_line(a, b, Color(col.r, col.g, col.b, 0.55 if lit else 0.18), 2.0)
+	if k >= 0.0 and k < 1.0:
+		var u := clampf(k * 1.4, 0.0, 1.0)
+		ci.draw_line(a, a.lerp(b, u), Color(col.r, col.g, col.b, 1.0 - k * 0.5), 4.0)
+		ci.draw_circle(a.lerp(b, u), 5.0 * (1.0 - k * 0.5), Color(col.r, col.g, col.b, 1.0 - k))
 
 
 ## HP/進行バー：内側の溝＋グラデ入り本体＋先端の粒。

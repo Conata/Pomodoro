@@ -89,11 +89,11 @@ const GIRLS := {
 const GIRL_ORDER := ["mil", "yuzuki", "muu", "kiriko", "doctor", "nurse"]
 
 # NPC（操作不可・会話/イベントの話者になれる）。プレイアブルとは別。
-# キリコ＝依頼人「私を殺してほしい」。物語の核（人格コピーの残り）。
+# 依頼人「わたしを殺してください」＝ミル。物語の核（人格コピーの残り）。
+# 以前は別NPC「キリコ」が担っていたが、鏡を2人に分けると薄くなるので統合した。
+# 毎日いっしょに潜る相手が終わらせてほしいと頼んでいる、という構図になる。
+# （id "kiriko" は表示名レイカのプレイアブル。改名の名残なので混同しないこと）
 const NPCS := {
-	"kiriko_npc": {
-		"name": "キリコ", "role": "依頼人", "color": Color("cdb4db"),
-	},
 	# 特注レシピ常連（住民ストーリー担当）
 	"tao": {
 		"name": "タオ爺", "role": "薬膳師", "color": Color("c8a96e"),
@@ -187,6 +187,10 @@ const GIRL_TREES := {
 
 # 改装ツリー（TBHのルーンツリー準拠：ゴールド消費・マップ型・隣接解放）
 # 方向別傾向: 上=宝箱系／左上=金策／左下=素材／右=戦闘／下=システム
+# 1皿あたりの素材原価。売上から差し引いて「手元に残る額」を出すのに使う。
+# UI 側に置くと画面ごとに食い違う（実際ホームは売上、経営は純益を見出しにしていた）。
+const MAT_COST := 17
+
 const RENOV_NODES := {
 	"start": {"name": "店の鍵", "cost": 0, "pos": [0, 0], "prev": [], "effect": {}, "desc": "すべての始まり"},
 	"chest1": {"name": "箱の勘Ⅰ", "cost": 200, "pos": [0, -1], "prev": ["start"], "effect": {"chest_interval": 0.10}, "desc": "箱の蓄積間隔 -10%"},
@@ -255,13 +259,13 @@ const DROP_SHARD := 0.25
 # バイオーム3種ループ（電脳深層＝最初の店主の脳内）
 const BIOMES := [
 	{"name": "管理区画", "color": Color(0.10, 0.16, 0.34), "ing": "dry",
-		"mobs": ["tiny_zombie", "skelet"], "boss": "big_zombie",
+		"mobs": ["mob_drone", "mob_spider"], "boss": "boss_core",
 		"mob_names": ["故障ロボット", "野良ボット"], "elite_name": "暴走ボット"},
 	{"name": "商店遺構", "color": Color(0.08, 0.20, 0.30), "ing": "meat",
-		"mobs": ["goblin", "imp"], "boss": "ogre",
+		"mobs": ["mob_spider", "mob_slime"], "boss": "elite_guard",
 		"mob_names": ["こそ泥ゴブリン", "小鬼"], "elite_name": "親玉ゴブリン"},
 	{"name": "記憶の海", "color": Color(0.07, 0.12, 0.38), "ing": "sea",
-		"mobs": ["wogol", "ice_zombie"], "boss": "big_demon",
+		"mobs": ["mob_slime", "mob_drone"], "boss": "boss_core",
 		"mob_names": ["漂流体", "氷の影"], "elite_name": "巨大漂流体"},
 ]
 

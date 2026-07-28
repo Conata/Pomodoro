@@ -62,9 +62,17 @@ var is_acquiring: bool = false   # アイテム取得
 # 内部状態
 # ────────────────────────────────────────────────────────
 var char_id: String = ""
+## キャラ固有のテンポ倍率（ループ再生のみに掛かる）。
+## 同じ待機クリップを同じ fps で回すと、5人が完全に同じコマで瞬きし同じコマで揺れる
+## ＝「同じ人形が5体」に見える。id から決めた 0.86〜1.14 倍でテンポを散らす。
+var time_scale: float = 1.0
+## 移動速度に連動するコマ速度倍率（歩き＝1.0／走り＝1.6 など。呼び出し側が設定）。
+var speed_scale: float = 1.0
 var _state: String = "idle"
 var _frame: int = 0
 var _elapsed: float = 0.0
+## ループ再生の開始位相（秒）。id ごとに固定なので、同時に生成しても同コマにならない。
+var _loop_phase: float = 0.0
 # インスタンスローカルのフレーム数キャッシュ。
 # static にするとエディタセッション内で旧値が残り "idle f9" のようなズレが起きるため非 static。
 var _cache: Dictionary = {}
@@ -73,6 +81,10 @@ var _cache: Dictionary = {}
 func _init(id: String) -> void:
 	char_id = id
 	_state = "idle"
+	# id から決定的にテンポと開始位相を散らす（実行ごとに変わらない＝絵作りが再現できる）。
+	var h := absi(hash(id))
+	time_scale = 0.86 + float(h % 29) / 29.0 * 0.28
+	_loop_phase = float(h % 97) / 97.0 * 3.7
 
 
 # ────────────────────────────────────────────────────────
@@ -116,11 +128,17 @@ func tick(delta: float) -> void:
 		_elapsed = 0.0
 
 	var fps := _state_fps(_state)
-	_elapsed += delta
+	var looping := _state_loop(_state)
+	# ループ（待機/走り）はキャラ固有テンポ×速度倍率で回す。単発（攻撃/被弾）は等速のまま
+	# ＝ゲームのタイミングと絵がズレないようにする。
+	_elapsed += delta * (time_scale * speed_scale if looping else 1.0)
 	var total := _get_frame_count(char_id, _state)
 	if total > 0:
-		_frame = int(_elapsed * fps) % total if _state_loop(_state) else \
-				mini(int(_elapsed * fps), total - 1)
+		if looping:
+			var s := _loop_start(total)
+			_frame = s + int((_elapsed + _loop_phase) * fps) % (total - s)
+		else:
+			_frame = mini(int(_elapsed * fps), total - 1)
 
 
 # ────────────────────────────────────────────────────────
@@ -193,6 +211,15 @@ func _resolve_state() -> String:
 	if speed > 0.1:
 		return "run"
 	return "idle"
+
+
+## ループ再生の開始コマ。連番の f0 は生成時の「基準ポーズ」で、他のコマと別物になっている
+## （2頭身のちび絵＋マゼンタのマットが焼き込まれている。UI 側はこれを顔ポートレートとして
+## 使っており、dive_overlay._face() が idle_f0 の頭を切り出している）。
+## そのままループに混ぜると、2秒に1回だけキャラが別人のちび絵に化けて紫の縁が出る。
+## ファイルは UI が使うので消せない。ループ側で 1 コマ目から回す。
+func _loop_start(total: int) -> int:
+	return 1 if total >= 3 else 0
 
 
 func _has_anim(anim: String) -> bool:

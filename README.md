@@ -11,5 +11,10 @@
     シード付きRNG・0.2秒固定ステップ・キャッチアップ）
   - `src/ui/` … 潜行ビュー・会話シーン（Rain98系：青のモノクローム×雨×斜めバンド）
 - `tests/test_sim.gd` … ヘッドレステスト: `godot --headless -s tests/test_sim.gd`
+- `tests/test_flow.gd` … 遊びの流れを実際の `main.tscn` で通す検証。単体テストは
+  sim しか叩かないので、**UI の描画中に落ちる類を見ない**（実際、店番にドクター／
+  ナースを選ぶと精算で落ちるバグが単体テスト251件を全部すり抜けていた）。
+  3D の描画コンテキストが要るので xvfb 経由で回す:
+  `xvfb-run -a -s "-screen 0 760x1320x24" godot --rendering-method gl_compatibility --rendering-driver opengl3 --audio-driver Dummy -s tests/test_flow.gd`
 - `assets/third_party/` … オープンソースアセット（ライセンス台帳: `CREDITS.md`）
 - `.github/workflows/deploy.yml` … main へ push で自動ビルド → GitHub Pages 公開

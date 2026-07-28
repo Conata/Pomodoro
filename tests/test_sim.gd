@@ -30,6 +30,7 @@ func _initialize() -> void:
 	_test_daily_streak()
 	_test_forecast_night()
 	_test_save_roundtrip()
+	_test_sync_level()
 	if fails == 0:
 		print("ALL %d CHECKS PASSED" % checks)
 	else:
@@ -559,3 +560,225 @@ func _test_save_roundtrip() -> void:
 		sim2.step(KuroData.SIM_DT)
 	check(int(sim.state["gold"]) == int(sim2.state["gold"]), "復元後も決定論で一致")
 	check(float(sim.state["dist"]) == float(sim2.state["dist"]), "距離も一致")
+
+
+func _test_sync_level() -> void:
+	print("[同期率]")
+	var sim := _fresh(77)
+	sim.start_run("pomo", 25.0, 0.0)
+	check(sim.sync_level() == 1, "潜航開始時は Lv.1")
+	check(is_equal_approx(sim.sync_atk_mult(), 1.0), "Lv.1 の攻撃倍率は等倍")
+	var base_crit := sim.crit_mult()
+	_run_for(sim, 120.0)
+	check(sim.sync_level() >= 3, "2分でレベルが上がる（Lv.%d）" % sim.sync_level())
+	check(sim.sync_atk_mult() > 1.0, "同期率で攻撃倍率が伸びる")
+	check(sim.crit_mult() > base_crit, "Lv.3 の共鳴・急所が会心に効く")
+	check(sim.sync_resonances().size() >= 1, "取得済みの共鳴が一覧に出る")
+	var p := sim.sync_progress()
+	check(p >= 0.0 and p <= 1.0, "進捗は 0〜1 に収まる")
+	# レベルアップはイベントとして流れる（UIの演出はこれを拾う）
+	var sim2 := _fresh(78)
+	sim2.start_run("pomo", 25.0, 0.0)
+	var seen := 0
+	var named := 0
+	for i in int(180.0 / KuroData.SIM_DT):
+		sim2.step(KuroData.SIM_DT)
+		for e in sim2.drain_events():
+			if String(e.get("kind", "")) == "levelup":
+				seen += 1
+				if String(e.get("res_name", "")) != "":
+					named += 1
+	check(seen >= 3, "3分で levelup イベントが複数回流れる（%d回）" % seen)
+	check(named >= 1, "共鳴の名前が付いたレベルアップがある")
+	# 潜航ごとにリセットされる（25分そのものが山を登る形）
+	sim2.abandon_run()
+	sim2.start_run("pomo", 25.0, 0.0)
+	check(sim2.sync_level() == 1, "次の潜航では Lv.1 に戻る")
+	# クッキークリッカーの原則：状態が動いたら必ずイベントが出る（UIが描けるように）
+	var sim3 := _fresh(79)
+	sim3.start_run("pomo", 25.0, 0.0)
+	var kill_ev := 0
+	var floor_ev := 0
+	var gold_seen := 0
+	for i in int(300.0 / KuroData.SIM_DT):
+		sim3.step(KuroData.SIM_DT)
+		for e in sim3.drain_events():
+			match String(e.get("kind", "")):
+				"kill":
+					kill_ev += 1
+					gold_seen += int(e.get("gold", 0))
+				"gate":
+					floor_ev += 1
+					check(int(e.get("floor", -1)) > 0, "gate が到達階を運ぶ")
+	check(kill_ev > 50, "撃破ごとに kill イベントが出る（5分で%d回）" % kill_ev)
+	check(gold_seen > 0, "kill イベントが獲得金を運ぶ（計%dG）" % gold_seen)
+	check(floor_ev >= 1, "階層突破で gate イベントが出る（%d回）" % floor_ev)
+	# 会心は「拍」単位の事実として流れる（UIが推測で描かなくて済むように）
+	var sim4 := _fresh(80)
+	sim4.start_run("pomo", 25.0, 0.0)
+	var pops := 0
+	var crits := 0
+	var crit_val := 0
+	var norm_val := 0
+	for i in int(600.0 / KuroData.SIM_DT):
+		sim4.step(KuroData.SIM_DT)
+		for e in sim4.drain_events():
+			if String(e.get("kind", "")) == "dmg_pop" and String(e.get("at", "")) == "enemy":
+				pops += 1
+				if bool(e.get("crit", false)):
+					crits += 1
+					crit_val = maxi(crit_val, int(e.get("val", 0)))
+				else:
+					norm_val = maxi(norm_val, int(e.get("val", 0)))
+	check(pops > 20, "敵ダメージの拍が流れる（%d回）" % pops)
+	check(crits > 0, "会心フラグの立った拍がある（%d回）" % crits)
+	check(crits < pops, "全部が会心にはならない")
+	check(crit_val > norm_val, "会心の拍は数字が大きい（%d > %d）" % [crit_val, norm_val])
+	# 夜営業の給仕：劇場での操作が精算に効く
+	var sim5 := _fresh(81)
+	sim5.state["stock"] = {"dry": 20, "meat": 20, "sea": 20}
+	var night := sim5.close_day()
+	var g0 := int(sim5.state["gold"])
+	var served0 := int(night["served"])
+	var gold0 := int(night["gold"])
+	# 何もしなかった場合＝増減なし（席を外した人を罰さない）
+	var r0 := sim5.settle_service(0, 0, 0)
+	check(int(r0["delta"]) == 0, "放置なら増減ゼロ")
+	check(int(sim5.state["gold"]) == g0, "放置で所持金は動かない")
+	# 早く捌いて客が増えた場合
+	var r1 := sim5.settle_service(12, 2, 0)
+	check(int(r1["extra_gold"]) == int(r1["per_plate"]) * 2, "追加の客は1皿ぶんずつ売上になる")
+	check(int(sim5.state["gold"]) == g0 + int(r1["delta"]), "所持金に反映される")
+	check(int(sim5.state["pending_night"]["served"]) == served0 + 2, "精算の皿数が増える")
+	check(int(sim5.state["pending_night"]["gold"]) > gold0, "精算の売上が増える")
+	# 待たせて帰られた場合
+	var sim6 := _fresh(82)
+	sim6.state["stock"] = {"dry": 20, "meat": 20, "sea": 20}
+	var night6 := sim6.close_day()
+	var served6 := int(night6["served"])
+	if served6 > 1:
+		var r2 := sim6.settle_service(0, 0, 1)
+		check(int(r2["lost_gold"]) > 0, "帰られた客のぶん売上を失う")
+		check(int(sim6.state["pending_night"]["served"]) == served6 - 1, "精算の皿数が減る")
+	check(sim6.settle_service(-5, -1, -1)["delta"] == 0, "負の値は0として扱う")
+	# 献立の戦略が拮抗していること（どれか一つが支配的だと選択が消える）
+	var tastes := {}
+	for rid in KuroData.RECIPES:
+		var t := String(KuroData.RECIPES[rid]["taste"])
+		if not tastes.has(t): tastes[t] = []
+		(tastes[t] as Array).append(rid)
+	var same_deck: Array = []
+	var vary_deck: Array = []
+	for t in tastes:
+		if (tastes[t] as Array).size() >= 3 and same_deck.is_empty():
+			same_deck = (tastes[t] as Array).slice(0, 3)
+	for t in tastes:
+		if vary_deck.size() < 4: vary_deck.append((tastes[t] as Array)[0])
+		if same_deck.size() == 3 and String(KuroData.RECIPES[(tastes[t] as Array)[0]]["taste"]) \
+				!= String(KuroData.RECIPES[same_deck[0]]["taste"]):
+			same_deck.append((tastes[t] as Array)[0])
+	var function_gold := func(deck: Array, sv: int) -> int:
+		var sm := _fresh(sv)
+		sm.state["stock"] = {"dry": 40, "meat": 40, "sea": 40}
+		sm.state["morning"]["menu"] = deck
+		return int(sm.close_day()["gold"])
+	var same_tot := 0
+	var vary_tot := 0
+	for i in 12:
+		same_tot += function_gold.call(same_deck, 200 + i)
+		vary_tot += function_gold.call(vary_deck, 200 + i)
+	var ratio := float(maxi(same_tot, vary_tot)) / float(maxi(mini(same_tot, vary_tot), 1))
+	check(ratio < 1.20, "同じ味で固める戦略と4種そろえる戦略が拮抗する（比 %.2f）" % ratio)
+	# 物語イベント：台本が揃っていて、進行の条件が一意に決まること
+	# （main の _next_event_id と同じ順序をここで固定する。台本だけあって
+	#  発火しない状態に戻さないための番人）
+	for eid in ["intro_kiriko", "tutorial", "first_surface",
+			"story_b3", "story_b6", "story_b10", "story_day3", "story_finale"]:
+		check(EventData.EVENTS.has(eid), "台本がある: %s" % eid)
+		var ev: Dictionary = EventData.EVENTS[eid]
+		check((ev.get("lines", []) as Array).size() > 0, "台詞がある: %s" % eid)
+		check(String(ev.get("speaker", "")) != "", "話者がいる: %s" % eid)
+	var s0 := _fresh(90)
+	check((s0.state["events_seen"] as Array).is_empty(), "新規セーブは既読ゼロ")
+	check(int(s0.state["best_floor"]) < 3, "新規は B3 未到達＝節目はまだ来ない")
+	# 終幕の条件は「メモリ全収集 ＋ B10到達」（docs/STORY.md 8節の確定）。
+	# 深度だけで出すと、掘らなかった人にも像が結ばないまま結末が来る。
+	check(KuroMemories.MEMORIES.size() >= 10, "メモリが10本以上ある（%d本）" % KuroMemories.MEMORIES.size())
+	var floors := {}
+	for m in KuroMemories.MEMORIES:
+		floors[int(m["floor"])] = true
+	check(floors.size() >= 5, "メモリの出現階が散っている（%d通り）" % floors.size())
+	# 深度ドリブンで重複せずに配られること
+	var got: Array = []
+	for f in range(1, 13):
+		for i in 3:
+			var nm := KuroMemories.next_for(f, got)
+			if nm.is_empty():
+				break
+			check(not String(nm["id"]) in got, "同じメモリを二度配らない: %s" % String(nm["id"]))
+			got.append(String(nm["id"]))
+	check(got.size() == KuroMemories.MEMORIES.size(), "B12まで潜れば全部拾える（%d/%d）"
+			% [got.size(), KuroMemories.MEMORIES.size()])
+	# 文脈でセリフが変わること。「大量のランダム」と「見てくれている」の差はここ。
+	var rngc := RandomNumberGenerator.new()
+	rngc.seed = 7
+	var day_ctx := {"hour": 14, "streak": 0, "day": 1, "chapter": 0, "after": ""}
+	var night_ctx := {"hour": 3, "streak": 0, "day": 1, "chapter": 0, "after": ""}
+	var late_ctx := {"hour": 14, "streak": 0, "day": 1, "chapter": 99, "after": ""}
+	var seen_day := {}
+	var seen_night := {}
+	var seen_late := {}
+	for i in 60:
+		seen_day[String(Banter.pick("idle", ["mil"], rngc, [], day_ctx).get("text", ""))] = true
+		seen_night[String(Banter.pick("idle", ["mil"], rngc, [], night_ctx).get("text", ""))] = true
+		seen_late[String(Banter.pick("idle", ["mil"], rngc, [], late_ctx).get("text", ""))] = true
+	check(seen_night.has("…三時です。店長、そろそろ休んでください"), "深夜には時刻の行が出る")
+	check(not seen_day.has("…三時です。店長、そろそろ休んでください"), "昼には深夜の行が出ない")
+	check(seen_late.has("今日も、わたしの席がありました。事実です"), "終幕の後の行が出る")
+	check(not seen_day.has("今日も、わたしの席がありました。事実です"),
+			"物語が進む前に終幕後の行が出ない（ネタバレ防止）")
+	check(not seen_day.has("設計図を見てから、自分の手をよく見ます"),
+			"B6より前に設計図の行が出ない")
+	# 章の導出：後から足した story_b4 のような id も拾う
+	check(Banter.chapter_of(["intro_kiriko"]) == 1, "導入だけなら章1")
+	check(Banter.chapter_of(["story_b4"]) == 4, "表に無い story_b4 も章4として拾う")
+	check(Banter.chapter_of(["story_finale", "story_b3"]) == 99, "終幕が最優先")
+	# 文脈の仕組みそのものが生きていること（並列編集で消えやすいので番人を置く）
+	check(Banter.PRIO_MATCHED > 0.0, "条件が合った行を優先する仕組みがある")
+	check(Banter.text_of("そのまま") == "そのまま", "文字列の行は本文をそのまま返す")
+	check(Banter.text_of({"t": "辞書の行"}) == "辞書の行", "辞書の行も本文を返せる")
+	# 終幕の選択が文脈に効くこと
+	var lp := [{"t": "A専用", "when": {"pick": "a"}}, {"t": "B専用", "when": {"pick": "b"}}]
+	var hit_a := 0
+	var hit_b := 0
+	for l in lp:
+		if Banter._matches(l, {"pick": "a"}):
+			hit_a += 1
+		if Banter._matches(l, {"pick": "b"}):
+			hit_b += 1
+	check(hit_a == 1 and hit_b == 1, "終幕の答えでセリフが振り分けられる")
+	# 終幕は2択を持ち、どちらも返答を持つこと
+	var fin: Dictionary = EventData.EVENTS["story_finale"]
+	check(fin.has("a") and fin.has("b"), "終幕に2択がある")
+	for k in ["a", "b"]:
+		check((fin[k].get("r", []) as Array).size() >= 3, "終幕の%sに返答がある" % k)
+		check(String(fin[k].get("t", "")) != "", "終幕の%sに選択肢の文言がある" % k)
+	# 新規セーブは終幕未到達
+	check(String(_fresh(91).state.get("finale_pick", "x")) == "", "新規セーブは終幕の答えが空")
+	# 店番は6人から選べる。誰を選んでも精算が通ること（台詞プールの取りこぼしで落ちていた）
+	for kid in KuroData.GIRL_ORDER:
+		var sk := _fresh(90)
+		sk.state["stock"] = {"dry": 30, "meat": 30, "sea": 30}
+		sk.set_keeper(kid)
+		var nk := sk.close_day()
+		var lines: Array = nk.get("lines", [])
+		check(lines.size() == 3 and String(lines[2]) != "",
+				"%s を店番にしても精算の三行が揃う" % kid)
+	# 手元に残る額は1箇所で決める（ホームと経営が違う数字を約束していた）
+	var sp := _fresh(91)
+	sp.state["stock"] = {"dry": 30, "meat": 30, "sea": 30}
+	var fcp := sp.forecast_night()
+	check(sp.night_profit(fcp) == int(fcp["gold"]) - int(fcp["served"]) * KuroData.MAT_COST,
+			"純益 = 売上 - 皿数×原価")
+	check(sp.night_profit(fcp) < int(fcp["gold"]), "純益は売上より小さい")
+	check(sp.night_profit({}) == 0, "空の見込みでも落ちない")

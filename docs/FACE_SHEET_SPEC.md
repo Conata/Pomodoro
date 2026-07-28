@@ -31,7 +31,8 @@ assets/generated/face/<id>/
     meta.json
 ```
 
-`<id>` は `mil` / `yuzuki` / `muu` / `kiriko` / `kiriko_npc`。
+`<id>` は `mil` / `yuzuki` / `muu` / `kiriko`（表示名レイカ）。
+※ 依頼人NPC `kiriko_npc` は廃止しミルへ統合した（2026-07）。
 
 ---
 
@@ -201,7 +202,7 @@ python3 tools/slice_expressions.py muu muu_neutral.png \
 | `yuzuki` | ユズキ | 暖色（オレンジ） | 表情豊か。smile は満面、surprise は大げさでOK |
 | `muu` | ムュウ | ピンク〜マゼンタ | 配信者らしい明るさ。全表情やや大げさに |
 | `kiriko` | レイカ | 紫 | オカルトサイエンティスト。calm が本領。smile は不敵に |
-| `kiriko_npc` | キリコ | 薄紫 | 依頼人NPC。neutral 主体で十分 |
+
 
 ---
 

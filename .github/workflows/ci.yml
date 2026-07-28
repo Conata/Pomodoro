@@ -26,6 +26,25 @@ jobs:
         # 失敗時は test_sim.gd が exit 1 で返すのでジョブも落ちる
         run: godot --headless -s tests/test_sim.gd
 
+      - name: Run flow tests
+        # 単体テストは sim しか叩かないので、UI の描画中に落ちる類を素通しする。
+        # 実際「店番にドクター／ナースを選ぶと精算で落ちる」バグが 251 件の
+        # 単体テストを全部すり抜けていた。main.tscn を実際に動かして流れを通す。
+        # 3D の描画コンテキストが要るので xvfb 経由で回す。
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          # godot-ci イメージはヘッドレス前提で、X11 クライアントのライブラリが入っていない。
+          # xvfb は「X サーバ」を用意するだけなので、Godot 側が libXcursor などを
+          # 読めず DisplayServer の生成に失敗する（実際にこれで落ちた）。
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            xvfb libfontconfig1 libxcursor1 libxinerama1 libxrandr2 libxi6 \
+            libgl1 libglx-mesa0
+          xvfb-run -a -s "-screen 0 760x1320x24" godot \
+            --rendering-method gl_compatibility --rendering-driver opengl3 \
+            --audio-driver Dummy -s tests/test_flow.gd
+
   # feature ブランチの「見た目」を確認できるよう、Web ビルドを成果物として上げる。
   # （Godot 非搭載のこの開発環境では描画確認できないため。Pages 配信は main の deploy.yml）
   web-build:

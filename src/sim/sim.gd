@@ -13,7 +13,6 @@ var state: Dictionary = {}
 var rng := SimRNG.new()
 var events: Array = []
 var _hurt_expr_cd := {}   # {girl_id: float} 被弾表情の連打防止（非保存）
-var _dmg_pop_cd := 0.0    # 敵ダメージポップの連打防止
 
 
 func _init(p_state: Dictionary = {}) -> void:
@@ -83,6 +82,9 @@ static func new_state(seed_value: int) -> Dictionary:
 		"ship": {"stock": [], "rotated": 0.0},
 		"stats": {"days": 0, "focus_min": 0.0, "dives": 0},
 		"events_seen": [],
+		# 終幕でどちらを選んだか（"" 未到達 / "a" まだいてほしい / "b" わかった）。
+		# 選んだ後の日常のセリフが変わる。
+		"finale_pick": "",
 		"difficulty": 0,        # 難易度（0..3＝ノーマル..トーメント）
 		"stage_sel": -1,        # 選択ステージ（0始まりの階。-1＝従来のチェックポイント続行）
 		"stage_clear": {"0": -1, "1": -1, "2": -1, "3": -1},  # 難易度別クリア済み最深階
@@ -312,11 +314,17 @@ func _tree_party(key: String) -> float:
 
 
 func crit_mult() -> float:
-	return 1.0 + renov_bonus("crit") + _tree_party("crit") + _affix_party("crit") * 0.01
+	var m := 1.0 + renov_bonus("crit") + _tree_party("crit") + _affix_party("crit") * 0.01
+	if _has_resonance("crit"):
+		m += 0.10   # 共鳴・急所
+	return m
 
 
 func dive_speed() -> float:
-	return KuroData.DIVE_SPEED * (1.0 + renov_bonus("spd") + _affix_party("spd") * 0.01)
+	var m := 1.0 + renov_bonus("spd") + _affix_party("spd") * 0.01
+	if _has_resonance("speed"):
+		m += 0.15   # 共鳴・健脚
+	return KuroData.DIVE_SPEED * m
 
 
 func sign_total() -> int:
@@ -422,6 +430,7 @@ func start_run(mode: String, minutes: float, anchor: float, task: String = "") -
 		"boxes": [], "mats": {"dry": 0, "meat": 0, "sea": 0},
 		"gold0": int(state["gold"]), "kills": 0,
 		"resyncs": 0, "door_pending": 0.0, "banked": 0,
+		"sync_xp": 0, "sync_lv": 1, "crit_beat": 0.0,
 	}
 	state["hp"] = {}
 	for id in divers():
@@ -462,6 +471,9 @@ func step(dt: float) -> void:
 
 const QUANT := 0.0001
 
+## 会心を判定する拍の間隔（秒）。ダメージポップの間隔も兼ねる。
+const CRIT_BEAT := 0.8
+
 
 ## 蓄積する浮動小数を毎ステップ固定グリッドへスナップする。
 ## JSON往復で double の最下位ビットがずれても次のステップで自己修復し、
@@ -473,6 +485,8 @@ func _quantize() -> void:
 	var run: Dictionary = state["run"]
 	run["elapsed"] = snappedf(float(run["elapsed"]), QUANT)
 	run["door_pending"] = snappedf(float(run["door_pending"]), QUANT)
+	if run.has("crit_beat"):
+		run["crit_beat"] = snappedf(float(run["crit_beat"]), QUANT)
 	for id in state["hp"]:
 		state["hp"][id] = snappedf(float(state["hp"][id]), QUANT)
 	for id in state["cds"]:
@@ -623,7 +637,7 @@ func _combat_step(dt: float) -> void:
 	var dps := 0.0
 	for id in alive:
 		dps += girl_atk(id)
-	dps *= crit_mult()
+	dps *= sync_atk_mult()   # 同期率レベルぶんの伸び（画面のレベル表示と一致させる）
 	# ムュウの歌（たまに全体回復）
 	if "muu" in alive and rng.chance(0.06 * dt / 0.2):
 		for id in alive:
@@ -640,11 +654,25 @@ func _combat_step(dt: float) -> void:
 				low = id
 		if low != "" and worst < 0.9:
 			state["hp"][low] = minf(girl_maxhp(low), float(state["hp"][low]) + girl_maxhp(low) * 0.03 * dt)
+	if _has_resonance("mend"):
+		for id in alive:
+			state["hp"][id] = minf(girl_maxhp(id), float(state["hp"][id]) + girl_maxhp(id) * 0.012 * dt)
 	_damage_mobs(dps * dt)
-	_dmg_pop_cd = maxf(0.0, _dmg_pop_cd - dt)
-	if _dmg_pop_cd <= 0.0 and not state["mobs"].is_empty():
-		_emit("dmg_pop", "", {"at": "enemy", "val": int(dps * 0.8)})
-		_dmg_pop_cd = 0.8
+	# 会心は「拍」で判定する。CRIT_BEAT 秒ごとにロールし、当たればその拍のぶんを上乗せ
+	# ＝その一撃が倍になる。確率 p = crit_mult()-1 なので期待値は従来の平坦な倍率と同じで、
+	# バランスを変えずに「今のが会心だった」という事実だけを作れる。
+	var run: Dictionary = state["run"]
+	var beat := float(run.get("crit_beat", 0.0)) - dt
+	if beat <= 0.0 and not state["mobs"].is_empty():
+		beat += CRIT_BEAT
+		var p := clampf(crit_mult() - 1.0, 0.0, 0.9)
+		var is_crit := rng.chance(p)
+		var val := dps * CRIT_BEAT
+		if is_crit:
+			_damage_mobs(val)   # 上乗せぶん。この拍だけ2倍になる
+			val *= 2.0
+		_emit("dmg_pop", "", {"at": "enemy", "val": int(val * 0.8), "crit": is_crit})
+	run["crit_beat"] = beat
 	if state["mobs"].is_empty():
 		return
 	# 敵攻撃は盾（隊列順の先頭＝ミルがいれば必ずミル）へ。守護で被弾-25%
@@ -734,6 +762,84 @@ func _sweep_dead_mobs() -> void:
 		_end_combat()
 
 
+
+# ── 同期率（潜航中だけ上がるレベル）────────────────────────────────────────
+# 25分の潜航で撃破は約600体（2.5秒に1体）。数字は動いているのに画面に出ていない、
+# というのが最大の問題だったので、撃破を「見える上昇」に変換する軸を1本通す。
+# 潜航ごとにリセットされる＝25分そのものが山を登る形になる。
+const SYNC_BASE := 10        # Lv1→2 に必要な XP
+const SYNC_STEP := 9         # レベルごとの増分（Lv12 到達で約605XP＝25分ぶん）
+const SYNC_ATK_PER_LV := 0.05  # 1レベルごとの攻撃倍率
+# 3レベルごとに手に入る「共鳴」＝名前の付いた効果。取った瞬間が演出の山になる。
+const SYNC_RESONANCE := {
+	3: {"id": "crit", "name": "共鳴・急所", "desc": "会心 +10%"},
+	6: {"id": "speed", "name": "共鳴・健脚", "desc": "潜行速度 +15%"},
+	9: {"id": "mend", "name": "共鳴・治癒", "desc": "戦闘中に少しずつ回復"},
+	12: {"id": "pierce", "name": "共鳴・貫通", "desc": "攻撃 +20%"},
+}
+
+
+## 同期率レベル（潜航中のみ意味を持つ。非潜航時は1）。
+func sync_level() -> int:
+	return int((state["run"] as Dictionary).get("sync_lv", 1))
+
+
+## 次のレベルまでに必要な XP。
+func sync_need(lv: int) -> int:
+	return SYNC_BASE + (lv - 1) * SYNC_STEP
+
+
+## 現レベル内の進捗 0.0〜1.0（バーの描画用）。
+func sync_progress() -> float:
+	var run: Dictionary = state["run"]
+	var need := sync_need(int(run.get("sync_lv", 1)))
+	return clampf(float(run.get("sync_xp", 0)) / maxf(need, 1.0), 0.0, 1.0)
+
+
+## 同期率による攻撃倍率。
+func sync_atk_mult() -> float:
+	var m := 1.0 + float(sync_level() - 1) * SYNC_ATK_PER_LV
+	if _has_resonance("pierce"):
+		m *= 1.20
+	return m
+
+
+## 取得済みの共鳴か。
+func _has_resonance(id: String) -> bool:
+	for lv in SYNC_RESONANCE:
+		if int(lv) <= sync_level() and String(SYNC_RESONANCE[lv]["id"]) == id:
+			return true
+	return false
+
+
+## 取得済みの共鳴の一覧（UI表示用）。
+func sync_resonances() -> Array:
+	var out := []
+	for lv in SYNC_RESONANCE:
+		if int(lv) <= sync_level():
+			out.append(SYNC_RESONANCE[lv])
+	return out
+
+
+## 撃破で同期率を上げる。レベルが上がったら levelup イベントを積む（演出はUI側）。
+func _add_sync_xp(n: int) -> void:
+	var run: Dictionary = state["run"]
+	if not bool(run.get("active", false)):
+		return
+	run["sync_xp"] = int(run.get("sync_xp", 0)) + n
+	while int(run["sync_xp"]) >= sync_need(int(run.get("sync_lv", 1))):
+		run["sync_xp"] = int(run["sync_xp"]) - sync_need(int(run["sync_lv"]))
+		run["sync_lv"] = int(run["sync_lv"]) + 1
+		var lv := int(run["sync_lv"])
+		var res: Dictionary = SYNC_RESONANCE.get(lv, {})
+		_emit("levelup", "同期率 Lv.%d" % lv, {
+			"lv": lv,
+			"res_name": String(res.get("name", "")),
+			"res_desc": String(res.get("desc", "")),
+			"atk": sync_atk_mult(),
+		})
+
+
 func _damage_mobs(amount: float) -> void:
 	var mobs: Array = state["mobs"]
 	while amount > 0.0 and not mobs.is_empty():
@@ -753,12 +859,23 @@ func _on_mob_killed(m: Dictionary) -> void:
 	var sc := KuroData.depth_scale(current_floor()) * difficulty_mult()
 	var run: Dictionary = state["run"]
 	run["kills"] = int(run["kills"]) + 1
+	_add_sync_xp(10 if m["boss"] else (3 if m["elite"] else 1))
 	var g := int(KuroData.GOLD_PER_KILL * sc * gold_mult() * gain_mult() \
 			* (10.0 if m["boss"] else (3.0 if m["elite"] else 1.0)))
 	state["gold"] = int(state["gold"]) + g
+	var got_ing := ""
+	var got_n := 0
 	if rng.chance(mat_chance()):
-		var ing := String(KuroData.BIOMES[current_floor() % KuroData.BIOMES.size()]["ing"])
-		run["mats"][ing] = int(run["mats"][ing]) + maxi(1, int(gain_mult()))
+		got_ing = String(KuroData.BIOMES[current_floor() % KuroData.BIOMES.size()]["ing"])
+		got_n = maxi(1, int(gain_mult()))
+		run["mats"][got_ing] = int(run["mats"][got_ing]) + got_n
+	# 撃破は2.5秒に1回起きている。UI が「+3G」「素材+1」を出せるように必ず知らせる
+	# （数字が動いたのに画面が黙っている状態を作らない）。
+	_emit("kill", "", {
+		"gold": g, "ing": got_ing, "ing_n": got_n,
+		"elite": bool(m["elite"]), "boss": bool(m["boss"]),
+		"kills": int(run["kills"]),
+	})
 	if rng.chance(discover_chance()) or m["boss"]:
 		_acquire_item(SimItems.roll(rng, current_floor(), _next_id()))
 	if m["elite"] and rng.chance(KuroData.ELITE_BOX_CHANCE):
@@ -786,7 +903,8 @@ func _end_combat() -> void:
 		var scl: Dictionary = state["stage_clear"]
 		var dk := str(int(state.get("difficulty", 0)))
 		scl[dk] = maxi(int(scl.get(dk, -1)), fl)
-		_emit("gate", "ステージ %s 突破。欠落を埋めた——ボス箱は送付済み" % KuroData.stage_label(fl))
+		_emit("gate", "ステージ %s 突破。欠落を埋めた——ボス箱は送付済み" % KuroData.stage_label(fl),
+				{"floor": fl + 1, "label": KuroData.stage_label(fl)})
 		_maybe_drop_memory(int(state["best_floor"]))
 	for id in divers():
 		if float(state["hp"].get(id, 0.0)) <= 0.0:
@@ -954,10 +1072,65 @@ func forecast_night() -> Dictionary:
 
 
 ## 夜営業シアターの給仕チップ（タップ給仕の実利・少額）。負値は無視。
+## 見込み／実績の辞書から「手元に残る額」を出す。売上 - 皿数×原価。
+## ホームの仕込みカードと経営の三行精算が同じ数字を約束するための一本化。
+func night_profit(d: Dictionary) -> int:
+	return int(d.get("gold", 0)) - int(d.get("served", 0)) * KuroData.MAT_COST
+
+
+## セリフ選択に渡す文脈。「大量のランダム」を「見てくれている」に変える軸。
+## 実時刻（hour）と直前の出来事（after）は UI 側が足す——シムは実時刻を持たないし、
+## 「さっき何が起きたか」は表示層の関心なので。
+func banter_context() -> Dictionary:
+	return {
+		"streak": int(state.get("streak", 0)),
+		"day": int(state["day"]),
+		"floor": current_floor() + 1,          # 表示と同じ1始まり
+		"memories": (state["memories"] as Array).size(),
+		"chapter": Banter.chapter_of(state["events_seen"]),
+		"pick": String(state.get("finale_pick", "")),
+	}
+
+
 func add_tips(amount: int) -> int:
 	amount = maxi(amount, 0)
 	state["gold"] = int(state["gold"]) + amount
 	return amount
+
+
+# ── 夜営業の給仕結果（劇場での操作が精算に効く）──────────────────────────────
+# close_day() が出す売上は「その夜に出せる上限」であって確定値ではない。
+# 席は限りがあるので、給仕が遅れれば待ち客が帰り、早ければ次の客が入る。
+# 放置しても自動給仕は回る（ポモドーロの相棒として、席を外した人を罰さない）。
+# タップは上積み＝チップと追加の客であって、押さないと減るのではない。
+
+## 劇場から給仕の実績を受け取り、精算へ反映する。
+##   tips        … タップ給仕で得たチップ
+##   extra       … 早く捌けたおかげで追加で入った客の数
+##   walked_out  … 我慢が切れて帰った客の数（＝取り逃した皿）
+## 戻り値は表示用の内訳。
+func settle_service(tips: int, extra: int, walked_out: int) -> Dictionary:
+	tips = maxi(tips, 0)
+	extra = maxi(extra, 0)
+	walked_out = maxi(walked_out, 0)
+	var night: Dictionary = state["pending_night"]
+	var per_plate := 0
+	if int(night.get("served", 0)) > 0:
+		per_plate = int(round(float(night.get("gold", 0)) / float(night["served"])))
+	var extra_gold := per_plate * extra
+	var lost_gold := per_plate * walked_out
+	var delta := tips + extra_gold - lost_gold
+	state["gold"] = maxi(int(state["gold"]) + delta, 0)
+	# 精算の三行にも出す（何が起きたか分からないまま数字だけ動くのを避ける）
+	if not night.is_empty():
+		night["served"] = maxi(int(night.get("served", 0)) + extra - walked_out, 0)
+		night["gold"] = maxi(int(night.get("gold", 0)) + extra_gold - lost_gold, 0)
+		night["tips"] = tips
+		night["extra"] = extra
+		night["walked_out"] = walked_out
+	return {"tips": tips, "extra": extra, "extra_gold": extra_gold,
+			"walked_out": walked_out, "lost_gold": lost_gold,
+			"per_plate": per_plate, "delta": delta}
 
 
 func close_day() -> Dictionary:
@@ -989,7 +1162,7 @@ func close_day() -> Dictionary:
 		tastes[t] = int(tastes.get(t, 0)) + 1
 	for t in tastes:
 		if int(tastes[t]) >= 3:
-			customers += 3
+			customers += 2
 			synergies.append("ご当地フェア")
 			break
 	var penalized: bool = state["crowd_penalty"]
@@ -1004,7 +1177,7 @@ func close_day() -> Dictionary:
 		price_mult *= 1.10
 		synergies.append("静かな給仕")
 	if tastes.size() >= 4:
-		price_mult *= 1.15
+		price_mult *= 1.28
 		synergies.append("フルコース")
 	if keeper == "kiriko":
 		synergies.append("解析仕込み")
@@ -1104,7 +1277,19 @@ func _flavor_line(keeper: String) -> String:
 			"レイカがレシートの裏に数式を書いていた。たぶん大丈夫。",
 			"レイカ曰く、今夜の換気扇は「良い周波数」らしい。",
 		],
+		"doctor": [
+			"ドクターが客の食べる速度を記録していた。「良好なサンプルです」。",
+			"ドクターが「この配合は再現性がある」と言い、同じ皿を三度出した。",
+		],
+		"nurse": [
+			"ナースが「本日の負傷者ゼロ。厨房を除く」と報告した。",
+			"ナースが客の姿勢を直して回っていた。誰も文句を言わなかった。",
+		],
 	}
+	# 店番は GIRL_ORDER の6人から選べる。プールの取りこぼしで精算が落ちないよう、
+	# 引く前に必ず存在を確かめる（ドクターとナースが抜けていて実際に落ちていた）。
+	if not pools.has(keeper):
+		return "今夜も店を開け、閉じた。黒猫はカウンターの端で目を閉じている。"
 	var pool: Array = pools[keeper]
 	var line: String = pool[rng.randi(pool.size())]
 	if rng.chance(0.25):

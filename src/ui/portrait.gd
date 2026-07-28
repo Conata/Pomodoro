@@ -19,9 +19,6 @@ const LOOK := {
 		"hair": Color(0.46, 0.24, 0.4), "style": "twintail", "warm": true},
 	"kiriko": {"accent": Color(0.72, 0.62, 1.0), "eye": Color(0.78, 0.55, 1.0),
 		"hair": Color(0.26, 0.2, 0.4), "style": "hood", "warm": false},
-	# NPC：依頼人キリコ（薄紫・フード。プレイヤーは色で覚える）
-	"kiriko_npc": {"accent": Color(0.80, 0.70, 0.86), "eye": Color(0.62, 0.31, 0.87),
-		"hair": Color(0.35, 0.10, 0.60), "style": "hood", "warm": false},
 	# 匿名の来店客（店の賑わい用・無個性なグレー）
 	"guest": {"accent": Color(0.58, 0.60, 0.66), "eye": Color(0.85, 0.80, 0.70),
 		"hair": Color(0.22, 0.22, 0.26), "style": "short", "warm": false},

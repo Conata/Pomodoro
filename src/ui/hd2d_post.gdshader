@@ -17,7 +17,9 @@ uniform float vig_radius : hint_range(0.1, 1.2) = 0.92;    // ヴィネットの
 void fragment() {
 	// ── ティルトシフト：焦点帯からの縦距離で blur 量を決める（端ほど強く）──
 	float d = abs(UV.y - focus_center);
-	float t = clamp((d - focus_size) / max(1.0 - focus_size, 0.001), 0.0, 1.0);
+	// d の最大値は 0.5（画面端）。分母を 1.0 基準にすると t が半分までしか伸びず、
+	// ティルトシフトが1テクセル未満の無効果になる。
+	float t = clamp((d - focus_size) / max(0.5 - focus_size, 0.001), 0.0, 1.0);
 	float blur = t * t * blur_strength;
 
 	vec4 col = texture(screen_tex, SCREEN_UV);

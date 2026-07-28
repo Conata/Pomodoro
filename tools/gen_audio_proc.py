@@ -139,6 +139,16 @@ def bitcrush(b, bits=6, rate=1):
         b[i] = hold
 
 
+def fade_tail(b, sr, seconds=0.25):
+    """末尾を絞りきる。ディレイの残響が途中でぶつ切りになるとプチッと鳴るので、
+    尾を引く音（resonance 等）には必ずかける。"""
+    n = int(seconds * sr)
+    if n <= 0 or n > len(b):
+        return
+    for i in range(n):
+        b[len(b) - n + i] *= 1.0 - (i / n)
+
+
 def normalize(b, peak=0.89):
     m = max((abs(x) for x in b), default=0.0)
     if m < 1e-6:
@@ -284,6 +294,77 @@ def sfx_teleport():
     return b, SR
 
 
+def sfx_sync_up():
+    """同期率レベルアップ：上昇する短いアルペジオ。軽く、すぐ終わる。
+
+    25分で10回前後鳴るので、祝いすぎない。ドミソド＝疑いようのない「上がった」。
+    """
+    b = buf(0.55, SR)
+    for k, nm in enumerate(("C5", "E5", "G5", "C6")):
+        f = _note(nm)
+        t = k * 0.055
+        add_tone(b, SR, f, t, 0.34, 0.34, s_sin, env_perc(0.10))
+        add_tone(b, SR, f * 2.0, t, 0.22, 0.10, s_sin, env_perc(0.06))  # 倍音で粒立ち
+    add_noise(b, SR, 0.0, 0.05, 0.10, env_perc(0.02), lp=0.7)           # 立ち上がりの気配
+    delay(b, SR, 0.055, fb=0.25, mix=0.18)
+    fade_tail(b, SR, 0.08)
+    return b, SR
+
+
+def sfx_resonance():
+    """共鳴の獲得（Lv3/6/9/12）：レベルアップより一段上。伸びのある鐘。
+
+    格の差は「長さ」と「低音の支え」で付ける。sync_up が0.55秒で終わるのに対し、
+    こちらは2秒かけて開いて残る＝1ランに4回しか無い山。
+    """
+    b = buf(2.8, SR)
+    # 芯：完全5度＋オクターブ。倍音を非整数（×2.76）にして鐘の胴鳴りを作る
+    for f, a, d in ((_note("C4"), 0.32, 1.2), (_note("G4"), 0.24, 1.0),
+                    (_note("C5"), 0.20, 0.9), (_note("G5"), 0.12, 0.7)):
+        add_tone(b, SR, f, 0.0, 2.0, a, s_sin, env_ad(0.012, d))
+        add_tone(b, SR, f * 2.76, 0.0, 0.9, a * 0.12, s_sin, env_perc(0.18))
+    # 上へ開くシマー（少し遅れて登る＝広がって聞こえる）
+    for k, nm in enumerate(("C5", "E5", "G5", "B5", "E6")):
+        add_tone(b, SR, _note(nm), 0.18 + k * 0.09, 1.2, 0.13, s_sin,
+                 env_ad(0.03, 0.45), detune=0.004)
+    add_tone(b, SR, _note("C2"), 0.0, 1.6, 0.22, s_sin, env_ad(0.02, 0.9))  # 腹
+    delay(b, SR, 0.21, fb=0.42, mix=0.30)
+    fade_tail(b, SR, 0.6)   # 残響を絞りきる（ぶつ切りのプチッを消す）
+    return b, SR
+
+
+def sfx_floor_clear():
+    """階層突破：到達を告げる短い音。二音の合図＋帯が開く風。
+
+    祝福ではなく通過の合図。長引かせない（次の階がすぐ始まる）。
+    """
+    b = buf(1.0, SR)
+    add_noise(b, SR, 0.0, 0.28, 0.22, env_swell(), lp=0.35)   # 帯が開く
+    for f, a in ((_note("F4"), 0.30), (_note("A4"), 0.20), (_note("C5"), 0.16)):
+        add_tone(b, SR, f, 0.02, 0.30, a, s_tri, env_ad(0.008, 0.14))
+    for f, a in ((_note("As4"), 0.32), (_note("D5"), 0.22), (_note("F5"), 0.18)):
+        add_tone(b, SR, f, 0.20, 0.70, a, s_tri, env_ad(0.008, 0.30))
+    add_tone(b, SR, _note("As1"), 0.20, 0.50, 0.25, s_sin, env_perc(0.16))
+    delay(b, SR, 0.16, fb=0.28, mix=0.20)
+    fade_tail(b, SR, 0.15)
+    return b, SR
+
+
+def sfx_heal():
+    """回復スキル（fx="heal"）：柔らかい短い鈴。
+
+    回復は数が多いので、刺さらない丸い音にして音量も絞って使う。
+    """
+    b = buf(0.7, SR)
+    for k, nm in enumerate(("G5", "C6", "E6")):
+        add_tone(b, SR, _note(nm), k * 0.045, 0.50, 0.22, s_sin, env_perc(0.16))
+    add_tone(b, SR, _note("C4"), 0.0, 0.45, 0.14, s_sin, env_ad(0.06, 0.20))
+    lowpass(b, 0.55)
+    delay(b, SR, 0.09, fb=0.30, mix=0.20)
+    fade_tail(b, SR, 0.10)
+    return b, SR
+
+
 SFX = {
     "ui_confirm": sfx_ui_confirm, "ui_denied": sfx_ui_denied,
     "ui_equip": sfx_ui_equip, "ui_buy": sfx_ui_buy,
@@ -291,6 +372,9 @@ SFX = {
     "damage": sfx_damage, "slash": sfx_slash,
     "enemy_death": sfx_enemy_death, "fire": sfx_fire,
     "thunder": sfx_thunder, "teleport": sfx_teleport,
+    # 潜航の節目（配線に合わせて追加）
+    "sync_up": sfx_sync_up, "resonance": sfx_resonance,
+    "floor_clear": sfx_floor_clear, "heal": sfx_heal,
 }
 
 
@@ -411,8 +495,10 @@ BGM = {"store": bgm_store, "dive": bgm_dive, "battle": bgm_battle}
 
 # ---- main ---------------------------------------------------------------
 
-def gen_sfx():
+def gen_sfx(only=None):
     for name, fn in SFX.items():
+        if only and name not in only:
+            continue
         b, sr = fn()
         normalize(b, 0.9)
         out = os.path.join(ROOT, "sfx", name + ".wav")
@@ -431,14 +517,19 @@ def gen_music():
 
 def main():
     args = sys.argv[1:]
-    do_sfx = ("--sfx" in args) or not args or not ("--music" in args and "--sfx" not in args)
     only_music = ("--music" in args and "--sfx" not in args)
     only_sfx = ("--sfx" in args and "--music" not in args)
+    # --only a,b,c で特定のSEだけ書き出す（既存の音を無駄に上書きしないため）
+    names = None
+    for a in args:
+        if a.startswith("--only="):
+            names = set(a.split("=", 1)[1].split(","))
+            only_sfx = True
     print("手続き生成（依存ゼロ）")
     if only_music:
         gen_music()
     elif only_sfx:
-        gen_sfx()
+        gen_sfx(names)
     else:
         gen_sfx()
         gen_music()

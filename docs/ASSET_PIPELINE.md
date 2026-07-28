@@ -19,7 +19,8 @@
 
 - **置くだけで動く**：下表のパス・命名に従えば、Godot 側は **自動でフォールバック付きで拾う**（無ければ手続き生成／立ち絵／シルエットに自動で落ちる）。コード変更不要。
 - 渡し方は2通り：①自分でブランチに commit/push する ②ファイルを私に渡す（私が配置・commit）。
-- **キャラID対応（重要）**：`ミル=mil` / `ユズキ=yuzuki` / `ムュウ=muu` / `レイカ(プレイアブル)=kiriko` / `NPCキリコ=kiriko_npc`
+- **キャラID対応（重要）**：`ミル=mil` / `ユズキ=yuzuki` / `ムュウ=muu` / `レイカ(プレイアブル)=kiriko`
+  ※ `kiriko` の表示名は**レイカ**（改名の名残でidだけ残っている）。依頼人NPC `kiriko_npc` は廃止しミルへ統合。
 
 
 こちらにキャラのリファレンスがある
@@ -105,7 +106,7 @@ python3 tools/slice_expressions.py muu muu_neutral_row.png --rows 1 --exprs neut
 
 ## 4. 立ち絵（ポートレート）
 
-mil / muu / kiriko(レイカ) が未実装（今は手続きシルエット）。yuzuki / kiriko_npc は実画像あり。
+mil / muu / kiriko(レイカ) が未実装（今は手続きシルエット）。yuzuki は実画像あり。
 
 - **生成**：全身・**透過背景**が理想。無理なら単色背景で出す。
 - **キーイング（単色背景→透過）**：
@@ -223,7 +224,7 @@ python3 tools/voice_key.py mil "完璧です。でも、おいしいかどうか
 ```
 - セリフ全文は **データ側の文字列と完全一致**させる（`src/sim/talk.gd` `banter.gd` `event_data.gd`）。
 - TTSは Gemini TTS / Irodori-TTS など。話者ごとに声を割り当て、上記キー名で `voice/<id>/` に保存。
-- `id` 対応：ミル=mil / ユズキ=yuzuki / ムュウ=muu / レイカ=kiriko / NPCキリコ=kiriko_npc。
+- `id` 対応：ミル=mil / ユズキ=yuzuki / ムュウ=muu / レイカ=kiriko（依頼人NPCは廃止・ミルへ統合）。
 
 > 実装メモ（コード側・完了）：会話(talk_view)に話者ワイプ(FaceCam)を追加しリップシンク。
 > Voiceバス＋プレイヤーを用意し、`FaceCam.voice_active` 中は音量ピークで口を駆動。
